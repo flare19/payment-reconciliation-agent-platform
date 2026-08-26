@@ -372,6 +372,22 @@ Ten entries adding an agent layer to close a gap against the track's problem sta
 
 ---
 
+## 2026-08-27 — Day 5 scaffold
+
+### ADR-058 · Three independent packages, no npm workspaces
+**Decision:** `apps/api`, `apps/web` and the repo root (which owns `tools/`) are independent packages with their own `package.json` and lockfile. No workspaces, no monorepo tooling, no shared internal package. Wire types are duplicated between `apps/api/src/types` and `apps/web/types`.
+**Because:** The two apps deploy to different platforms with different root directories — Railway builds `apps/api` with `npm ci`, Vercel builds `apps/web` — and `npm ci` inside a workspace subdirectory without the root lockfile does not work. Workspaces would buy one `npm install` locally and cost a build-time workaround on both platforms. The thing being shared is a handful of interfaces already specified in a binding contract doc (`api-contract.md`); duplicating them costs less than a shared package that both apps must build before either can start. Consistent with ADR-023's stated preference for the least interesting option available.
+**Rejected:** npm workspaces (breaks the platform build commands in deployment.md §5.1); a `packages/shared-types` package (adds a build step to both apps for ~10 interfaces); a build-time codegen step from the contract doc.
+**Revisit if:** a third app appears, or duplicated types drift in a way that causes a real bug — neither is likely inside 13 days.
+
+### ADR-059 · `pg` type parsers are overridden for BIGINT, NUMERIC and DATE at pool construction
+**Decision:** `src/db/pool.ts` registers parsers for int8 (→ `Number`, with a safe-integer assertion that throws), numeric (→ `Number`) and date (→ left as a `YYYY-MM-DD` string).
+**Because:** All three defaults are actively wrong for this schema and all three fail *silently*. `pg` returns BIGINT as a string, so `row.amount_paise + row.fee_paise` concatenates rather than adds — on a money column, in a project whose thesis is measured accuracy, surfacing as a mysteriously wrong match rate rather than a crash. NUMERIC has the same problem for confidence scores. And the default DATE parser builds a `Date` at *local* midnight, which shifts the calendar day for anyone running outside UTC — every date comparison in the engine is a business-day operation on an IST date, so that is a one-day error that only reproduces on someone else's machine. The int8 assertion throws rather than widening, because ₹10 crore is 10^11 paise against a safe-integer ceiling of ~9×10^15: if it ever fires, the right response is a real decision about the type, not a bigger guard.
+**Rejected:** Casting at every call site (one omission is a silent bug); `::text` casts in SQL (moves the problem into every query); leaving DATE as a `Date` and normalizing later (the timezone error is already baked in by then).
+**Revisit if:** never.
+
+---
+
 ## Superseded
 
 - **ADR-021** — not superseded, but *clarified* by **ADR-041** (2026-08-26): the no-truth-in-the-engine rule stands; ground-truth-derived metrics move to a separate `score_reports` table written by the offline scorer, because the metrics shape in `schema.md` §11 could not otherwise have been produced by anything.

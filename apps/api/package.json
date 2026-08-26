@@ -1,0 +1,31 @@
+{
+  "name": "@recon/api",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "migrate": "tsx src/db/migrate-cli.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --import tsx tests/**/*.test.ts",
+    "test:unit": "node --test --import tsx tests/unit/*.test.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.0",
+    "csv-parse": "^5.6.0",
+    "express": "^5.0.1",
+    "multer": "^1.4.5-lts.1",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

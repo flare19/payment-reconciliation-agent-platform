@@ -1,0 +1,19 @@
+{
+  "name": "payment-reconciliation-platform",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Razorpay AI Buildathon Track 4 — reconciliation engine + the Analyst. Root package owns tools/ only; apps/* are independent packages (ADR-058).",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "generate": "tsx tools/generate/index.ts",
+    "score": "tsx tools/score/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --experimental-strip-types tools/**/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
