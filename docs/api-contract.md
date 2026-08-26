@@ -2,7 +2,7 @@
 
 Payment Reconciliation Engine · Razorpay AI Buildathon Track 4
 Status: **Locked. This is the contract.** Frontend and backend are built in separate sessions on different days; if this doc and the code disagree, the code is wrong until an ADR says otherwise. Revised by the Day 4 design review (ADR-040…ADR-046).
-Companion docs: [schema.md](./schema.md) · [matching-engine.md](./matching-engine.md) · [ui-spec.md](./ui-spec.md) · [adr-log.md](./adr-log.md) · [deployment.md](./deployment.md)
+Companion docs: [schema.md](./schema.md) · [matching-engine.md](./matching-engine.md) · [agent-design.md](./agent-design.md) · [ui-spec.md](./ui-spec.md) · [adr-log.md](./adr-log.md) · [deployment.md](./deployment.md)
 
 Per ARCHITECTURE §7, this is a lightweight table — **not** an OpenAPI/Swagger file. That's explicitly excluded.
 
@@ -39,8 +39,10 @@ Per ARCHITECTURE §7, this is a lightweight table — **not** an OpenAPI/Swagger
 | HTTP | `code` values used |
 |---|---|
 | 400 | `INVALID_REQUEST`, `UNSUPPORTED_FILE_TYPE`, `MISSING_REQUIRED_FILE`, `INVALID_ALIAS` |
-| 404 | `RUN_NOT_FOUND`, `EXCEPTION_NOT_FOUND`, `TRANSACTION_NOT_FOUND`, `MATCH_NOT_FOUND`, `ALIAS_NOT_FOUND`, `SCORE_REPORT_NOT_FOUND` |
-| 409 | `RUN_NOT_COMPLETE` (metrics requested too early), `MATCH_NOT_REVIEWABLE` (status isn't `pending_review`), `ALIAS_CONFLICT_UNCONFIRMED`, `EXCEPTION_ALREADY_RESOLVED`, `TRANSACTION_ALREADY_MATCHED` |
+| 404 | `RUN_NOT_FOUND`, `EXCEPTION_NOT_FOUND`, `TRANSACTION_NOT_FOUND`, `MATCH_NOT_FOUND`, `ALIAS_NOT_FOUND`, `SCORE_REPORT_NOT_FOUND`, `INVESTIGATION_NOT_FOUND` |
+| 409 | `RUN_NOT_COMPLETE` (metrics or investigations requested too early), `MATCH_NOT_REVIEWABLE` (status isn't `pending_review`), `ALIAS_CONFLICT_UNCONFIRMED`, `EXCEPTION_ALREADY_RESOLVED`, `TRANSACTION_ALREADY_MATCHED`, `INVESTIGATION_IN_PROGRESS` |
+| 429 | `AGENT_QUOTA_EXCEEDED` (Q&A rate limit — ADR-056) |
+| 503 | `AGENT_DISABLED` (`AGENT_QA_ENABLED=false` or no `ANTHROPIC_API_KEY`) |
 | 413 | `FILE_TOO_LARGE` (>10 MB per file) |
 | 422 | `PARSE_FAILED` (file readable but not the expected shape), `TRUTH_KEY_MISMATCH` (score report built against different bytes) |
 | 500 | `INTERNAL_ERROR` |
@@ -75,8 +77,16 @@ Per ARCHITECTURE §7, this is a lightweight table — **not** an OpenAPI/Swagger
 | 22 | `/api/runs/:runId/audit/verify` | GET | — | `{ valid, entriesChecked, firstDivergenceSequenceNo }` | Recompute the audit hash chain. (ADR-042) |
 | 23 | `/api/runs/:runId/score-report` | POST | `ScoreReport` (from `tools/score`) | `201` `{ scoreReportId }` | Offline scorer posts a measurement. (ADR-041) |
 | 24 | `/api/runs/:runId/population` | GET | `?kind=excluded\|rejected\|duplicates` | `{ items[], pagination }` | Rows outside the reconcilable denominator, with the reason for each. |
+| 25 | `/api/runs/:runId/investigations` | POST | `{ maxInvestigations?, categories?[] }` | `202` `{ phaseId, status }` | Start Phase A on a completed run. (ADR-048) |
+| 26 | `/api/runs/:runId/investigations` | GET | `?verdict&category&page&pageSize` | `{ investigations: InvestigationSummary[], agentMetrics, pagination }` | Analyst results for a run. |
+| 27 | `/api/investigations/:investigationId` | GET | — | `InvestigationDetail` (reasoning chain, tool trace, citations, proposal) | Drill-down into one investigation. |
+| 28 | `/api/runs/:runId/ask` | POST | `{ question }` | `{ answer, citations[], toolCalls[], steps, costUsd }` | Q&A agent over finalized run results. (ADR-056) |
 
-24 endpoints, all `GET` except seven `POST`s and one `PATCH`. Nothing here needs a `DELETE` — nothing in this system is ever deleted.
+28 endpoints, all `GET` except nine `POST`s and one `PATCH`. Nothing here needs a `DELETE` — nothing in this system is ever deleted.
+
+**Phase A adds no write endpoints.** Accepting an Analyst proposal routes through endpoints that already exist — 21 (manual match), 16 (create alias), 20 (resolve exception) — with `sourceInvestigationId` in the body so the acceptance is attributed (ADR-051). The Analyst proposes into an inbox that already has a confirmation flow, an audit trail and a UI, which is most of why the layer is buildable in the time available.
+
+**Endpoint 25 does not change `runs.status`.** Phase A is a separate job with its own lifecycle, so a run reaches `completed` exactly when the engine finishes and the polling contract in §5 is unchanged. Agent latency never enters `records_per_sec_wall_clock`.
 
 **Why endpoints 20 and 21 exist.** `exceptions.status` already permitted `human_resolved` and `wont_fix`, and no endpoint could produce either state — the column was unreachable. More importantly, the obvious action from an exception drill-down is *"these two are the same, the engine just couldn't prove it"*, and there was no way to record it. Without these the exception list is a report; with them it is a workflow, which is what a finance controller actually needs (ADR-043).
 
@@ -189,6 +199,54 @@ Recomputes the hash chain (`schema.md` §9.0) and reports the first entry whose 
 Accepts the JSON emitted by `tools/score/`. The server checks `truthKeyHash` against the run's recorded `inputFileHashes` manifest and returns `422 TRUTH_KEY_MISMATCH` if they disagree — scoring a run against a key built from different bytes should be impossible, not merely noticed late.
 
 This is the **only** path by which a ground-truth-derived number enters the database, it writes to `score_reports` and never to `runs.metrics`, and no engine module reads either the truth file or this table (ADR-021, ADR-041).
+
+### 25–27 · Analyst investigations
+
+`POST /api/runs/:runId/investigations` returns `202` and runs Phase A asynchronously; the client polls endpoint 26. `409 RUN_NOT_COMPLETE` if the engine hasn't finished — the Analyst reads finalized output by definition.
+
+`InvestigationDetail` (endpoint 27):
+
+```json
+{
+  "investigationId": "…", "exceptionId": "…", "status": "concluded",
+  "verdict": "RESOLUTION_PROPOSED", "confidence": "high",
+  "proposedAction": {
+    "type": "MANUAL_MATCH",
+    "members": [ { "transactionId": "…", "role": "bank" }, { "transactionId": "…", "role": "gateway" } ],
+    "rationale": "Six gateway payments net to this credit once the search pool is widened past the engine's 24-record cap."
+  },
+  "reasoning": [
+    { "step": 1, "tool": "get_exception", "arguments": { "exceptionId": "…" },
+      "resultDigest": "UNSPLITTABLE_BATCH, searchBoundExceeded, bound=poolCap(24), credit ₹4,82,110",
+      "inference": "The engine stopped on a pool cap, not on a proof. Worth re-testing at wider bounds." },
+    { "step": 2, "tool": "search_transactions", "arguments": { "sourceSystem": "gateway", "direction": "credit", "dateRange": ["2026-08-12","2026-08-16"] },
+      "resultDigest": "31 unmatched; 19 share counterparty AMAZON RETAIL",
+      "inference": "Seven same-counterparty payments fell outside the 24 nearest by date. The truncation was arbitrary here." },
+    { "step": 3, "tool": "rerun_subset_search", "arguments": { "poolSize": 48, "maxSubsetSize": 8, "budgetMs": 1500 },
+      "resultDigest": "exactly one subset of 6 sums into the credit band",
+      "inference": "A unique decomposition exists. Unique, so not ambiguous." }
+  ],
+  "citations": ["…","…"],
+  "groundingPassed": true, "budgetExhausted": false,
+  "steps": 5, "toolCalls": 7, "costUsd": 0.0312,
+  "model": "claude-sonnet-5", "promptVersion": "agent-v1",
+  "humanDisposition": null, "resultingMatchId": null
+}
+```
+
+`resultDigest` is what the tool actually returned, recorded by the runtime — **not** the model's description of it. `inference` is the model's. Keeping them in separate fields is what lets a reader check the reasoning against the evidence rather than against a paraphrase of it.
+
+Every id in `citations` was verified by the A3 grounding gate to have appeared in a tool result from this investigation (ADR-050). `verdict: "INSUFFICIENT_EVIDENCE"` with `groundingFailure` set means the gate rejected an ungrounded verdict — surfaced, never hidden.
+
+The full ordered tool trace is also in `audit_log` under `subjectType: "investigation"` (ADR-052), so it is hash-chained and covered by endpoint 22's verification.
+
+### 28 · `POST /api/runs/:runId/ask`
+
+```json
+{ "question": "Why wasn't settlement SBIN0R52026081412345 matched?" }
+```
+
+Returns an answer with clickable citations and the tool calls that produced it. Bounded at 6 steps and 8 tool calls; read-only tools only. `429 AGENT_QUOTA_EXCEEDED` when the per-run (50) or per-hour (100) bucket is exhausted — the demo is public and has no auth by design, so the quota is the mitigation (ADR-056). `503 AGENT_DISABLED` when `AGENT_QA_ENABLED=false`.
 
 ### 11 · `POST /api/matches/:matchId/reject`
 
@@ -399,6 +457,9 @@ Sanity check that every endpoint has a consumer and every screen has its data:
 | Alias management | 15, 16, 17, 18 |
 | Transaction inspector + audit trail | 12, 13 |
 | Run-level audit | 14 |
+| Analyst panel on exception detail | 26, 27 |
+| Analyst summary block on dashboard | 26 |
+| Q&A box | 28 |
 | Exception resolution | 20 |
 | Manual match (from exception drill-down or record inspector) | 21, 12 |
 | Audit chain verification (pitch demo) | 22 |

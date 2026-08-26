@@ -299,6 +299,28 @@ Accuracy is **not** scored at the larger sizes: the answer key generation is fas
 
 ---
 
+## 5.7 Measuring the Analyst (ADR-053)
+
+Phase A is scored against **the same answer key as the engine**, which it cannot read (ADR-021 unchanged, still enforced by the import grep in `testing-strategy.md` §3). This section exists because an agent layer that is not measured is decoration, and this project does not ship unmeasured numbers.
+
+**The metric the Analyst exists to attack is already defined in §5.3:** false-despair rate — of the events the engine gave up on, how many were actually `RESOLVABLE`. That was described as *"the honest measure of the engine's headroom, and the right place to look for the next day's work."* The Analyst is that next day's work, and the false-despair set is precisely its addressable market.
+
+| Metric | Definition |
+|---|---|
+| **False-despair recovered** | Of the engine's false-despair exceptions, how many did the Analyst propose a resolution for that the key confirms? **The headline agent number.** |
+| **Proposal precision** | Of all `RESOLUTION_PROPOSED` verdicts, how many the key confirms. Reported as a raw fraction (`16/18`), never as a rounded percentage. |
+| **Hallucinated resolutions** | Proposals on events the key marks `UNRESOLVABLE`. **Must be 0 — build blocker, not a metric.** |
+| **Unresolvable agreement** | Of designed-`UNRESOLVABLE` exceptions investigated, how many returned `CONFIRMED_UNRESOLVABLE`. |
+| **Grounding failure rate** | Verdicts rejected by the A3 gate for citing evidence never retrieved. |
+
+**Why hallucination is a build blocker.** The ~21 designed-unresolvable events are impossible for any correct engine *and any competent human analyst looking at the same three files* — verified by assertion during generation (§4), not merely labelled. A resolution proposed for one of them means the agent invented evidence. That is strictly worse than the engine's silence, because it arrives wrapped in a confident, cited-looking reasoning chain. It is treated exactly as unresolvable recall is in §5.3: something that stops the build.
+
+**The Analyst is never told which exceptions are designed-unresolvable.** A1 triage selects on severity and amount alone. It investigates them like anything else, and is expected to conclude that they cannot be resolved — which is what makes `unresolvable agreement` a real test rather than a formality.
+
+**Reported separately, always.** Agent proposals never enter the engine's match rate, before or after human confirmation (ADR-051). The accuracy report carries an Engine block and an Analyst block. This is the fourth paired-figure discipline in the project, after cold/warm (ADR-020), engine/manual (ADR-043) and self-reported/measured (ADR-041) — consistent rather than novel.
+
+---
+
 ## 6. Measuring alias learning honestly
 
 The alias feature creates a specific temptation: run the dataset, correct a few things, re-run, and report the improved match rate as *the* match rate. That would be reporting a warm-cache number as a cold one.
@@ -356,6 +378,14 @@ WARM RUN (9 human corrections → 9 aliases)
   Precision  0.988   Recall  0.901   F1  0.943
   False positive matches: 5
   Alias precision: 1.00   Leverage: 3.0× (27 records / 9 corrections)
+
+ANALYST (agentic, measured against the same key)
+  Investigated 20 of 47 eligible exceptions
+  False-despair recovered   14 / 22
+  Proposal precision        16 / 18
+  Hallucinated resolutions  0          ← build blocker if non-zero
+  Unresolvable agreement    6 / 6
+  Mean 6.2 steps · 8.4 tool calls · $0.03 per investigation
 
 Accuracy by difficulty:  EASY 0.99 · MEDIUM 0.91 · HARD 0.62
 Review queue precision:  0.91  (11 proposals, 10 correct)

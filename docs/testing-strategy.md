@@ -64,6 +64,26 @@ Both assert the negative as loudly as the positive. The old design produced a *p
 - Run it with the input rows **shuffled** in memory before matching; assert the same output. This is the real test of ADR-032 — it fails loudly if any decision path depends on iteration order, which no other test would catch.
 - Assert the audit hash chain verifies after every fixture run.
 
+### 1.6 The grounding gate — the highest-value tests in the suite
+
+A3 (ADR-050) is pure functions over a verdict and a tool-call log, so it is cheap to test exhaustively, and it is the only thing standing between a hallucinated reasoning chain and the database.
+
+- A verdict citing a `transactionId` that **appears in no tool result** from that investigation → rejected, `groundingFailure` set.
+- A verdict citing an id that appears in a tool result from a **different** investigation → rejected. Grounding is per-investigation.
+- A `MANUAL_MATCH` proposal naming an already-matched record → rejected.
+- A `MANUAL_MATCH` proposal naming two records of the **same** source role, or opposite `direction` → rejected.
+- A well-grounded verdict → accepted, citations populated.
+- Schema violations (bad enum, missing field, numeric confidence where a label is required) → rejected.
+
+Every one asserts the **negative**: the verdict does not reach `agent_investigations` with `grounding_passed = true`. A gate that fails open is worse than no gate, because it produces confident-looking output nobody re-checks.
+
+### 1.7 Agent tools — the read-only guarantee
+
+- **Assert the tool registry exports no mutating tool.** Enumerate the registry and assert every handler is read-only — no `INSERT`, `UPDATE` or `DELETE` reachable from any tool. This is the property ADR-049 claims, and a claim about a registry should be a test over that registry, not a comment above it.
+- `score_pair` returns **the same breakdown** the Tier 2 scorer produced for the same pair during the run. If these ever diverge, the agent is reasoning over numbers the engine never computed, which is the whole thing ADR-049 exists to prevent.
+- `rerun_subset_search` refuses bounds above its ceilings (pool 64, subset 10, 2000 ms) rather than clamping silently.
+- `search_transactions` truncates at 50 and **reports the truncation** in its result.
+
 ---
 
 ## 2. Golden-run snapshot
@@ -87,6 +107,7 @@ ADR-021's guarantee is the foundation of every accuracy claim in the project. "W
 | Not tested | Why |
 |---|---|
 | LLM output quality | Non-deterministic prose narrating decisions that are themselves tested. Asserting on generated text produces a flaky suite that tests the model, not the engine. (validation-strategy §9) |
+| Agent verdict *content* | Phase A makes no determinism claim (ADR-057). The suite tests the **gate**, the **tools** and the **budgets** — everything deterministic around the loop — and the verdicts themselves are measured against ground truth by `tools/score` (validation-strategy §5.7), which is a measurement rather than an assertion. Snapshotting agent output would produce a suite that fails on model variance and passes on wrong answers. |
 | React components | Manual verification against `ui-spec.md`. Component tests on a 7-screen dashboard built in one day would consume the day. |
 | Express routing | Routes are thin by construction (CLAUDE.md §4.3); the logic they delegate to is tested. |
 | Repository SQL in isolation | Exercised by every integration test that runs a fixture end to end. |

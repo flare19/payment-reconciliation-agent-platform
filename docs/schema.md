@@ -2,7 +2,7 @@
 
 Payment Reconciliation Engine · Razorpay AI Buildathon Track 4
 Status: **Locked.** Day 2 architecture, revised by the Day 4 design review (ADR-028…ADR-047). Changes require a new ADR.
-Companion docs: [api-contract.md](./api-contract.md) · [matching-engine.md](./matching-engine.md) · [adr-log.md](./adr-log.md) · [validation-strategy.md](./validation-strategy.md)
+Companion docs: [api-contract.md](./api-contract.md) · [matching-engine.md](./matching-engine.md) · [agent-design.md](./agent-design.md) · [adr-log.md](./adr-log.md) · [validation-strategy.md](./validation-strategy.md)
 
 **Division of ownership:** this doc owns *shapes* — tables, columns, tolerances, taxonomy, prompt. [matching-engine.md](./matching-engine.md) owns *execution* — stage order, candidate generation, assignment, determinism. If you are asking "what does the data look like", you are in the right file; if you are asking "what runs when", you are not.
 
@@ -43,6 +43,9 @@ runs
 learned_aliases            (run-independent; human-confirmed equivalences, reused across runs)
 explanation_cache          (run-independent; LLM output keyed by discrepancy SIGNATURE, not by record)
 score_reports              (per-run; written ONLY by the offline scorer, never by the engine — ADR-041)
+
+agent_investigations       (per-run; Phase A verdicts. Reads engine output; never writes to it — ADR-048)
+agent_questions            (per-run; Q&A agent transcripts — ADR-056)
 ```
 
 Two tables are deliberately **run-independent**: `learned_aliases` and `explanation_cache`. Everything else is scoped to a run so a re-run never mutates history. That separation is what makes the alias-learning feature measurable across runs (see §9).
@@ -698,11 +701,11 @@ CREATE TABLE audit_log (
   run_id         UUID REFERENCES runs(id),             -- NULL: alias admin actions outside any run
 
   event_type     TEXT NOT NULL,                        -- see catalogue below
-  subject_type   TEXT NOT NULL CHECK (subject_type IN ('transaction','match','exception','alias','run')),
+  subject_type   TEXT NOT NULL CHECK (subject_type IN ('transaction','match','exception','alias','run','investigation')),
   subject_id     UUID NOT NULL,
   transaction_id UUID REFERENCES transactions(id),     -- denormalized; NULL for alias/run-level events
 
-  actor_type     TEXT NOT NULL CHECK (actor_type IN ('engine','human','llm')),
+  actor_type     TEXT NOT NULL CHECK (actor_type IN ('engine','human','llm','agent')),
   actor_id       TEXT NOT NULL,                        -- 'matching-engine@v1', 'reviewer', 'claude-sonnet-5'
 
   tier           TEXT,        -- NULL for non-matching events
@@ -764,6 +767,9 @@ Writing is strictly serialized within a run (single writer, single process — s
 | Explain layer | `EXPLANATION_GENERATED`, `EXPLANATION_CACHE_HIT`, `EXPLANATION_FALLBACK_TEMPLATE` |
 | Aliases | `ALIAS_CREATED`, `ALIAS_REAFFIRMED`, `ALIAS_APPLIED`, `ALIAS_CONFLICT_SUPERSEDED`, `ALIAS_REVOKED`, `ALIAS_DOWNGRADED`, `ALIAS_PROMOTED` |
 | Scoring | `SCORE_REPORT_RECORDED` (ADR-041 — the offline scorer posting a measurement; `actor_type = 'human'`, `actor_id = 'tools/score'`) |
+| Analyst (Phase A) | `INVESTIGATION_STARTED`, `AGENT_STEP`, `AGENT_TOOL_CALLED`, `INVESTIGATION_CONCLUDED`, `AGENT_GROUNDING_FAILED`, `AGENT_BUDGET_EXHAUSTED`, `AGENT_PROPOSAL_ACCEPTED`, `AGENT_PROPOSAL_DECLINED`, `AGENT_QUESTION_ANSWERED` (ADR-052; `actor_type = 'agent'`, `actor_id = 'analyst@1.0.0'`) |
+
+**Agent traces live here rather than in a parallel table** (ADR-052) — the same argument ADR-014 made for aliases: one timeline, one query, and `sequence_no` ordering only holds within one table. The payoff is that agent reasoning is hash-chained and tamper-evident for free, which is a far stronger claim than a trace in an ordinary table. Adding `'agent'` and `'investigation'` to the CHECK constraints above is a one-line `ALTER`, which is exactly why §0 chose CHECK over native enum types.
 
 `RUN_STARTED` is the anchor of a run's chain and its `details` carry the **full resolved `config_snapshot`, the three `input_file_hashes` and the `reference_date`**. That single immutable entry is what makes a reported number reproducible by a sceptic: it fixes the configuration and the exact bytes it ran against, inside a tamper-evident structure, before any decision was made.
 
@@ -975,12 +981,87 @@ CREATE INDEX ix_score_run ON score_reports (run_id, scored_at DESC);
 
 **The engine never reads this table.** It is written by one endpoint and read by the dashboard and the accuracy report. ADR-021's guarantee — no ground truth anywhere in the decision path — is unchanged and is still enforced by the grep in `validation-strategy.md`.
 
-### 11.3 Two reporting rules that are non-negotiable
+### 11.3 `agent_investigations` and `agent_questions` — Phase A
+
+```sql
+CREATE TABLE agent_investigations (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id             UUID NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  exception_id       UUID NOT NULL REFERENCES exceptions(id) ON DELETE CASCADE,
+
+  status             TEXT NOT NULL CHECK (status IN ('running','concluded','failed')),
+  verdict            TEXT CHECK (verdict IN ('RESOLUTION_PROPOSED','CONFIRMED_UNRESOLVABLE',
+                                             'NEEDS_EXTERNAL_DATA','INSUFFICIENT_EVIDENCE')),
+  confidence         TEXT CHECK (confidence IN ('high','medium','low')),  -- a LABEL, never a number
+
+  proposed_action    JSONB,          -- NULL unless verdict = RESOLUTION_PROPOSED
+  reasoning          JSONB NOT NULL DEFAULT '[]'::jsonb,  -- ordered steps: tool, args, digest, inference
+  citations          UUID[] NOT NULL DEFAULT '{}',        -- ids the agent actually retrieved (A3-verified)
+
+  grounding_passed   BOOLEAN NOT NULL DEFAULT false,
+  grounding_failure  TEXT,           -- NULL unless the A3 gate rejected it
+  budget_exhausted   BOOLEAN NOT NULL DEFAULT false,
+
+  steps              INT NOT NULL DEFAULT 0,
+  tool_calls         INT NOT NULL DEFAULT 0,
+  tokens_in          INT, tokens_out INT, cost_usd NUMERIC(8,4),
+  model              TEXT NOT NULL,
+  prompt_version     TEXT NOT NULL,
+
+  human_disposition  TEXT CHECK (human_disposition IN ('accepted','declined')),  -- NULL until a human acts
+  resulting_match_id UUID REFERENCES matches(id),   -- NULL unless accepted into a manual match
+  started_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at        TIMESTAMPTZ
+);
+
+CREATE INDEX ix_inv_run     ON agent_investigations (run_id, verdict);
+CREATE INDEX ix_inv_exc     ON agent_investigations (exception_id);
+CREATE UNIQUE INDEX ux_inv_exc_active ON agent_investigations (exception_id)
+  WHERE status <> 'failed';   -- one live investigation per exception
+
+CREATE TABLE agent_questions (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id        UUID NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  question      TEXT NOT NULL,
+  answer        TEXT,
+  citations     UUID[] NOT NULL DEFAULT '{}',
+  steps         INT NOT NULL DEFAULT 0,
+  tool_calls    INT NOT NULL DEFAULT 0,
+  tokens_in     INT, tokens_out INT, cost_usd NUMERIC(8,4),
+  grounding_passed BOOLEAN NOT NULL DEFAULT false,
+  asked_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+**`confidence` is a text label and not a `NUMERIC(5,4)` on purpose.** The engine's confidence is computed; the agent's is asserted. Giving them the same type invites sorting, averaging and comparison between two quantities that are not the same kind of thing. Different shapes make that mistake impossible to make by accident.
+
+`citations` is populated only after the A3 grounding gate verifies each id appeared in a tool result from this investigation (ADR-050). An unverified citation never reaches the column.
+
+**Neither table is ever read by the engine.** Phase A runs after S14, and no module under `services/matching`, `services/classification` or `services/metrics` queries them.
+
+### 11.4 Agent metrics
+
+Operational figures (no ground truth) are computed from `agent_investigations` and served alongside run metrics:
+
+```json
+{ "investigationsRun": 20, "eligibleExceptions": 47,
+  "verdicts": { "RESOLUTION_PROPOSED": 18, "CONFIRMED_UNRESOLVABLE": 6,
+                "NEEDS_EXTERNAL_DATA": 3, "INSUFFICIENT_EVIDENCE": 3 },
+  "meanSteps": 6.2, "meanToolCalls": 8.4,
+  "groundingFailures": 1, "budgetExhaustions": 2,
+  "costUsd": 0.61, "cachedPrefixHitRate": 0.95,
+  "humanAccepted": 0, "humanDeclined": 0 }
+```
+
+Ground-truth-scored agent figures live in `score_reports` (§11.2, ADR-053) — never here, for the same reason engine accuracy doesn't.
+
+### 11.5 Two reporting rules that are non-negotiable
 
 1. **Never report the warm (alias-assisted) match rate as if it were the cold one.** Both numbers ship, always labelled. A match rate that quietly includes the benefit of prior human corrections is exactly the kind of unverified number the track's bar rejects.
 2. **`false_positives` is reported alongside match rate every time.** An 82% match rate with 5 wrong matches is worse than a 78% rate with 0, and the dashboard must make that comparison possible rather than hiding it behind a single headline percentage. Because false positives now live in `score_reports`, the API composes the two objects for the dashboard (`GET /api/runs/:runId/metrics` returns both) — the pairing is enforced at the contract level so no UI decision can separate them.
 3. **A `pending_review` match is not a match** (ADR-040). It is a proposal, counted in `review_burden`, never in `match_rate`. Counting proposals as reconciliations puts work a human hasn't done into the headline number.
 4. **Manual matches are excluded from engine match rate** (ADR-043) and reported in `tier_attribution.manual`. A human fixing something is not the engine matching it.
+5. **Agent proposals are excluded from engine match rate**, before and after human confirmation (ADR-051). An accepted proposal becomes a `manual` match, which rule 4 already excludes. A language model suggesting a fix is not the engine matching it either, and the accuracy report keeps an Engine block and an Analyst block rather than one merged figure.
 
 ---
 
@@ -990,7 +1071,7 @@ Not decided here, deliberately:
 
 - **Reviewer identity** — `created_by` / `reviewed_by` are free-text labels because auth is out of scope (ARCHITECTURE §5). Known limitation, not being fixed.
 - **Multi-currency** — column exists, logic doesn't. Would need FX rate sourcing. **Flagged as scope creep; not doing it.**
-- **Alias suggestion by the LLM** — the model could propose alias candidates for a human to approve. Tempting, and it would sit cleanly on the review queue. **Flagged as scope creep for v1** — it puts the LLM adjacent to a matching decision, which §10.1 exists to prevent. Revisit only if everything else is done by Day 10.
+- ~~**Alias suggestion by the LLM**~~ — **now in scope, under four stated conditions** (ADR-055). The original flag was correct for a v1 where the LLM sat inside the pipeline with no independent measurement of its output. The Analyst proposes aliases downstream of a finalized run, cannot modify engine output, requires human confirmation through an existing endpoint, and is scored against ground truth with hallucination as a build blocker. Those conditions did not exist on Day 2. §10.1's boundary — the LLM makes no decision *inside the engine* — is unchanged. See [agent-design.md](./agent-design.md).
 - **Alias export/import between environments** — useful for seeding the demo. Small, but not required. Decide on Day 9 if the demo needs it.
 - **Optimal (Hungarian) assignment** instead of greedy score-ordered assignment — arithmetically better, materially harder to explain in an audit trail. **Decided against**, with reasoning, in ADR-032.
 - **Transitive group closure across sources** — resolved: groups assemble from pairs sharing a member, conflicts are refused rather than resolved, and group confidence is the *minimum* of its pairs. See [matching-engine.md](./matching-engine.md) §10.

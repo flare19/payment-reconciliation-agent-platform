@@ -69,6 +69,13 @@ Companion docs: [adr-log.md](./adr-log.md) (ADR-005, ADR-026, ADR-046) · [api-c
 | `STALE_RUN_TIMEOUT_MINUTES` | `5` | no | On boot, non-terminal runs older than this are marked `failed` (ADR-046). Without it a crashed run polls forever mid-demo. |
 | `CANDIDATE_CAP` | `200` | no | Per-record candidate cap (ADR-033). Cap hits are surfaced, never silent. |
 | `BATCH_SUBSET_BUDGET_MS` | `250` | no | Subset-sum time budget per batch (ADR-038). |
+| `AGENT_ENABLED` | `true` | no | Master switch for Phase A. Off → the engine runs exactly as before. |
+| `AGENT_MAX_INVESTIGATIONS_PER_RUN` | `20` | no | Triage cap (ADR-054). |
+| `AGENT_MAX_COST_USD_PER_RUN` | `1.00` | no | Hard spend ceiling for Phase A. |
+| `AGENT_QA_ENABLED` | `true` | no | Kill switch for the public Q&A box (ADR-056). Flippable without a deploy. |
+| `AGENT_QA_MAX_QUESTIONS_PER_RUN` | `50` | no | Per-run Q&A ceiling. |
+| `AGENT_QA_MAX_QUESTIONS_PER_HOUR` | `100` | no | Global token bucket across the deployment. |
+| `AGENT_PROMPT_VERSION` | `agent-v1` | no | Separate from `PROMPT_VERSION`; the explain layer and the Analyst version independently. |
 
 ### `apps/web` (Vercel)
 
@@ -99,9 +106,13 @@ The rule, stated plainly: **`ANTHROPIC_API_KEY` exists in exactly two places —
 6. `GET /api/health` reports `llmConfigured: true|false` — a **boolean**, never a prefix, never a masked fragment. Enough to debug a deploy, useless to an attacker.
 7. **If a key is ever committed:** rotate it in the Anthropic console first, then worry about git history. Rewriting history without rotating is theatre — the key is already public.
 
-**Cost containment** is part of secrets hygiene here, because an exposed-or-not key with an unbounded loop behind it is the actual financial risk: `LLM_MAX_CALLS_PER_RUN` caps calls per run (ADR-018), the signature cache makes repeat runs nearly free, and no endpoint triggers LLM work except a reconciliation run. There is no user-facing "ask the AI" box, so there is no path for an anonymous visitor to burn quota — which matters, because the app has no auth (ARCHITECTURE §5).
+**Cost containment** is part of secrets hygiene here, because an exposed-or-not key with an unbounded loop behind it is the actual financial risk: `LLM_MAX_CALLS_PER_RUN` caps calls per run (ADR-018), the signature cache makes repeat runs nearly free, and `AGENT_MAX_COST_USD_PER_RUN` bounds Phase A. **Since ADR-056 there *is* a user-facing "ask the AI" box** (endpoint 28), so an anonymous visitor can spend tokens — which matters, because the app has no auth (ARCHITECTURE §5). That path is bounded by the Q&A quotas below rather than by its absence.
 
-> **Flagged, not decided:** the deployed demo is a public URL with no auth. Anyone with the link can trigger a run. Mitigations in place are the per-run call cap and the absence of any free-form LLM endpoint. Adding auth to close this properly is explicitly out of scope. If it becomes a real concern before submission, the cheap answer is a single shared-secret header on `POST /api/runs` only — **noted as an option, not adopted**, since it complicates the panel's ability to click around.
+> **Corrected 2026-08-26 (ADR-056).** This section previously claimed *"there is no user-facing 'ask the AI' box, so there is no path for an anonymous visitor to burn quota."* **That is no longer true.** `POST /api/runs/:runId/ask` (endpoint 28) is exactly such a box, on a public URL with no auth. Leaving the old claim in place while shipping the thing that breaks it would be precisely the quiet dishonesty this project is built to avoid, so it is corrected here rather than quietly dropped.
+>
+> **The exposure, stated plainly:** an anonymous visitor can spend Anthropic tokens by asking questions. **The mitigations:** `AGENT_QA_MAX_QUESTIONS_PER_RUN` (50), `AGENT_QA_MAX_QUESTIONS_PER_HOUR` (100, global), 6 steps and 1024 output tokens per question, `AGENT_MAX_COST_USD_PER_RUN` bounding Phase A, and `AGENT_QA_ENABLED` as a kill switch flippable without a deploy. Questions and their costs are logged, so abuse is visible rather than inferred from a bill at month end.
+>
+> **Flagged, not decided:** adding auth to close this properly remains explicitly out of scope. If it becomes a real concern before submission, the cheap answer is a shared-secret header on `POST /api/runs` and `POST /api/runs/:runId/ask` only — **noted as an option, not adopted**, since it complicates the panel's ability to click around. The kill switch is the answer if quota becomes a live problem during judging.
 
 ---
 
@@ -157,6 +168,9 @@ Push to `main` → both platforms rebuild automatically. No manual step.
 - [ ] `GET /api/runs/:runId/audit/verify` returns `valid: true` on the demo run (ADR-042)
 - [ ] A score report exists for the demo run, so the dashboard shows **measured** accuracy rather than "not measured" (ADR-041)
 - [ ] The scale-benchmark table is committed and linked from the README (ADR-045)
+- [ ] Phase A has run on the demo run: investigations visible, at least one `RESOLUTION_PROPOSED` and one `CONFIRMED_UNRESOLVABLE` on screen
+- [ ] **Hallucinated resolutions is 0** on the holdout run (ADR-053 — build blocker, verify before recording the video)
+- [ ] Q&A box answers a seeded question with a working citation link, and the rate limiter returns `429` when exercised
 - [ ] Excluded / rejected / duplicate row counts are visible via endpoint 24 — the denominator is inspectable
 - [ ] Alias management screen shows the seeded aliases and their lineage
 - [ ] CORS works from the production Vercel domain (test in a private window, not a warm tab)

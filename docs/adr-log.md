@@ -306,8 +306,76 @@ Twenty entries from a principal-engineer review of the Day 2 architecture, condu
 
 ---
 
+## 2026-08-26 (second pass) — The Analyst: an agentic layer downstream of the engine
+
+Ten entries adding an agent layer to close a gap against the track's problem statement, which asks for an *agent*. **Nothing in S0–S14, the scoring logic, the determinism guarantees or ADR-001…ADR-047 is modified**, with one explicit and stated exception: ADR-055 amends a single clause of ADR-017 under four conditions that did not exist when it was written.
+
+### ADR-048 · A separate agentic "Analyst" phase, strictly downstream of S14
+**Decision:** A new Phase A (A1 TRIAGE → A2 INVESTIGATE → A3 VALIDATE → A4 PROPOSE) runs after the engine completes, as a separate job with its own lifecycle. It reads engine output as finished fact and cannot modify a match, exception, confidence, category or metric. See [agent-design.md](./agent-design.md).
+**Because:** The track says "build an agent," and as designed through ADR-047 this system was a deterministic rules engine with one caption-writing LLM call that had a no-op template fallback. Fourteen of fifteen stages were arithmetic. Calling that an agent would be the same species of dishonesty the project is otherwise built to avoid, and a panel reading the architecture would see it immediately. But the fix could not be to make the *engine* agentic — ADR-017 is load-bearing, because accuracy is measurable only while the rules are deterministic and reproducible. The resolution is that a real finance-ops team has both a reconciliation system and an analyst who works the exception queue; this architecture had the first and not the second. The loop the track asks us to close is not closed when the engine finishes — it is closed when someone has dealt with the exceptions.
+**Rejected:** Making the matching engine agentic (destroys measured accuracy); rebranding S13 as "the agent" (dishonest); a multi-agent planner/researcher/critic framework (out of scope per ARCHITECTURE §5, and A3 is a better critic than a critic because it is code).
+**Revisit if:** never — but note that Phase A is a strict addition. If it is cut entirely the engine stands alone and nothing breaks.
+
+### ADR-049 · The agent chooses questions; deterministic code computes every answer
+**Decision:** The Analyst never performs arithmetic. It cannot compare amounts, compute a score, evaluate a date window or sum a subset. To learn whether two records match it calls `score_pair`, which runs **the same Tier 2 scorer S9 used**. Nine tools, and **not one of them writes** — the registry contains no mutating tool.
+**Because:** This is what makes the layer agentic without weakening a single accuracy claim. What is agentic is the strategy — which records to pull, which hypothesis to test, when to stop. What is deterministic is every fact reasoned over. Three properties follow: the agent cannot produce a number the engine wouldn't have produced; it cannot silently disagree with the engine, since disagreement requires showing a tool result; and its reasoning is auditable at the level of evidence rather than narrative. A read-only registry is also a stronger guarantee than any instruction in a prompt — the agent is not *trusted* not to write, it is *unable* to.
+**Rejected:** Letting the model do its own arithmetic on retrieved values (reintroduces non-reproducibility through the back door); giving the agent write tools with prompt-level guardrails.
+**Revisit if:** never.
+
+### ADR-050 · A deterministic grounding gate (A3) sits between agent output and the database
+**Decision:** Every verdict passes a non-LLM gate before persistence: JSON-schema validation, **citation grounding** (every id cited must appear in a tool result this investigation actually retrieved), and constraint checks (proposed match members are in-run, unmatched, same-direction, distinct roles). Failure downgrades the verdict to `INSUFFICIENT_EVIDENCE` with `groundingFailure: true`, and **does not retry**.
+**Because:** This converts "we hope it doesn't hallucinate" into "hallucination is structurally detected." An id the agent never retrieved is an id it invented, and that is checkable in code for a few lines. No retry, because a second attempt at a hallucinated answer is still an attempt at a hallucinated answer — and a retry loop would quietly select for whichever output happened to pass. Grounding failures are counted and reported rather than suppressed; a rising count means the prompt or tools need work.
+**Rejected:** Trusting the model's citations; an LLM-as-judge validator (adds a second non-deterministic component to check the first); retry-until-valid.
+**Revisit if:** never — this is the layer's central safety property.
+
+### ADR-051 · Agent proposals route through existing human endpoints and never enter engine match rate
+**Decision:** `MANUAL_MATCH` → endpoint 21, `CREATE_ALIAS` → endpoint 16, `MARK_WONT_FIX` → endpoint 20. **Zero new write endpoints.** A human-confirmed agent proposal becomes a `manual` match, which ADR-043 already excludes from engine match rate.
+**Because:** Two reasons. Architecturally, the human-confirmation flow, its audit trail and its UI already exist; the Analyst proposes into an inbox rather than needing one built, which is most of why this layer is buildable in the remaining time. For honesty, an agent proposal that counted toward the engine's match rate would let a language model inflate a number that claims to measure deterministic rules — the same error as counting a human's manual fix as an engine match, which ADR-043 already rejected. The precedent is set; this is consistent with it rather than novel.
+**Rejected:** Dedicated agent-approval endpoints; auto-applying high-confidence proposals without a human.
+**Revisit if:** never.
+
+### ADR-052 · Agent reasoning traces live in `audit_log`, not a parallel table
+**Decision:** Each agent step and tool call is written to `audit_log` with `actor_type = 'agent'` and `subject_type = 'investigation'`. New tables are limited to `agent_investigations` and `agent_questions`; there is no `agent_tool_calls` table.
+**Because:** Exactly the ADR-014 argument, which was right then and is right now: one timeline, one query, and the `sequence_no` ordering guarantee only holds within one table. It also means agent reasoning is **hash-chained and tamper-evident for free** (ADR-042) — a much stronger claim than a trace in an ordinary table, and one worth making to a finance panel. Adding values to the `actor_type` and `subject_type` CHECK constraints is a one-line `ALTER`, which is precisely why `schema.md` §0 chose CHECK over native enums.
+**Rejected:** A parallel `agent_tool_calls` table (duplicates the audit shape, and leaves the trace outside the hash chain).
+**Revisit if:** trace volume becomes a query problem, which at 20 investigations × ~16 calls it will not.
+
+### ADR-053 · The Analyst is scored against the same answer key; a hallucinated resolution is a build blocker
+**Decision:** Four ground-truth metrics in `score_reports`: **false-despair recovered** (headline), **proposal precision**, **hallucinated resolutions** (must be 0), **unresolvable agreement**. The Analyst never reads the key (ADR-021 unchanged, still enforced by the import grep).
+**Because:** `validation-strategy.md` §5.3 already defined false-despair rate as *"the honest measure of the engine's headroom, and the right place to look for the next day's work."* The Analyst is that next day's work, and the false-despair set is exactly its addressable market — so the existing validation harness scores the new layer almost for free. The hallucination bar is a build blocker rather than a metric for the same reason unresolvable recall is: the ~21 designed-unresolvable events are impossible for any correct engine *and any competent human*, verified by assertion during generation. An agent that resolves one has invented evidence, which is strictly worse than the engine's silence because it arrives wrapped in a confident reasoning chain.
+**Rejected:** Scoring the agent by human acceptance rate alone (measures the reviewer, not the agent); LLM-as-judge on reasoning quality (flagged as scope creep in validation-strategy §9 and still is).
+**Revisit if:** never.
+
+### ADR-054 · Bounded agency, and budget exhaustion is an honest verdict
+**Decision:** 10 steps, 16 tool calls, 60 s and 40 k tokens per investigation; 20 investigations and $1.00 per run. Exhaustion yields `INSUFFICIENT_EVIDENCE` with `budgetExhausted: true` — never a best guess. `rerun_subset_search` bounds are ceilinged at pool 64 / subset 10 / 2000 ms.
+**Because:** An unbounded agent loop against a paid API on a public no-auth demo is a financial risk, not a feature. And this mirrors the engine's existing honesty distinction exactly: `searchBoundExceeded` versus `searchExhausted` (ADR-038) already establishes that the system names which bound stopped it. An agent that produces its best guess when it runs out of room is worse than one that says it ran out of room.
+**Rejected:** Unbounded loops; silently truncating to a conclusion; letting the agent set its own compute ceilings.
+**Revisit if:** the step budget binds on more than ~10 % of investigations, which would mean the tools return too little per call.
+
+### ADR-055 · Amends ADR-017's "no LLM-proposed aliases" clause, under four stated conditions
+**Decision:** ADR-017 stands in full — the LLM still makes no matching or classification decision inside the engine, and S13 is unchanged. **One clause is amended:** its "Rejected: LLM-proposed aliases in v1" and the matching scope-creep flag in `schema.md` §12 no longer hold, *provided* all four of the following are true, which they are under ADR-048…ADR-053: (1) the proposal is downstream of a finalized, already-measured run; (2) it cannot modify engine output; (3) it requires human confirmation through an existing endpoint; (4) it is independently scored against ground truth with hallucination as a build blocker.
+**Because:** The ADR log's own rule is that decisions are never quietly edited — a reversal appends a superseding entry. An agent that proposes an alias *is* the thing ADR-017 rejected, and pretending otherwise would be exactly the kind of drift this log exists to prevent. The original rejection was correct **for a v1 in which the LLM sat inside the pipeline with no independent measurement of its output**; that was the entire stated reason ("it puts the LLM adjacent to a matching decision"). Those four conditions did not exist on Day 2 and now do. The rejection was right; its premise changed.
+**Rejected:** Silently building alias proposals and leaving ADR-017 as written; abandoning agent alias proposals to avoid amending an ADR (the alias loop is where agent leverage is most measurable, via the existing `wouldAlsoResolve` count).
+**Revisit if:** any one of the four conditions is weakened — in which case this amendment lapses and ADR-017's original clause resumes in full.
+
+### ADR-056 · A Q&A agent over finalized run results, and the quota exposure it creates
+**Decision:** `POST /api/runs/:runId/ask`, a second loop over the same read-only tools, bounded at 6 steps and 8 tool calls, grounding-gated identically. Mitigations: 50 questions per run, 100 per hour globally, 1024 output tokens, and an `AGENT_QA_ENABLED` kill switch.
+**Because:** The track names "Settlement Q&A agent" as an example direction, and the tool registry is already the hard part, so this is a second loop rather than a second system. The mitigations exist because **this endpoint falsifies a safety claim already written in `deployment.md` §4** — *"there is no user-facing 'ask the AI' box, so there is no path for an anonymous visitor to burn quota"* — on a demo that has no auth by design. Leaving a stale safety claim in a document while shipping the thing that breaks it would be precisely the quiet dishonesty this project exists to avoid, so the claim is corrected in the same change that breaks it.
+**Rejected:** Shipping Q&A without rate limits; adding auth (out of scope per ARCHITECTURE §5, and it would block a panelist from clicking around).
+**Revisit if:** observed cost exceeds the per-hour bucket, in which case lower the bucket rather than removing the feature.
+
+### ADR-057 · Agent runs are reproducible-in-evidence, not reproducible-in-output
+**Decision:** Phase A makes **no determinism claim** about its verdicts. It guarantees instead that every verdict's full transcript — every tool call, its arguments, its result digest, in order — is persisted in the hash-chained audit log, so any claim is checkable after the fact. A1 triage *selection and ordering* remain fully deterministic. Engine determinism (ADR-032) is untouched.
+**Because:** A tool-use loop at temperature 0 is more reproducible than at temperature 1 and still not byte-identical across runs, and claiming otherwise would be a lie a careful reader could catch in one rerun. The honest formulation separates two different guarantees: the engine's numbers are *reproducible*, and the agent's conclusions are *auditable*. Both are strong claims; only one of them is determinism, and conflating them would contaminate the engine's guarantee with the agent's looseness. Keeping triage deterministic means which exceptions get investigated is reproducible even when the investigations are not.
+**Rejected:** Claiming end-to-end determinism; caching agent verdicts by exception signature to fake it (would hide genuine variance and produce stale conclusions after a data change).
+**Revisit if:** never — this distinction is what keeps ADR-032's guarantee clean.
+
+---
+
 ## Superseded
 
 - **ADR-021** — not superseded, but *clarified* by **ADR-041** (2026-08-26): the no-truth-in-the-engine rule stands; ground-truth-derived metrics move to a separate `score_reports` table written by the offline scorer, because the metrics shape in `schema.md` §11 could not otherwise have been produced by anything.
 - **ADR-004 / ADR-012** — extended by **ADR-029** (2026-08-26): a fourth stage (identity-established short-circuit) sits between the alias tier and the fuzzy tier. The tier ordering itself is unchanged.
 - **ADR-010** — thresholds unchanged; the component weights they operate on were recalibrated by **ADR-030** (2026-08-26).
+- **ADR-017** — stands in full, with **one clause amended by ADR-055** (2026-08-26): "no LLM-proposed aliases in v1" no longer holds for downstream agent proposals that meet four stated conditions. The core rule — the LLM makes no matching or classification decision inside the engine — is unchanged and unweakened.
+- **ADR-043** — extended by **ADR-051** (2026-08-26): agent proposals route through the same human-confirmation endpoints and are excluded from engine match rate on the same reasoning.

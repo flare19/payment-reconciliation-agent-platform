@@ -46,10 +46,11 @@ Rationale for each is in [docs/adr-log.md](docs/adr-log.md). Don't re-litigate t
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | **The scope lock.** In-scope / out-of-scope, model routing, concrete numbers, build plan, risks. Read §4 and §5 before proposing anything new. |
 | [docs/schema.md](docs/schema.md) | **Data shapes.** Source schemas, normalized model, all table shapes, tolerance values, exception taxonomy + precedence, alias design, LLM prompt + caching, metrics. |
-| [docs/matching-engine.md](docs/matching-engine.md) | **Execution.** Stage order, determinism guarantees, blocking, assignment, dedup, identity short-circuit, batch decomposition, group assembly. `schema.md` says *what the data looks like*; this says *what runs when*. |
+| [docs/matching-engine.md](docs/matching-engine.md) | **Execution.** Stage order (S0–S14), determinism guarantees, blocking, assignment, dedup, identity short-circuit, batch decomposition, group assembly. `schema.md` says *what the data looks like*; this says *what runs when*. |
+| [docs/agent-design.md](docs/agent-design.md) | **The Analyst (Phase A).** The agentic layer downstream of S14: tool registry, investigation loop, grounding gate, self-correction, how the agent is measured. Read it before touching anything agent-related. |
 | [docs/api-contract.md](docs/api-contract.md) | Every endpoint. Frontend and backend are built on different days — **this contract is binding.** |
 | [docs/ui-spec.md](docs/ui-spec.md) | Screens, states, the demo path, and the pre-agreed degradation order if Day 12 overruns. |
-| [docs/adr-log.md](docs/adr-log.md) | Every locked decision with reasoning. Append-only. 47 entries. |
+| [docs/adr-log.md](docs/adr-log.md) | Every locked decision with reasoning. Append-only. 57 entries. |
 | [docs/validation-strategy.md](docs/validation-strategy.md) | Ground-truth generation, precision/recall scoring, the scale benchmark, the honesty protocols. |
 | [docs/testing-strategy.md](docs/testing-strategy.md) | What gets tested and what deliberately doesn't. |
 | [docs/deployment.md](docs/deployment.md) | Hosting, env vars, secrets, deploy steps. |
@@ -69,6 +70,7 @@ Rationale for each is in [docs/adr-log.md](docs/adr-log.md). Don't re-litigate t
 ├── docs/
 │   ├── schema.md
 │   ├── matching-engine.md
+│   ├── agent-design.md
 │   ├── api-contract.md
 │   ├── ui-spec.md
 │   ├── adr-log.md
@@ -87,6 +89,8 @@ Rationale for each is in [docs/adr-log.md](docs/adr-log.md). Don't re-litigate t
 │   │   │   │   │                  assignment, batch-decomposition, group-assembly
 │   │   │   │   ├── classification/ exception rules, precedence, severity
 │   │   │   │   ├── explain/       LLM client, signature hashing, cache, templates
+│   │   │   │   ├── agent/         Phase A: tool registry, investigation loop,
+│   │   │   │   │                  grounding gate, Q&A loop  ← READ-ONLY TOOLS ONLY
 │   │   │   │   └── metrics/       run metric computation
 │   │   │   ├── repositories/  ← ALL SQL lives here. Nowhere else.
 │   │   │   ├── db/            ← pool, migration runner
@@ -119,6 +123,9 @@ Rationale for each is in [docs/adr-log.md](docs/adr-log.md). Don't re-litigate t
 8. **Nothing in the decision path reads the wall clock.** Date comparisons use `runs.reference_date` (ADR-039). `Date.now()` is for `occurred_at` and timing only. A run must be a pure function of its inputs.
 9. **Every decision-feeding query has an explicit `ORDER BY`.** Determinism is the foundation of a measured accuracy claim; unspecified row order silently breaks it. (ADR-032)
 10. **Ground-truth-derived numbers go to `score_reports`, never to `runs.metrics`.** One table is the engine's account of itself, the other is a measurement. (ADR-041)
+11. **The agent's tool registry contains no mutating tool, ever.** Phase A proposes; humans dispose through endpoints 16/20/21. If you find yourself adding a write tool, the design has gone wrong. (ADR-049, ADR-051)
+12. **The agent never does arithmetic.** It calls `score_pair` / `rerun_subset_search`, which run the engine's own locked code. A number in a reasoning chain that the engine didn't compute is a bug. (ADR-049)
+13. **Nothing in Phase A may appear in S0–S14.** The engine must run identically with `AGENT_ENABLED=false`. (ADR-048)
 
 ---
 
@@ -203,6 +210,8 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
   1. Tier 1's date window contradicted §5.2, so every T+2 card settlement would have fallen through to fuzzy. (ADR-028)
   2. `AMOUNT_MISMATCH` and `TIMING_DRIFT` were **structurally unreachable** — a strong-anchor pair with a bad amount scored 0.70 and became a review-queue proposal; one with a bad date scored exactly 0.85 and auto-matched silently. (ADR-029)
   3. With those pairs correctly removed from the fuzzy tier's domain, **nothing at Tier 2 could ever auto-confirm** (max reachable score 0.80 vs a 0.85 threshold). (ADR-030)
+
+**Day 4, second pass (Aug 26)** — closed a gap against the track's problem statement, which asks for an *agent*. The architecture as of ADR-047 was a deterministic rules engine whose only AI touchpoint was S13 writing captions for finished decisions, with a template fallback. Added **the Analyst (Phase A)**: a bounded, tool-using agent that runs strictly after S14, works the exception queue, and is measured against the same answer key. ADR-048…ADR-057, plus [docs/agent-design.md](docs/agent-design.md). **The engine, its scoring, its tiers and its determinism guarantees are untouched** — the one deliberate exception is ADR-055, which amends a single clause of ADR-017 ("no LLM-proposed aliases") under four stated conditions, rather than quietly contradicting it.
 
 **Next: Day 5 (Aug 27) — scaffold `apps/api` against [docs/schema.md](docs/schema.md) and [docs/matching-engine.md](docs/matching-engine.md), then deploy to Railway + Vercel the same day** (ARCHITECTURE §7.4). The full day-by-day plan is ARCHITECTURE §8.
 

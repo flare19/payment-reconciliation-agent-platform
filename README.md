@@ -34,17 +34,35 @@ Not policies — properties. Each one makes a class of wrong answer unreachable 
 
 ---
 
-## Architecture
+## Architecture — an engine and an analyst
 
 ```
+THE ENGINE   (deterministic, reproducible, measured)
 3 messy CSVs → INGEST → DEDUPE → TIER 1 exact → TIER 1.5 alias
              → IDENTITY short-circuit → TIER 2 fuzzy → BATCH decomposition
-             → CLASSIFY (8 categories) → EXPLAIN (LLM) → AUDIT (hash-chained)
+             → CLASSIFY (8 categories) → EXPLAIN → METRICS
+                                │
+                                ▼  engine output is now final
+THE ANALYST  (agentic, bounded, measured against the same key)
+             TRIAGE → INVESTIGATE (multi-step tool use) → VALIDATE → PROPOSE
+                                │
+                                ▼
+                        human confirmation
 ```
+
+A real finance team has a reconciliation system *and* an analyst who works the exception queue it produces. The engine is the first. **The Analyst is the second** — a tool-using agent that investigates exceptions the engine could not resolve, and proposes resolutions with cited reasoning chains a human can check.
+
+The principle that keeps it honest:
+
+> **The agent chooses which questions to ask. Deterministic code computes every answer.**
+
+It never does arithmetic. To learn whether two records match it calls the same scorer the engine used, and gets the same answer the engine would have got. What is agentic is the strategy — which records to pull, which hypothesis to test, when to stop. Its tool registry contains **no mutating tool**, so it cannot write to the database; it proposes, and a human disposes. And a deterministic gate checks every citation against tool calls the agent actually made, so an id it never retrieved is an id it invented — and the verdict is rejected.
+
+It is scored against the same answer key as the engine, which neither can read. **A resolution proposed for a designed-unresolvable exception is a build blocker, not a metric.**
 
 **Stack:** TypeScript everywhere · Node 22 · Express 5 · PostgreSQL 16 (raw SQL, no ORM, no Redis) · Next.js · Anthropic `claude-sonnet-5` for the explain layer only · Vercel + Railway.
 
-**The LLM never decides anything.** It receives a decision the deterministic rules have already made and writes a sentence about it. That is what makes a measured accuracy number mean anything — accuracy is a property of the rules, and the rules are deterministic and reproducible from a config snapshot. If the Anthropic API is down, the run still completes with template explanations.
+**The LLM never decides anything inside the engine.** It receives a decision the deterministic rules have already made and writes a sentence about it. That is what makes a measured accuracy number mean anything — accuracy is a property of the rules, and the rules are deterministic and reproducible from a config snapshot. If the Anthropic API is down, the run still completes with template explanations.
 
 Explanations are cached by **discrepancy signature** — the structural shape of a problem with all specifics stripped — so ~75 exceptions collapse to ~20 distinct shapes and cost stays `O(distinct shapes)` rather than `O(exceptions)`. Re-running the full batch is therefore free, which matters because the track disqualifies cherry-picking.
 
@@ -59,11 +77,12 @@ This repo is documented before it is built. Every locked decision has a reason r
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Scope lock, concrete numbers, build plan, risks |
 | [docs/schema.md](docs/schema.md) | Data shapes: tables, tolerances, taxonomy, prompt design |
 | [docs/matching-engine.md](docs/matching-engine.md) | Execution: stage order, determinism, blocking, assignment |
-| [docs/api-contract.md](docs/api-contract.md) | All 24 endpoints |
+| [docs/agent-design.md](docs/agent-design.md) | The Analyst: tool registry, investigation loop, grounding gate, agent scoring |
+| [docs/api-contract.md](docs/api-contract.md) | All 28 endpoints |
 | [docs/ui-spec.md](docs/ui-spec.md) | Screens, the demo path, the degradation plan |
 | [docs/validation-strategy.md](docs/validation-strategy.md) | Ground truth, scoring, the honesty protocols |
 | [docs/testing-strategy.md](docs/testing-strategy.md) | What gets tested, and what deliberately doesn't |
-| [docs/adr-log.md](docs/adr-log.md) | 47 decisions with reasoning. Append-only. |
+| [docs/adr-log.md](docs/adr-log.md) | 57 decisions with reasoning. Append-only. |
 | [docs/what-broke.md](docs/what-broke.md) | Written daily. Including the day a design review found three unreachable code paths before any code existed. |
 
 ---

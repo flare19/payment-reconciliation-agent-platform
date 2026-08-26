@@ -1,7 +1,7 @@
 # ARCHITECTURE
 
 Payment Reconciliation Engine · Razorpay AI Buildathon Track 4 (AI Finance Controller)
-Locked 2026-08-24 · Revised 2026-08-26 (Day 4 design review, ADR-028…ADR-047) · **Submission 2026-09-05**
+Locked 2026-08-24 · Revised 2026-08-26 (Day 4 design review, ADR-028…ADR-047; Analyst layer, ADR-048…ADR-057) · **Submission 2026-09-05**
 
 **This file is the scope lock.** Every other doc references it. If something is not in §4, it is not being built; if it is in §5, it is not being built *on purpose*, and the reason is recorded.
 
@@ -53,16 +53,26 @@ Three consequences that govern this entire repo:
   │ EXPLAIN     │  never decides anything · never on the critical path
   └──────┬──────┘
          ▼
+  ═══════════════════ engine output is now FINAL ═══════════════════
+         │
+         ▼
+  ┌─────────────┐  A1 triage · A2 investigate · A3 validate · A4 propose
+  │ THE ANALYST │  agentic: multi-step tool use over the exception queue
+  │  (Phase A)  │  reads engine output as fact · cannot modify it
+  └──────┬──────┘  see docs/agent-design.md
+         ▼
   ┌─────────────┐        ┌──────────────────┐        ┌──────────────┐
   │ AUDIT LOG   │───────►│ API (Express)    │───────►│ Dashboard    │
-  │ hash-chained│        │ 24 endpoints     │        │ Next.js      │
+  │ hash-chained│        │ 28 endpoints     │        │ Next.js      │
   └─────────────┘        └──────────────────┘        └──────────────┘
                                   ▲
                                   │ score report (POST, offline scorer)
                          ┌────────┴─────────┐
-                         │ tools/score/     │  joins engine output ↔ answer key
-                         └──────────────────┘
+                         │ tools/score/     │  joins engine AND agent output
+                         └──────────────────┘  ↔ the same answer key
 ```
+
+**Two halves, measured separately.** The Engine (S0–S14) is deterministic and reproducible; its accuracy is the headline number. The Analyst (A1–A4) is agentic and bounded; it works the exception queue the Engine produces and is scored against the same answer key, which neither of them can read. Their numbers are never merged — see §4.11 and ADR-051.
 
 ---
 
@@ -108,8 +118,25 @@ Next.js. Landing on a completed run with match rate, false-positive count and co
 ### 4.9 Validation harness
 A synthetic data generator that emits the answer key as a byproduct of generation, and an offline scorer that joins engine output to that key. Two seeds: one to develop against, one held out for the reported numbers (ADR-027). A scale benchmark at 1k/10k/100k records establishing the throughput curve (ADR-045).
 
-### 4.10 Human-in-the-loop actions
-Approve or reject a flagged match; teach an alias while approving; resolve or dismiss an exception with a reason; **manually create a match** the engine did not propose (ADR-043). Every one of these writes to the audit log. This is what makes the exception list actionable rather than a report.
+### 4.10 The Analyst — the agentic layer
+
+A tool-using agent that runs **strictly after S14** and works the exception queue. Given an exception, it plans, calls read-only tools against the run's real data, observes, continues, and produces a verdict with a cited reasoning chain: a concrete resolution proposal, a confirmation that the exception is genuinely unresolvable, a statement of what external document would be needed, or an admission that it ran out of budget.
+
+Four properties make it defensible rather than decorative:
+
+1. **The agent chooses which questions to ask; deterministic code computes every answer** (ADR-049). It never does arithmetic — to learn whether two records match it calls the same scorer S9 used, and gets the same answer S9 would have got. What is agentic is the strategy; what is deterministic is every fact it reasons over.
+2. **The tool registry contains no mutating tool.** The agent is not trusted not to write; it is unable to. Proposals route through the human-confirmation endpoints that already exist (ADR-051), so there are zero new write paths.
+3. **A deterministic gate (A3) sits between the agent and the database** (ADR-050): schema validation, plus citation grounding — an id cited but never retrieved by an actual tool call is an id the agent invented, and the verdict is rejected.
+4. **It is measured against the same answer key as the engine** (ADR-053), attacking the false-despair rate that `validation-strategy.md` §5.3 already identified as the engine's honest headroom. A resolution proposed for a designed-unresolvable exception is a **build blocker**, not a metric.
+
+It also self-corrects against the engine's own honest dead ends: when S10's bounded subset-sum reports `searchBoundExceeded`, the Analyst can re-run the same search with wider bounds — and *both* outcomes improve the submission, because failing at 2× bounds upgrades the exception from "we gave up" to "we proved it." Full design in [docs/agent-design.md](docs/agent-design.md).
+
+A second loop over the same tools answers natural-language questions about a finished run (ADR-056), which is the track's own "Settlement Q&A agent" example direction.
+
+### 4.11 Human-in-the-loop actions
+Approve or reject a flagged match; teach an alias while approving; resolve or dismiss an exception with a reason; **manually create a match** the engine did not propose (ADR-043); accept or decline an Analyst proposal. Every one of these writes to the audit log. This is what makes the exception list actionable rather than a report.
+
+**Agent proposals and manual fixes are excluded from the engine's match rate** (ADR-043, ADR-051). A human fixing something is not the engine matching it, and neither is a language model suggesting it. The accuracy report shows an Engine block and an Analyst block, never a merged figure.
 
 ---
 
@@ -122,7 +149,10 @@ Locked. Not "not yet" — **not in this build**, with the reason recorded so it 
 | **Kubernetes, container orchestration, service mesh, Helm, Dockerfiles we author** | Worth learning, worth zero rubric points here. Deliberately parked as a separate standalone learning project so the interest has a home that isn't this repo. (ADR-005) |
 | Fraud / risk scoring | A different product. Reconciliation is about agreement between records, not about the intent behind them. |
 | Cash-flow forecasting | Prediction, not reconciliation. |
-| Multi-agent frameworks | The LLM has exactly one bounded job here (ADR-017). An agent framework around a single templated call is ceremony. |
+| Multi-agent frameworks (planner / researcher / critic) | The Analyst is one bounded loop with nine tools and a deterministic validation gate (§4.10). The "critic" role is A3, and A3 is better than a critic because it is code rather than a second non-deterministic component checking the first. |
+| An auditor agent reviewing auto-confirmed matches | Genuinely tempting — it would attack precision rather than recall. Rejected because it puts a model in a position to second-guess a finalized engine decision, which is the boundary the whole Analyst design exists to hold. False positives are found by the scorer against ground truth: a measurement, not an opinion. (agent-design §10) |
+| Agent-in-the-loop during matching | Violates ADR-017 and makes engine output non-reproducible. The ambiguity guard's value is that it *refuses* to decide; handing that decision to a model destroys exactly what makes it valuable. |
+| Agent-tuned tolerances or thresholds | Would make `config_snapshot` a function of model output, destroying reproducibility. The agent may observe that a bound was binding; it may not change a shipped default. |
 | Auth, multi-tenancy, user accounts | Reviewer identity is a free-text label. Adding auth would consume days and add nothing the panel is grading. Consequences flagged in [docs/deployment.md](docs/deployment.md) §4. |
 | Mobile / responsive-first design | Desktop dashboard. A finance controller reconciles at a desk. |
 | Fine-tuning | No training data, no need; the model writes prose, it doesn't classify. |
@@ -164,6 +194,13 @@ Architecture that doesn't commit to numbers isn't architecture. Full reasoning f
 | LLM batching | ≤ 10 signatures per request, hard cap 8 calls per run | ADR-018 |
 | Poll interval | 750 ms | ADR-024 |
 | Max upload size | 10 MB per file | api-contract §0 |
+| Analyst investigations per run | 20, deterministically triaged | ADR-054 |
+| Analyst steps / tool calls per investigation | 10 / 16, 60 s, 40 k tokens | ADR-054 |
+| Analyst cost cap per run | $1.00 | ADR-054 |
+| `rerun_subset_search` ceilings | pool ≤ 64, subset ≤ 10, ≤ 2000 ms | ADR-054 |
+| Q&A bounds | 6 steps, 8 tool calls, 1024 output tokens | ADR-056 |
+| Q&A rate limits | 50 per run, 100 per hour globally | ADR-056 |
+| Hallucinated resolutions | **0 — build blocker** | ADR-053 |
 
 **Mandatory per audit entry:** `event_type`, `subject_type`, `subject_id`, `actor_type`, `actor_id`, `reason`, `occurred_at`, `prev_hash`, `entry_hash`.
 
@@ -201,13 +238,17 @@ Day 1–2 are complete (decisions and documentation). Day 4 is this design revie
 | 7 | Aug 29 | Ingestion: three parsers, normalizers, exclusion rules, rejected-row handling, `RECORD_INGESTED` audit. |
 | 8 | Aug 30 | Matching engine: dedup pass, Tier 1, Tier 1.5, blocking, candidate generation. |
 | 9 | Aug 31 | Matching engine: Tier 2 scorer, assignment, ambiguity guard, batch decomposition, group assembly. |
-| 10 | Sep 1 | Classifier + precedence + severity + evidence. Explain layer + signature cache + templates. |
-| 11 | Sep 2 | Scorer (`tools/score`), score-report endpoint, metrics. **First honest cold-run number.** Scale benchmark. |
-| 12 | Sep 3 | Frontend: dashboard, exception list, drill-down, review queue, alias screen, audit view. |
-| 13 | Sep 4 | Holdout run, accuracy report, README, pitch video, build-challenges write-up, pre-submission checklist. |
-| — | Sep 5 | **Submit.** |
+| 10 | Sep 1 | Classifier (S12) + precedence + severity + evidence. **Agent tool registry** — thin wrappers over repository functions the classifier needs anyway. |
+| 11 | Sep 2 | Explain layer (S13) + signature cache + templates. **Analyst loop A1–A4** + grounding gate. Shared Anthropic client, prompt versioning and cost caps across both. |
+| 12 | Sep 3 | Scorer (`tools/score`), score-report endpoint, engine **and** agent metrics. **First honest cold-run number.** Scale benchmark. |
+| 13 | Sep 4 | Frontend: dashboard, exception list, drill-down, review queue, alias screen, audit view, Analyst panel, Q&A box. |
+| — | Sep 5 | Holdout run, accuracy report, README, pitch video, build-challenges write-up, submit. |
 
-Frontend on Day 12 is deliberate and is the plan's main risk (§10). The API contract is binding from Day 4 precisely so the frontend can be built against a spec rather than against a moving backend.
+**Two schedule notes, stated rather than discovered later.**
+
+The Analyst costs roughly a day and a half, taken by pairing it with the explain layer on Day 11 (they share the Anthropic client, prompt versioning, cost caps and audit integration) and by building its read tools on Day 10 alongside the classifier that needs the same queries. It does not get its own block because it does not need one.
+
+That compresses the frontend to a single day and moves the video to Sep 5. Both are real risks (§10) with pre-decided degradation orders — [ui-spec.md](docs/ui-spec.md) §8 for screens, [agent-design.md](docs/agent-design.md) §11 for the Analyst. The API contract has been binding since Day 4 precisely so no design work happens on a build day.
 
 ---
 
@@ -219,6 +260,8 @@ Three things are submitted, and all three are graded:
 2. **5-minute pitch video** — demo path defined in [docs/ui-spec.md](docs/ui-spec.md) §7. The narrative is: here is the honest ceiling, here is what we hit against it, here is what we refused to guess, and here is the audit trail proving it.
 3. **Written build-challenges answer** — sourced directly from `what-broke.md`, which is why that file is written daily rather than reconstructed.
 
+The two-block accuracy report (Engine, then Analyst — agent-design §7) is the artifact that answers the track's bar most directly: throughput and measured accuracy from the Engine block, an honest exception list from the Analyst block showing what judgment recovered and what it confirmed could not be recovered.
+
 The accuracy report generated by `tools/score` (validation-strategy §8) is the single most important artifact inside the repo. It is what converts "a number the code printed" into "measured accuracy".
 
 ---
@@ -227,7 +270,10 @@ The accuracy report generated by `tools/score` (validation-strategy §8) is the 
 
 | Risk | Mitigation |
 |---|---|
-| **Frontend compressed into Day 12.** The largest schedule risk. | The API contract is binding from Day 4, so no design work happens on Day 12. UI spec written up front. If Day 12 overruns, the exception list and metrics panel ship and the alias-management screen degrades to a read-only table — decided in advance, in ui-spec §8. |
+| **Frontend compressed into Day 13.** The largest schedule risk, and worse than it was before the Analyst took a day. | The API contract is binding from Day 4, so no design work happens on a build day. If Day 13 overruns, the exception list and metrics panel ship and the alias-management screen degrades to a read-only table — decided in advance, in ui-spec §8. |
+| **Pitch video on submission day (Sep 5).** | The holdout run and accuracy report are a single command and can be produced any evening from Day 12; only the video and README genuinely need Sep 5. A rehearsal-quality video recorded on Day 13 is the fallback and is better than none. |
+| **The Analyst hallucinates a resolution for a designed-unresolvable exception.** | Treated as a build blocker, not a metric (ADR-053). Three structural defences: a read-only tool registry, the A3 citation-grounding gate (ADR-050), and budget exhaustion returning an honest verdict rather than a best guess (ADR-054). |
+| **The Analyst cannot be finished in time.** | It is a strict addition — nothing in the engine depends on it. Degradation order is pre-decided (agent-design §11): investigation on the two highest-value categories ships first, the Q&A agent is cut first. If the whole phase is cut, the engine stands alone and the submission is honest about what it is. |
 | **Cold-run match rate lands embarrassingly low.** | It is *reported anyway* (ADR-020, ADR-027). A published ceiling and an honest number below it is the thesis of the project; a suspiciously high number is the failure mode. `false-despair rate` (validation-strategy §5.3) tells us where the headroom is. |
 | **Candidate search degrades non-linearly at scale.** | Blocking strategy specified before implementation (ADR-033); scale benchmark at 1k/10k/100k publishes the actual curve (ADR-045). |
 | **The engine invents a match that cannot exist.** | The single most damning failure available here. Unresolvable recall is a build-blocker, not a metric (validation-strategy §5.3). Ambiguity guard, contradicted-anchor disqualification, direction gate (ADR-035) and no-anchor auto-confirm impossibility (ADR-030) are the four structural defences. |

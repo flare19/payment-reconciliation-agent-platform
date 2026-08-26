@@ -63,6 +63,10 @@ Notes that are not optional:
 
 **Block 4 — throughput and LLM cost.** Engine and wall-clock rates side by side, the per-stage breakdown behind a disclosure, and the scale-benchmark curve as a small sparkline with a link. LLM cost as `3 API calls · 53 cache hits · 22 distinct shapes` — a line that tells an engineer more about the design than a paragraph would.
 
+**Block 4.5 — the Analyst.** Investigations run, verdict distribution as a small stacked bar, and three figures that matter: false-despair recovered, proposal precision as a raw fraction, and **hallucinated resolutions: 0**. That last tile stays on screen even at zero — especially at zero. It is the agent's equivalent of the false-positive tile, and it exists so a viewer can see the agent is held to the same standard as the engine.
+
+Below it, the **Q&A box** with four pre-seeded example questions. A blank text box in a five-minute pitch is a way to lose thirty seconds and discover a question the agent answers badly.
+
 **Block 5 — run picker.** Cold/warm run pairs listed together and labelled, never as two unrelated runs in a list.
 
 ---
@@ -100,7 +104,14 @@ Order on the page:
    - `displacedByMatchId` → *"The bank record matched a stronger claim (score 0.95)"*, linking to that match.
 5. **Linked records** — the raw source rows, side by side, with differing fields highlighted. Side-by-side raw rows are what makes a reconciliation demo land; a panelist can verify the engine's reasoning with their own eyes.
 6. **Actions** — `Resolve` / `Won't fix` (note required) and `Create match manually` (reason required, opens a record picker).
-7. **Audit trail** for this exception, collapsed by default, expanding to the full chronological list.
+7. **The Analyst panel** — present when an investigation exists for this exception:
+   - Verdict and confidence as a **label** (`high`/`medium`/`low`), rendered visually distinct from the engine's numeric confidence. They are different kinds of quantity and must never look like the same widget.
+   - The reasoning chain as numbered steps. Each shows the tool called, the **`resultDigest` recorded by the runtime**, and the model's `inference` — in visibly separate fields. That separation is what lets a reader check the reasoning against the evidence rather than against a paraphrase of it.
+   - Citations render as chips linking to the actual records. A reader must be able to click through and verify.
+   - `groundingFailure` or `budgetExhausted` render as an explicit banner, never as a missing panel. An agent that ran out of room and said so is a feature; hiding it would not be.
+   - The proposed action with a single confirm button routing to the existing endpoint (21 / 16 / 20), plus **Decline**. Both write to the audit log.
+   - `CONFIRMED_UNRESOLVABLE` gets the same visual weight as a proposal. The agent agreeing that something cannot be resolved is a result, not an empty state — it is the verdict that proves the agent is not a yes-machine.
+8. **Audit trail** for this exception, collapsed by default, expanding to the full chronological list. Agent steps appear here too (`actorType: agent`), in the same hash-chained timeline as everything else.
 
 ---
 
@@ -116,7 +127,7 @@ The conflict interlock (ADR-025) renders as an inline warning after a `409`, sho
 
 ## 6. Audit screen
 
-Filterable by event type and actor. Three actor colours (engine / human / LLM) so the mix is readable at a glance — a viewer should be able to see that the LLM appears only in `EXPLANATION_*` events, which is ADR-017 made visible.
+Filterable by event type and actor. **Four** actor colours (engine / human / llm / agent) so the mix is readable at a glance — a viewer should be able to see that `llm` appears only in `EXPLANATION_*` events and `agent` only in `INVESTIGATION_*` and `AGENT_*` events, never inside a `MATCH_CONFIRMED_*`. That is ADR-017 and ADR-048's boundary made visible in one screen, and a better answer to "does the model decide anything?" than any paragraph.
 
 **Chain verification is a button**, not a background check: *"Verify audit chain"* → calls endpoint 22 → renders `✓ 4,412 entries verified, chain intact`. Running it live is a stronger demonstration than any description of a trigger, and it takes one click during the pitch.
 
@@ -130,12 +141,15 @@ The five-minute video and the panel walkthrough follow one route. Every screen a
 2. Point at false positives sitting next to match rate. State the thesis: *refusing to guess is the feature.*
 3. Tier attribution bar — how the number was earned, not just what it is.
 4. Into `/exceptions` — 65 exceptions, sorted by money at risk, explanations visible while scrolling.
-5. Open one `AMBIGUOUS_MATCH` — two candidates within 0.03 of each other, engine refused to choose. *This is the moment the pitch is built around.*
+5. Open one `AMBIGUOUS_MATCH` — two candidates within 0.03 of each other, engine refused to choose. *This is the moment the engine half of the pitch is built around.*
 6. Open one `UNSPLITTABLE_BATCH` with `searchExhausted` — the engine proved the decomposition doesn't exist.
-7. Into `/review` — teach one alias, show `wouldAlsoResolve: 6`.
-8. Show the cold/warm pair and the leverage ratio: *9 corrections resolved 27 records.*
-9. Into `/audit` — verify the chain live.
-10. Close on the accuracy report: measured against a key that existed before the engine ran.
+7. **The Analyst moment.** Open an `UNSPLITTABLE_BATCH` where the engine reported `searchBoundExceeded` instead, and walk the investigation: the agent noticed the engine stopped on a pool cap rather than a proof, widened the search *using the engine's own subset-sum code*, and found a unique six-payment decomposition. State the principle plainly — **the agent chose which question to ask; deterministic code computed the answer.**
+8. Show one `CONFIRMED_UNRESOLVABLE` investigation, then the `hallucinated resolutions: 0` tile. The agent does not resolve everything, and it is measured on that.
+9. Ask the Q&A box one seeded question; click a citation through to the underlying record.
+10. Into `/review` — teach one alias, show `wouldAlsoResolve: 6`.
+11. Show the cold/warm pair and the leverage ratio: *9 corrections resolved 27 records.*
+12. Into `/audit` — verify the chain live, with agent steps visible in the same timeline.
+13. Close on the two-block accuracy report: Engine and Analyst, both measured against a key that existed before either ran.
 
 ---
 
@@ -148,6 +162,8 @@ Day 12 is one day for seven screens. **Decided now, in advance, rather than at 2
 | **1 — must ship** | Dashboard, exception list, exception detail | These three *are* the submission. Nothing else is cut before these are polished. |
 | **2 — ship plain** | Review queue, audit screen | Functional, unstyled beyond the shared components. |
 | **3 — degrade** | Aliases, matches browser | Fall back to read-only tables. Alias *creation* still works from the review queue, which is where it actually matters. |
+
+**Analyst surfaces follow their own order** (agent-design §11), interleaved with the above: the exception-detail Analyst panel ships at priority 1 — it is where the whole layer becomes visible, and without it the agent is invisible to a judge. The dashboard Analyst block is priority 2. **The Q&A box is priority 3 and the first thing cut in the entire frontend** — it is the most demoable piece and the least defensible one, and if something has to go it should be the thing that impresses rather than the thing that measures.
 
 Cut order is bottom-up and non-negotiable. The exception list is never the thing that gets cut.
 
