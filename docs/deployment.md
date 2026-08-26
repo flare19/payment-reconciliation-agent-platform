@@ -37,10 +37,43 @@ Companion docs: [adr-log.md](./adr-log.md) (ADR-005, ADR-026, ADR-046) · [api-c
 |---|---|---|
 | Frontend | **Vercel** | Next.js's first-party host. Push-to-deploy, automatic HTTPS, preview URLs per branch, zero config. Free tier is far beyond what a demo needs. |
 | API | **Railway** | Deploys a Node service straight from the repo with no Dockerfile. Build/start commands are two text fields. |
-| Database | **Railway PostgreSQL** | Provisioned inside the *same* project as the API, so `DATABASE_URL` is injected as a reference variable over the private network. No connection strings copied by hand, no public database port, no VPC configuration. |
+| Database | **Railway PostgreSQL 16** | Provisioned inside the *same* project as the API, so `DATABASE_URL` is injected as a reference variable over the private network. No connection strings copied by hand, no public database port, no VPC configuration. **Pin the major version to 16 when provisioning** — see §2.1. |
 | LLM | **Anthropic API** | Called only from the API service. |
 
 **Why Railway over Render** (the closest alternative): Render is a fine fallback and would need no architectural change, but Railway's service-to-database variable referencing means the API's `DATABASE_URL` is never typed anywhere — it's a reference the platform resolves. One fewer secret in play, one fewer thing to leak. Recorded as ADR-026.
+
+### 2.1 Postgres major version — pinned to 16, and validated against 16
+
+The schema targets **PostgreSQL 16**, and the migrations are tested against a real
+16.x server, not only against whatever a developer happens to have installed.
+
+This is not pedantry. A local machine running 17 while production runs 16 is the
+same class of problem as the audit trigger that installed cleanly and only failed
+when exercised: the divergence is invisible until the environment that matters
+behaves differently, and by then it is Day 12. "Nothing I used happens to be
+version-specific" is a claim about code written by the same process that wrote the
+code — it needs an independent check, and the check is cheap.
+
+**What was actually done:** `apps/api/migrations/001`–`010` and the full invariant
+suite in `tests/integration/migrations.test.ts` were run against `postgres:16`
+(16.15) as well as a local 17. Both apply cleanly and all invariants fire
+identically. Re-run it with:
+
+```bash
+docker run -d --name recon-pg16 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=recon16 -p 55416:5432 postgres:16
+TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55416/recon16 npm test --prefix apps/api
+```
+
+A stock `postgres:16` image used as a throwaway test fixture is **not** a
+contradiction of ADR-005: that ADR rules out container orchestration and
+authoring deployment containers, not using an off-the-shelf image as a local test
+dependency. Nothing about the deploy topology changes.
+
+**When provisioning on Railway**, pick Postgres 16 explicitly rather than
+accepting the default, and record the actual server version in the Day 5 deploy
+notes. If Railway only offers a newer major, that is fine — but then re-run the
+suite against that major and update this section, rather than assuming forward
+compatibility.
 
 **Fallback plan** (worth having in advance rather than at 2am on Sept 4): if Railway's trial credit runs out before Sept 5, switch to Render — same two env vars, same build command, same Postgres URL shape. Budget 45 minutes.
 
@@ -161,6 +194,7 @@ Push to `main` → both platforms rebuild automatically. No manual step.
 ### 5.4 Pre-submission checklist (Day 12)
 
 - [ ] `/api/health` returns `dbConnected: true` and `llmConfigured: true`
+- [ ] Production Postgres major version matches the one the migrations were validated against (§2.1)
 - [ ] Dashboard loads the demo run with no interaction
 - [ ] Match rate, **false-positive count**, and cold-start rate all visible on the landing screen (ADR-020)
 - [ ] Exception list renders with explanations populated

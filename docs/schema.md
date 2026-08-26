@@ -733,7 +733,13 @@ CREATE INDEX ix_audit_subj ON audit_log (subject_type, subject_id, sequence_no);
 -- Immutability is enforced, not assumed.
 CREATE OR REPLACE FUNCTION audit_log_immutable() RETURNS trigger AS $$
 BEGIN
-  RAISE EXCEPTION 'audit_log is append-only (attempted % on id %)', TG_OP, OLD.id;
+  -- OLD.sequence_no, not OLD.id: the two id columns were consolidated into one
+  -- (see the comment on the table above). Referencing OLD.id here raises
+  -- "record OLD has no field id" at trigger time rather than at migration time,
+  -- so the trigger would appear to install correctly and then fail on first use.
+  RAISE EXCEPTION 'audit_log is append-only (attempted % on sequence_no %)',
+    TG_OP, OLD.sequence_no
+    USING ERRCODE = 'restrict_violation';
 END; $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trg_audit_log_immutable
