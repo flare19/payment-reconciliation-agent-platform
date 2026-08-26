@@ -1,8 +1,10 @@
 # Data & Schema Design
 
 Payment Reconciliation Engine · Razorpay AI Buildathon Track 4
-Status: **Day 2 architecture — locked unless a decision here is explicitly revised in `adr-log.md`.**
-Companion docs: [api-contract.md](./api-contract.md) · [adr-log.md](./adr-log.md) · [validation-strategy.md](./validation-strategy.md)
+Status: **Locked.** Day 2 architecture, revised by the Day 4 design review (ADR-028…ADR-047). Changes require a new ADR.
+Companion docs: [api-contract.md](./api-contract.md) · [matching-engine.md](./matching-engine.md) · [adr-log.md](./adr-log.md) · [validation-strategy.md](./validation-strategy.md)
+
+**Division of ownership:** this doc owns *shapes* — tables, columns, tolerances, taxonomy, prompt. [matching-engine.md](./matching-engine.md) owns *execution* — stage order, candidate generation, assignment, determinism. If you are asking "what does the data look like", you are in the right file; if you are asking "what runs when", you are not.
 
 This is the core document. Everything else (matching engine, exception classifier, API, dashboard) hangs off the shapes defined here. If a later session finds this doc wrong, fix this doc **first**, add an ADR entry, then change code.
 
@@ -22,7 +24,9 @@ These apply to every table and every parser. They are not negotiable per-module.
 | Naming | `snake_case` in Postgres, `camelCase` in TypeScript, mapping done once in the repository layer. | See `CLAUDE.md`. |
 | Enums | Postgres `TEXT` + `CHECK (col IN (...))`, **not** native `ENUM` types. | Adding a value to a native enum inside a migration is awkward and irreversible-ish. This taxonomy will change on Day 5. `CHECK` constraints are one `ALTER` away. |
 | Nullability | Every nullable column below is nullable for a stated reason. If a reason isn't stated, it's `NOT NULL`. | Prevents the slow drift into an all-nullable schema where nothing can be trusted. |
-| Immutability | `audit_log` is append-only, enforced by a `BEFORE UPDATE OR DELETE` trigger that raises. | ARCHITECTURE §4.6 says "logged immutably". A convention isn't immutability; a trigger is. This is also a good 10-second answer to a panel question. |
+| Immutability | `audit_log` is append-only, enforced by a `BEFORE UPDATE OR DELETE` trigger that raises, **and hash-chained** so tampering is detectable even by someone who can drop the trigger (ADR-042). | ARCHITECTURE §4.6 says "logged immutably". A convention isn't immutability; a trigger is inconvenience; a chain is detection. |
+| Reference date | Every "has the window elapsed" test uses `runs.reference_date = MAX(txn_date)` over the dataset — **never the wall clock** (ADR-039). | Otherwise the same dataset produces different exception counts in August and in September, and the reported numbers drift between rehearsal and submission. A run must be a pure function of its inputs. |
+| Direction | `direction` is a **hard gate** at every tier, never a scored component (ADR-035). A credit never matches a debit. | Without it a ₹5,000 capture can match a ₹5,000 chargeback on a shared anchor with a perfect score — a wrong book produced by an omission. |
 
 ---
 
@@ -38,9 +42,12 @@ runs
 
 learned_aliases            (run-independent; human-confirmed equivalences, reused across runs)
 explanation_cache          (run-independent; LLM output keyed by discrepancy SIGNATURE, not by record)
+score_reports              (per-run; written ONLY by the offline scorer, never by the engine — ADR-041)
 ```
 
 Two tables are deliberately **run-independent**: `learned_aliases` and `explanation_cache`. Everything else is scoped to a run so a re-run never mutates history. That separation is what makes the alias-learning feature measurable across runs (see §9).
+
+`score_reports` is scoped to a run but sits outside the engine entirely: it is written by `tools/score/` after the fact and read only for display (§11.2, ADR-041). No engine module reads it, and no engine decision depends on it.
 
 ---
 
@@ -57,7 +64,7 @@ Models a Razorpay-style payments export. This is the **most structured** source 
 | `payment_id` | string, `pay_` + 14 alphanumeric | Primary identity anchor. Globally unique. |
 | `order_id` | string, `order_` + 14 alphanum, sometimes blank | Secondary anchor. Blank on ~8% of rows (direct payments). |
 | `method` | `card` \| `upi` \| `netbanking` \| `wallet` | Drives the expected settlement lag (see §5.2). |
-| `status` | `captured` \| `authorized` \| `failed` \| `refunded` | **Only `captured` and `refunded` are reconcilable.** `failed`/`authorized` must be excluded at ingestion, not matched-and-failed. |
+| `status` | `captured` \| `authorized` \| `failed` \| `refunded` | **Only `captured` and `refunded` are reconcilable.** `failed`/`authorized` are excluded at ingestion, not matched-and-failed. A `refunded` row normalizes to `direction = 'debit'` and reconciles against a bank debit or `CHARGEBACK` row (ADR-035). |
 | `amount` | string, rupees, messy: `"1,234.50"`, `"₹1234.5"`, `"1234.50"` | Gross amount charged to customer. Parser must strip `₹`, commas, whitespace. |
 | `currency` | `INR` | Constant in v1. |
 | `fee` | string, rupees, may be blank | Gateway fee. Blank on ~15% of rows — forces the fee-inference path in §5.3. |
@@ -85,7 +92,9 @@ Models a bank statement / settlement report. This is the **messiest** source: id
 | `debit_amount` | string, rupees, blank on credit rows | Chargebacks, fee debits, reversals. |
 | `closing_balance` | string, rupees | Not used for matching. Present because real files have it and its absence would look fake. |
 | `bank_ref_no` | numeric string, sometimes equal to the RRN, sometimes not | Semi-reliable anchor — worth trying, never worth trusting alone. |
-| `transaction_type` | `SETTLEMENT` \| `NEFT` \| `IMPS` \| `UPI` \| `CHARGEBACK` \| `FEE` \| `MISC_CREDIT` | `CHARGEBACK`/`FEE`/`MISC_CREDIT` rows have no gateway counterpart by design. |
+| `transaction_type` | `SETTLEMENT` \| `NEFT` \| `IMPS` \| `UPI` \| `CHARGEBACK` \| `FEE` \| `MISC_CREDIT` | `CHARGEBACK` and `MISC_CREDIT` have no gateway counterpart by design and stay in the reconcilable population. **`FEE` rows are excluded at ingestion** (ADR-036) — see below. |
+
+**Why `FEE` rows are excluded and the other two are not (ADR-036).** Gateway fees are already accounted for inside every net-amount comparison (§5.3); reconciling a fee debit separately double-counts it and guarantees a permanent block of `MISSING_IN_GATEWAY` exceptions that no human would ever action. Inflating the exception list with non-problems is the opposite failure from hiding exceptions, and it is equally dishonest. A `CHARGEBACK` is the reverse case — one that can't be tied to a payment is exactly what a controller needs surfaced — and a `MISC_CREDIT` is the designed `ORPHAN_NO_COUNTERPART` class. Excluded rows are counted, listed and visible in the UI: excluded is not hidden.
 
 **Critical structural property:** a single `SETTLEMENT` row may be the **net of many gateway payments minus fees** (a batch settlement). This is the N:1 case that `match_members` exists for, and — when no batch breakup is provided — one of the genuinely-unresolvable classes (see `validation-strategy.md`).
 
@@ -99,10 +108,10 @@ Models an internal accounting export. Structured, but written by humans and by a
 | `invoice_no` | `INV/2026/00123` | Business document reference. |
 | `gateway_ref` | should be the `payment_id`; blank on ~12%, **transposed/typo'd on ~4%** | The intended anchor to Source A. Its unreliability is the point. |
 | `customer_name` | free text, variants again | Second alias-learning surface. |
-| `gross_amount` | string, rupees, format `1234.50` (no separators) | Should equal gateway `amount`. |
+| `gross_amount` | string, rupees, format `1234.50` (no separators) | The list price before discount and sale GST. **Does not equal gateway `amount`** whenever `discount` or `tax_amount` is non-zero. |
 | `discount` | string, rupees, often `0.00` | Subtracted before tax. A source of legitimate amount divergence. |
 | `tax_amount` | string, rupees | GST on the sale (distinct from GST on the gateway fee — a classic confusion this dataset should contain). |
-| `net_amount` | string, rupees | `gross - discount + tax`. Note: **ledger net ≠ gateway net.** They mean different things. Do not compare them. |
+| `net_amount` | string, rupees | `gross - discount + tax` — **what the customer was actually charged, and therefore the field that equals gateway `amount`** (ADR-037). Note: ledger net ≠ gateway *net*. Gateway net is after gateway fees; ledger net is before them. Compare ledger net to gateway **gross**, never to gateway net. |
 | `entry_date` | `MM/DD/YYYY` | **US-format, third distinct date format.** Ambiguity between `03/04` and `04/03` is real and deliberate; generator only emits days ≥ 13 in ~30% of rows so the parser cannot cheat by inference. Parser must be told the format, not guess it. |
 | `account_code` | `4000`–`4999` | Revenue account. Not used for matching. |
 | `posted_by` | string | Carried for audit only. |
@@ -128,6 +137,8 @@ The generator injects exactly these defect classes. Naming them here means the c
 | `MISSING_ROW` | Economic event absent from one source entirely. |
 | `ORPHAN_ROW` | Row exists in one source with no economic event behind it (misc credit, chargeback). |
 | `NET_SETTLEMENT_BATCH` | N gateway payments → 1 bank credit, no breakup file. |
+| `SPLIT_SETTLEMENT` | 1 gateway payment → 2–4 bank credits (partial settlement). The mirror of the batch case; resolvable, and handled by `SPLIT_SETTLEMENT_V1` (ADR-038). |
+| `REFUND_REVERSAL` | A `refunded` gateway row with a matching bank **debit**. Exercises the direction gate (ADR-035). |
 | `NOISE_ROW` | `failed`/`draft`/`void` rows that must be filtered, not matched. |
 
 ---
@@ -174,11 +185,15 @@ CREATE TABLE transactions (
   -- classification carried from source
   method                 TEXT,                 -- NULL: bank/ledger do not report method
   status_raw             TEXT NOT NULL,
-  status_norm            TEXT NOT NULL CHECK (status_norm IN ('reconcilable','excluded_failed','excluded_draft','excluded_void','excluded_authorized')),
+  status_norm            TEXT NOT NULL CHECK (status_norm IN ('reconcilable','excluded_failed','excluded_draft','excluded_void','excluded_authorized','excluded_non_reconcilable')),
   txn_type               TEXT,                 -- bank only: SETTLEMENT/CHARGEBACK/FEE/...
 
   -- freeform
   description_raw        TEXT,
+
+  -- deduplication (ADR-034; set at stage S4, before matching)
+  duplicate_of_transaction_id UUID REFERENCES transactions(id),  -- NULL: this row is a primary, or not a duplicate
+  duplicate_kind         TEXT CHECK (duplicate_kind IN ('exact','suspected')),  -- NULL unless duplicate_of is set
 
   -- ingestion bookkeeping
   ingest_warnings        JSONB NOT NULL DEFAULT '[]'::jsonb,  -- ['AMOUNT_HAD_CURRENCY_SYMBOL','DATE_ASSUMED_IST',...]
@@ -187,10 +202,18 @@ CREATE TABLE transactions (
 );
 
 CREATE INDEX ix_txn_run_source        ON transactions (run_id, source_system);
-CREATE INDEX ix_txn_run_date_amount   ON transactions (run_id, txn_date, amount_paise);
+-- Blocking index (ADR-033). `direction` is in the key because it is a hard gate (ADR-035),
+-- so excluding it would fetch candidates that are discarded immediately.
+CREATE INDEX ix_txn_block             ON transactions (run_id, direction, txn_date, amount_paise);
 CREATE INDEX ix_txn_refs_gin          ON transactions USING gin (reference_ids);
 CREATE INDEX ix_txn_cp_norm           ON transactions (run_id, counterparty_norm);
+CREATE INDEX ix_txn_dupe              ON transactions (duplicate_of_transaction_id) WHERE duplicate_of_transaction_id IS NOT NULL;
+
+-- Canonical ordering for every decision-feeding query (ADR-032). source_system sorts
+-- gateway < bank < ledger by explicit CASE, not alphabetically.
 ```
+
+**A note on `source_row_number`.** It is `NOT NULL` because it is the join key the answer key uses (`validation-strategy.md` §2.1) *and* the canonical tie-break for deterministic ordering (ADR-032). Two loads of the same file must produce the same numbers, so it is assigned by the parser from the physical file position, counting the header as row 0 — including rows that are later rejected or excluded, so numbering never shifts.
 
 ### 3.1 `reference_ids` shape
 
@@ -244,14 +267,22 @@ CREATE TABLE runs (
   status            TEXT NOT NULL CHECK (status IN ('pending','ingesting','matching','classifying','explaining','completed','failed')),
   started_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
   finished_at       TIMESTAMPTZ,                -- NULL until terminal state
-  record_counts     JSONB NOT NULL DEFAULT '{}'::jsonb,   -- {gateway: 312, bank: 240, ledger: 298, excluded: 27}
+  reference_date    DATE,                       -- ADR-039: MAX(txn_date) over the dataset. NULL until ingestion completes.
+  record_counts     JSONB NOT NULL DEFAULT '{}'::jsonb,   -- {gateway: 312, bank: 240, ledger: 298, excluded: 27, reconcilable: 823}
+  rejected_row_count INT NOT NULL DEFAULT 0,     -- ADR-046: rows that could not be parsed. NOT exceptions.
+  rejected_rows     JSONB NOT NULL DEFAULT '[]'::jsonb,   -- [{source, rowNumber, rawLine, error}]
+  input_file_hashes JSONB NOT NULL DEFAULT '{}'::jsonb,   -- {gateway: 'sha256:…', bank: '…', ledger: '…'}
   config_snapshot   JSONB NOT NULL,             -- FULL tolerance + rule-version + flags snapshot
-  metrics           JSONB,                      -- NULL until completed; see §9
+  metrics           JSONB,                      -- NULL until completed; ENGINE-COMPUTED ONLY (§11.1)
   error_detail      TEXT                        -- NULL unless status='failed'
 );
 ```
 
-`config_snapshot` is mandatory and non-negotiable. It captures every tolerance value, every rule version, `alias_learning_enabled`, and the alias-table row count at run start. Without it, a run's metrics are unreproducible — and an unreproducible accuracy number is exactly what the track's bar rejects.
+`config_snapshot` is mandatory and non-negotiable. It captures every tolerance value, every rule version, `alias_learning_enabled`, the alias-table row count at run start, and the resolved `reference_date`. Without it, a run's metrics are unreproducible — and an unreproducible accuracy number is exactly what the track's bar rejects.
+
+`input_file_hashes` completes that guarantee. `config_snapshot` proves *how* the engine was configured; the hashes prove *what it was configured against*. Together with the determinism rules in [matching-engine.md](./matching-engine.md) §1.2, a run's output is a pure function of `(input files, config, active aliases)` — all three of which are recorded. The same hashes appear in the answer key's manifest, so the scorer refuses to score a run against a key built from different bytes.
+
+`rejected_rows` holds rows that could not be parsed at all. They are **not** exceptions (ADR-046): a row that could not be read is an ingestion defect, not a reconciliation finding, and mixing the two corrupts the exception count — the number under the most scrutiny. They are excluded from the reconcilable denominator, counted here, and surfaced in the UI.
 
 ---
 
@@ -297,18 +328,42 @@ When comparing a gateway record to a bank credit:
 2. If gateway `net_amount_paise` is NULL (the ~15% blank-fee rows) → compute an expected band:
    `expected_net ∈ [ gross × (1 − 0.0295), gross × (1 − 0.0236) ]`
    and accept a bank credit landing inside that band **plus** the §5.1 tolerance. Rule `FUZZY_FEE_INFERRED`, confidence weight multiplied by **0.85** — because the engine inferred a value the source did not state, and the audit trail must say so.
-3. Never compare gateway `net_amount` to ledger `net_amount`. They are different quantities (§2.3). Comparing them is a category error that would produce plausible-looking wrong matches. Gateway↔ledger comparison always uses **gross**.
+3. Never compare gateway `net_amount` to ledger `net_amount`. They are different quantities (§2.3) — gateway net is after *gateway fees*, ledger net is after *discount and sale GST*. Comparing them is a category error that would produce plausible-looking wrong matches.
+
+### 5.3.1 Comparison basis per source pair (ADR-037)
+
+Which amount is compared to which is a modelling decision, and getting it wrong produces confidently wrong matches. Stated once, here, so no tier re-derives it:
+
+| Pair | Compare | Why |
+|---|---|---|
+| gateway ↔ bank | `gateway.net_amount_paise` vs `bank.credit_amount` (or the inferred fee band above) | The bank credits net of gateway fees. |
+| gateway ↔ ledger | `gateway.amount_paise` vs **`ledger.net_amount_paise`** | Both are *what the customer was charged*. |
+| bank ↔ ledger | **Anchor only — amounts are not a matching basis.** The amount component is marked unavailable, not scored 0. | Bank is net of gateway fees; ledger is a sale amount including sale GST. No arithmetic relates them without the gateway row in between. |
+
+**The gateway↔ledger correction.** §2.3 previously asserted that ledger `gross_amount` "should equal gateway `amount`" while also defining `net = gross − discount + tax`. Both cannot hold: whenever discount or sale GST is non-zero, the customer pays the *net*. Comparing gross would turn every discounted or taxed sale into an `AMOUNT_MISMATCH`, flooding the exception list with arithmetic artifacts and destroying the credibility of the category that most needs it. The generator is constrained accordingly — for a clean event `ledger.net_amount == gateway.amount` exactly, and `AMOUNT_TRUE_MISMATCH` is what deliberately breaks it.
 
 ### 5.4 Confidence scoring (Tier 2 only)
 
-Tier 1 and the alias tier do not score — they either match or they don't. Tier 2 produces a score in `[0, 1]`:
+Tier 1 and the alias tier do not score — they either match or they don't. **Neither does a pair whose strong anchors already agree**: identity is established and the pair is resolved deterministically at stage S8 rather than scored (ADR-029, [matching-engine.md](./matching-engine.md) §6). Tier 2 therefore only ever sees pairs where identity is genuinely *in question*, which is the correct domain for a similarity score.
+
+Tier 2 produces a score in `[0, 1]`:
 
 | Component | Max weight | How it's earned |
 |---|---|---|
-| Reference anchor | **0.45** | `strong` anchor equal after normalization: 0.45. `weak` anchor (description-extracted, `bank_ref_no`, `order_id` only): 0.25. Anchor present on both sides but *unequal*: **0.00 and the candidate is discarded outright** — a contradicted anchor is disqualifying, not merely unhelpful. |
-| Amount | **0.30** | `0.30 × (1 − |delta| / tolerance_band)`, floored at 0. Exact-to-the-paisa earns the full 0.30. |
-| Date | **0.15** | `0.15 × (1 − days_off / window_size)`, floored at 0. Same-day earns full. |
-| Counterparty | **0.10** | `0.10 × trigram_similarity(counterparty_key_a, counterparty_key_b)`. Uses `counterparty_key` (post-alias) when available, else `counterparty_norm`. |
+| Reference anchor | **0.30** | strong↔weak agreement: `0.30`. Near-anchor at edit distance 1 with corroboration (ADR-031): `0.24`. weak↔weak agreement: `0.20`. No comparable anchor: `0.00`. Anchors present on both sides but *unequal*: **candidate discarded outright** — a contradicted anchor is disqualifying, not merely unhelpful. |
+| Amount | **0.35** | `0.35 × (1 − |delta| / tolerance_band)`, floored at 0. Exact-to-the-paisa earns full. Marked *unavailable* (not 0) for bank↔ledger per §5.3.1. |
+| Date | **0.20** | `0.20 × (1 − days_off / window_span)`, floored at 0. Same business day earns full. |
+| Counterparty | **0.15** | `0.15 × trigram_similarity(counterparty_key_a, counterparty_key_b)`. Uses `counterparty_key` (post-alias) when available, else `counterparty_norm`. |
+
+**Why these weights and not the original 0.45/0.30/0.15/0.10 (ADR-030).** Once identity-established pairs are removed from Tier 2's domain, the old weights capped a weak-anchor pair at `0.25+0.30+0.15+0.10 = 0.80` — below the 0.85 auto-confirm line, so **nothing at Tier 2 could ever auto-confirm** and every fuzzy match would have queued for a human. The rebalanced weights produce a property worth stating plainly:
+
+```
+strong↔weak, everything else perfect  →  0.30+0.35+0.20+0.15 = 1.00   auto-confirm possible
+weak↔weak,   everything else perfect  →  0.20+0.35+0.20+0.15 = 0.90   auto-confirm possible
+NO anchor,   everything else perfect  →  0.00+0.35+0.20+0.15 = 0.70   auto-confirm IMPOSSIBLE
+```
+
+**A pair with no shared reference of any kind can never be auto-confirmed** — at any amount, on any date, with any name similarity. It can reach the review band and ask a human, and that is all it can ever do. This is not a tunable threshold; it falls out of the arithmetic. Amount-and-date agreement is a coincidence generator; a reference number is evidence.
 
 **Thresholds:**
 
@@ -318,7 +373,9 @@ Tier 1 and the alias tier do not score — they either match or they don't. Tier
 | `0.65 – 0.849` | `pending_review` — enters the review queue. **This is the queue that feeds `learned_aliases`.** |
 | `< 0.65` | Not a match. Record proceeds to Tier 3 (exception classification). |
 
-**Ambiguity guard (overrides everything above):** if the two best candidates for a record both score `≥ 0.65` and are within `0.05` of each other, the engine **must not pick one**. It raises `AMBIGUOUS_MATCH` and records both candidates in `exceptions.evidence`. Auto-picking the marginal winner is how a reconciliation engine gets a great match rate and quietly wrong books. This guard is the single strongest honesty mechanism in the matching engine and should be called out in the pitch video.
+**Ambiguity guard (overrides everything above):** if the two best candidates for a record both score `≥ 0.65` and are within `0.05` of each other, the engine **must not pick one**. It raises `AMBIGUOUS_MATCH` and records both candidates in `exceptions.evidence`. Auto-picking the marginal winner is how a reconciliation engine gets a great match rate and quietly wrong books.
+
+The guard is evaluated **against the candidate list as scored, not as assigned** ([matching-engine.md](./matching-engine.md) §7.3): it asks "was this decidable?", and that question is about the evidence, not about which candidate happened to win the assignment pass. Together with the no-anchor ceiling above, the contradicted-anchor discard, and the direction gate (ADR-035), it is one of four structural defences against inventing a match — and it should be called out in the pitch video.
 
 ---
 
@@ -368,15 +425,23 @@ CREATE INDEX ix_alias_lookup ON learned_aliases (alias_type, normalized_value) W
 ### 6.2 Where the alias lookup sits in the pipeline — **Tier 1.5**
 
 ```
-Tier 1   EXACT          strong anchor + amount equal + date within [-1,+1]
+S4       DEDUPE         same-source duplicates, anchor evidence required (ADR-034)
+   ↓
+Tier 1   EXACT          strong anchor + direction + amount (§5.3.1 basis)
+                        + date within THE §5.2 WINDOW FOR THAT PAIR (ADR-028)
    ↓ (no match)
 Tier 1.5 ALIAS-RESOLVED apply active aliases to counterparty/reference fields,
                         then RE-RUN THE TIER 1 TEST on the resolved values
    ↓ (no match)
-Tier 2   FUZZY          scored candidate search (§5.4)
+S8       IDENTITY       strong anchors AGREE → identity established, never scored:
+                        amount fails → AMOUNT_MISMATCH · date fails → TIMING_DRIFT (ADR-029)
+   ↓ (identity not established)
+Tier 2   FUZZY          scored candidate search over blocked candidates (§5.4)
    ↓ (score < 0.65, or ambiguous)
 Tier 3   EXCEPTION      classified (§8)
 ```
+
+> **Two corrections from the Day 4 review are embedded above.** Tier 1's date test uses the per-pair window from §5.2, not a fixed `[-1,+1]` (ADR-028) — the old text would have failed every T+2 card settlement, the most common case in the dataset. And S8 exists because without it `AMOUNT_MISMATCH` and `TIMING_DRIFT` were structurally unreachable (ADR-029). Full reasoning in [matching-engine.md](./matching-engine.md) §4.2 and §6.
 
 **Justification for placing it at 1.5 rather than inside Tier 2 or before Tier 1:**
 
@@ -434,7 +499,7 @@ CREATE TABLE matches (
   id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   run_id             UUID NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
 
-  tier               TEXT NOT NULL CHECK (tier IN ('exact','alias','fuzzy')),
+  tier               TEXT NOT NULL CHECK (tier IN ('exact','alias','fuzzy','batch','manual')),
   status             TEXT NOT NULL CHECK (status IN ('auto_confirmed','pending_review','human_confirmed','human_rejected')),
   confidence         NUMERIC(5,4) NOT NULL,        -- 1.0000 for exact; 0.9500 for alias; scored for fuzzy
 
@@ -445,7 +510,7 @@ CREATE TABLE matches (
   amount_delta_paise BIGINT NOT NULL DEFAULT 0,    -- signed; group total vs anchor
   date_delta_days    INT    NOT NULL DEFAULT 0,    -- signed
   alias_ids          UUID[] NOT NULL DEFAULT '{}', -- which aliases contributed; empty for non-alias tiers
-  score_breakdown    JSONB,                        -- NULL for exact/alias; {anchor:0.45,amount:0.28,...} for fuzzy
+  score_breakdown    JSONB,                        -- NULL for exact/alias; {anchor:0.30,amount:0.33,...} for fuzzy
 
   matched_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
   reviewed_by        TEXT,                         -- NULL until a human acts
@@ -488,6 +553,8 @@ CREATE TABLE exceptions (
   severity               TEXT NOT NULL CHECK (severity IN ('high','medium','low')),
 
   best_candidate_score   NUMERIC(5,4),      -- NULL: no candidate was found at all
+  amount_at_risk_paise   BIGINT,            -- ADR-044: drives severity escalation. NULL for group-level exceptions with no single amount.
+  requires_human_confirmation BOOLEAN NOT NULL DEFAULT false,  -- true for SUSPECTED_DUPLICATE (ADR-034)
   evidence               JSONB NOT NULL,    -- candidates considered + per-candidate rejection reason
   detected_by_rule       TEXT NOT NULL,
   rule_version           TEXT NOT NULL,
@@ -499,11 +566,14 @@ CREATE TABLE exceptions (
 
   status                 TEXT NOT NULL DEFAULT 'open'
                            CHECK (status IN ('open','explained','human_resolved','wont_fix')),
+  resolved_by            TEXT,              -- NULL until a human acts (ADR-043)
+  resolved_at            TIMESTAMPTZ,       -- NULL until a human acts
+  resolution_note        TEXT,              -- NULL until a human acts; REQUIRED when they do
   created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX ix_exc_run_category ON exceptions (run_id, category);
-CREATE INDEX ix_exc_run_severity ON exceptions (run_id, severity);
+CREATE INDEX ix_exc_run_severity ON exceptions (run_id, severity, amount_at_risk_paise DESC);
 ```
 
 **`evidence` is mandatory and is the heart of the honest exception list.** It records what the engine *tried*:
@@ -519,9 +589,23 @@ CREATE INDEX ix_exc_run_severity ON exceptions (run_id, severity);
   ],
   "anchor_strength": "weak",
   "aliases_attempted": ["…uuid…"],
-  "window_used": { "amount_band_paise": 10000, "date_window": [-1, 3] }
+  "window_used": { "amount_band_paise": 10000, "date_window": [-1, 3] },
+  "candidate_cap_hit": false,
+  "severity_basis": { "base": "high", "amount_at_risk_paise": 41200, "escalated": false }
 }
 ```
+
+Additional evidence keys, populated by the stage that raised the exception:
+
+| Key | Set by | Meaning |
+|---|---|---|
+| `candidateCapHit` | blocking (ADR-033) | The 200-candidate cap bound. A bounded search that silently truncates is a dishonest search, so this is surfaced in the UI. |
+| `wouldMatchIfWindowWidened` | S8 identity (ADR-029) | The actual date delta on a `TIMING_DRIFT`, so a reviewer can confirm it in one click. |
+| `searchExhausted` | S10 batch (ADR-038) | The whole bounded subset space was searched and no decomposition exists. |
+| `searchBoundExceeded` | S10 batch (ADR-038) | The search hit a pool, size or time bound. **A different claim from the row above**, and the exception list says which. |
+| `candidateSubsets` | S10 batch | Two or more valid decompositions were found; arithmetic cannot choose. |
+| `displacedByMatchId` | S9 assignment (ADR-032) | The counterpart went to a stronger claim, naming the winner and its score. |
+| `counterpartStatus` | classification | e.g. the ledger row exists but is `void` — so "missing" is qualified rather than asserted. |
 
 Anyone can then ask "why wasn't this matched?" and get a rule-level answer without the LLM being involved at all. The LLM narrates this object; it never generates it.
 
@@ -539,6 +623,22 @@ ARCHITECTURE §4.4 names five buckets. I'm shipping **eight**: the five as speci
 | 6 | `AMOUNT_MISMATCH` | Identity **established** (strong anchor agrees) but amounts differ beyond §5.1/§5.3. | high | ✅ yes |
 | 7 | `UNSPLITTABLE_BATCH` | A bank `SETTLEMENT` credit that plausibly nets N gateway payments, but no subset sums to it within tolerance, and no breakup file exists. | medium | ➕ **added** |
 | 8 | `TIMING_DRIFT` | Identity established, amounts agree, but the date sits outside the §5.2 window. | low | ✅ yes |
+
+### 8.1.1 Severity is computed, not fixed (ADR-044)
+
+The column above gives the **base** severity. Actual severity escalates with money at risk:
+
+```
+severity = escalate(base, amount_at_risk_paise)
+
+  amount_at_risk ≥ ₹2,00,000  →  high
+  amount_at_risk ≥   ₹50,000  →  one level up from base
+  otherwise                   →  base
+
+  TIMING_DRIFT is capped at `medium` regardless of amount.
+```
+
+A fixed-per-category severity made a ₹5 rounding mismatch and a ₹5,00,000 partial capture both `high`, which makes the primary screen's sort order useless. A finance controller triages by money at risk — and the exception list is the product, so its default ordering is a product decision, not a cosmetic one. Timing drift is capped because a late settlement is a process artifact at any size. The inputs are recorded in `evidence.severityBasis` so the sort order is always explainable.
 
 **Justification for the three additions** (per the constraint to flag rather than silently expand):
 
@@ -576,11 +676,15 @@ Every record is evaluated against the eight rules **in the order below**. The fi
 
 | Situation | Primary | Secondary flags |
 |---|---|---|
-| Same `payment_id` twice in gateway; bank shows one credit | `DUPLICATE_RECORD` | `MISSING_IN_BANK` |
+| Same `payment_id` twice in gateway; bank shows one credit | `DUPLICATE_RECORD` on the non-primary copy only | **none** |
 | Anchor agrees, amount off ₹400, date off 5 days | `AMOUNT_MISMATCH` | `TIMING_DRIFT` |
 | Two bank credits, both ₹5,000, both T+2, no RRN on either | `AMBIGUOUS_MATCH` | — |
 | Bank `MISC_CREDIT`, `anchor_strength = none` | `MISSING_IN_GATEWAY` | — |
 | Ledger row present, gateway present, bank absent past T+3 | `MISSING_IN_BANK` | `TIMING_DRIFT` if within +4/+5 |
+| Three anchorless bank rows, same amount, same day, same merchant | `AMBIGUOUS_MATCH` — **not** duplicates (ADR-034) | — |
+| Gateway `refunded` debit with no bank debit | `MISSING_IN_BANK` | — |
+
+**Correction to the first row (ADR-034).** It previously read `DUPLICATE_RECORD` primary with `MISSING_IN_BANK` secondary. That secondary flag was wrong: the bank is not missing anything — the second copy never existed as an economic event, and reporting a missing counterpart for it is exactly the "one honest exception becomes several misleading ones" failure that this precedence order exists to prevent. Deduplication runs *before* matching (stage S4), so the non-primary copy never enters the pool and never generates a presence finding at all.
 
 ---
 
@@ -588,8 +692,9 @@ Every record is evaluated against the eight rules **in the order below**. The fi
 
 ```sql
 CREATE TABLE audit_log (
-  id             BIGSERIAL PRIMARY KEY,
-  sequence_no    BIGINT GENERATED ALWAYS AS IDENTITY,  -- deterministic replay order within a run
+  -- One sequence, not two. The Day 2 draft had both `id BIGSERIAL PRIMARY KEY` and
+  -- `sequence_no ... IDENTITY`, which are the same thing under two names.
+  sequence_no    BIGSERIAL PRIMARY KEY,                -- deterministic replay order
   run_id         UUID REFERENCES runs(id),             -- NULL: alias admin actions outside any run
 
   event_type     TEXT NOT NULL,                        -- see catalogue below
@@ -611,6 +716,10 @@ CREATE TABLE audit_log (
   reason         TEXT NOT NULL,  -- always human-readable, always populated
   details        JSONB NOT NULL DEFAULT '{}'::jsonb,
 
+  -- Tamper-evidence (ADR-042). Chained per run; the first entry of a run has prev_hash = 64 zeros.
+  prev_hash      CHAR(64) NOT NULL,
+  entry_hash     CHAR(64) NOT NULL,
+
   occurred_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -629,19 +738,34 @@ CREATE TRIGGER trg_audit_log_immutable
   FOR EACH ROW EXECUTE FUNCTION audit_log_immutable();
 ```
 
-**Mandatory per entry** (ARCHITECTURE §6 asks exactly this): `event_type`, `subject_type`, `subject_id`, `actor_type`, `actor_id`, `reason`, `occurred_at`. Never write an entry with a placeholder `reason` — a log that says "processed" is not an audit trail.
+**Mandatory per entry** (ARCHITECTURE §6 asks exactly this): `event_type`, `subject_type`, `subject_id`, `actor_type`, `actor_id`, `reason`, `occurred_at`, `prev_hash`, `entry_hash`. Never write an entry with a placeholder `reason` — a log that says "processed" is not an audit trail.
+
+### 9.0 The hash chain (ADR-042)
+
+```
+entry_hash = sha256( canonical_json(entry minus prev_hash/entry_hash) || prev_hash )
+```
+
+`canonical_json` sorts object keys and serializes timestamps as ISO-8601 UTC, so the hash is stable across drivers and platforms. Entries are chained **per run**, in `sequence_no` order; the first entry of a run chains from 64 zeros. Alias-admin entries with `run_id IS NULL` form their own chain.
+
+**Why, given the trigger already exists.** The `BEFORE UPDATE OR DELETE` trigger stops tampering *through the application*. Anyone who can drop the trigger can rewrite history, and nothing in the table would show it. A chain converts that from undetectable to detectable: altering one entry invalidates every subsequent `entry_hash`, and `GET /api/runs/:runId/audit/verify` recomputes the chain and reports the first divergence. That is the difference between "we don't update this table" and "logged immutably", which is what ARCHITECTURE §4.6 actually claims — and in a finance context it is the claim a panelist will probe. It costs roughly fifteen lines, and verifying the chain live during the pitch is a much stronger demonstration than describing a trigger.
+
+Writing is strictly serialized within a run (single writer, single process — see ADR-024 and [matching-engine.md](./matching-engine.md) §1), so there is no concurrent-append race to resolve. The verification endpoint is read-only and can run at any time.
 
 ### 9.1 Event type catalogue
 
 | Group | Events |
 |---|---|
 | Run | `RUN_STARTED`, `RUN_COMPLETED`, `RUN_FAILED` |
-| Ingestion | `RECORD_INGESTED`, `RECORD_NORMALIZED`, `RECORD_EXCLUDED` (failed/draft/void) |
-| Matching | `MATCH_ATTEMPTED`, `MATCH_CONFIRMED_EXACT`, `MATCH_CONFIRMED_ALIAS`, `MATCH_CONFIRMED_FUZZY`, `MATCH_FLAGGED_FOR_REVIEW`, `MATCH_CANDIDATE_REJECTED` |
-| Human review | `MATCH_APPROVED_BY_HUMAN`, `MATCH_REJECTED_BY_HUMAN` |
-| Exceptions | `EXCEPTION_RAISED`, `EXCEPTION_CLASSIFIED`, `EXCEPTION_RESOLVED_BY_HUMAN` |
+| Ingestion | `RECORD_INGESTED`, `RECORD_NORMALIZED`, `RECORD_EXCLUDED` (failed/draft/void/bank-fee), `RECORD_REJECTED` (unparseable — ADR-046), `RECORD_DEDUPLICATED` (ADR-034) |
+| Matching | `MATCH_ATTEMPTED`, `MATCH_CONFIRMED_EXACT`, `MATCH_CONFIRMED_ALIAS`, `MATCH_CONFIRMED_FUZZY`, `MATCH_CONFIRMED_NEAR_ANCHOR`, `MATCH_FLAGGED_FOR_REVIEW`, `MATCH_CANDIDATE_REJECTED`, `MATCH_CANDIDATE_DISPLACED` (lost assignment to a stronger claim — ADR-032), `IDENTITY_ESTABLISHED` (ADR-029), `BATCH_DECOMPOSITION_ATTEMPTED` (ADR-038) |
+| Human review | `MATCH_APPROVED_BY_HUMAN`, `MATCH_REJECTED_BY_HUMAN`, `MATCH_CREATED_BY_HUMAN` (ADR-043) |
+| Exceptions | `EXCEPTION_RAISED`, `EXCEPTION_CLASSIFIED`, `EXCEPTION_RESOLVED_BY_HUMAN`, `EXCEPTION_DISMISSED_BY_HUMAN` (ADR-043) |
 | Explain layer | `EXPLANATION_GENERATED`, `EXPLANATION_CACHE_HIT`, `EXPLANATION_FALLBACK_TEMPLATE` |
 | Aliases | `ALIAS_CREATED`, `ALIAS_REAFFIRMED`, `ALIAS_APPLIED`, `ALIAS_CONFLICT_SUPERSEDED`, `ALIAS_REVOKED`, `ALIAS_DOWNGRADED`, `ALIAS_PROMOTED` |
+| Scoring | `SCORE_REPORT_RECORDED` (ADR-041 — the offline scorer posting a measurement; `actor_type = 'human'`, `actor_id = 'tools/score'`) |
+
+`RUN_STARTED` is the anchor of a run's chain and its `details` carry the **full resolved `config_snapshot`, the three `input_file_hashes` and the `reference_date`**. That single immutable entry is what makes a reported number reproducible by a sceptic: it fixes the configuration and the exact bytes it ran against, inside a tamper-evident structure, before any decision was made.
 
 `MATCH_CANDIDATE_REJECTED` is logged at `details`-level only for candidates that scored ≥0.40 — logging every pairwise rejection at 300 records would produce ~90,000 rows of noise and drown the trail. The 0.40 floor keeps "near misses" (the interesting ones) while discarding obvious non-candidates. Below-floor rejections are still summarized in `exceptions.evidence.candidates_considered`.
 
@@ -666,6 +790,7 @@ Instead, each exception is reduced to a **signature**: the structural shape of t
 ```
 signature = sha256(join('|', [
   prompt_version,            // 'v1'
+  model,                     // 'claude-sonnet-5' — a model change must invalidate the cache
   category,                  // 'AMOUNT_MISMATCH'
   amount_delta_bucket,       // 'none' | 'lt_1pct' | '1_to_3pct' | '3_to_10pct' | 'gt_10pct' | 'sign_flip'
   date_delta_bucket,         // 'same_day' | 'within_window' | 'plus_1_3d' | 'plus_4_7d' | 'gt_7d' | 'negative'
@@ -678,6 +803,8 @@ signature = sha256(join('|', [
 ```
 
 No amounts, no IDs, no merchant names enter the signature. Across a 300-record batch the ~75 exceptions collapse to an expected **15–30 distinct signatures**, and across re-runs of the same dataset shape the cache hit rate approaches 100%. **Cost becomes O(distinct discrepancy shapes), not O(exceptions)** — which is the property that makes re-running the full batch (as the track demands) free rather than something to avoid.
+
+The `model` name is part of the hashed input alongside `prompt_version` — switching models must invalidate the cache, or a run would silently serve prose written by a model it no longer uses.
 
 ```sql
 CREATE TABLE explanation_cache (
@@ -754,45 +881,106 @@ The static system prompt is a **cacheable prefix** (Anthropic prompt caching), s
 
 ---
 
-## 11. Metrics — what `runs.metrics` holds
+## 11. Metrics
 
-Beyond ARCHITECTURE §4.7's match rate / throughput / exception counts, the alias-learning feature makes several more worth surfacing. Full reasoning is in the summary handed back with these docs; the shape is:
+### 11.0 The split, and why it exists (ADR-041)
+
+The Day 2 draft put `precision`, `recall`, `false_positive_matches` and `measured_against: "ground_truth/…"` inside `runs.metrics` — a column the **API** writes. That would have required the API to read the answer key, in direct contradiction of ADR-021, the rule that makes every accuracy claim in this project meaningful. As specified, the object could not have been produced by anything.
+
+Metrics are therefore two separate things in two separate tables, and the separation is the honest expression of what they are:
+
+| | `runs.metrics` | `score_reports` |
+|---|---|---|
+| Written by | the engine, at run finalization | `tools/score/`, offline, via `POST /api/runs/:runId/score-report` |
+| Contains | what the engine did | how right it was |
+| Knows about ground truth | **never** | that is its entire job |
+| If the two disagree | `score_reports` is correct | — |
+
+`runs.metrics` is the engine's account of its own work. `score_reports` is an independent measurement of that work. Merging them would produce a single object where nobody can tell which numbers were graded and which were self-reported — and the difference between those two things is the whole thesis of the track's bar.
+
+### 11.1 `runs.metrics` — engine-computed
 
 ```json
 {
-  "accuracy": {
+  "match_rate": {
     "match_rate_pct": 82.4,
-    "precision": 0.976, "recall": 0.847, "f1": 0.907,
-    "false_positive_matches": 5,
-    "measured_against": "ground_truth/holdout_seed_90210.json"
+    "matched_records": 678,
+    "reconcilable_records": 823,
+    "denominator_note": "ingested − excluded − rejected_rows − non_primary_duplicates (ADR-040)",
+    "pending_review_excluded": 11
   },
   "cold_start": { "match_rate_pct": 74.1, "aliases_active_at_start": 0 },
-  "tier_attribution": { "exact": 168, "alias": 27, "fuzzy": 52, "unmatched": 65 },
+  "tier_attribution": { "exact": 168, "alias": 27, "identity_established": 31, "fuzzy": 52, "near_anchor": 6, "batch": 4, "manual": 0, "unmatched": 65 },
   "alias_learning": {
     "human_corrections_to_date": 9,
     "records_auto_resolved_by_aliases": 27,
     "leverage_ratio": 3.0,
-    "alias_precision_vs_truth": 1.0,
     "aliases_active": 9, "aliases_superseded": 1, "aliases_revoked": 0
   },
-  "review_burden": { "pending_review_count": 11, "per_100_records": 3.7 },
+  "review_burden": { "pending_review_count": 11, "per_100_records": 1.3 },
   "exceptions": {
     "by_category": { "AMOUNT_MISMATCH": 18, "MISSING_IN_BANK": 21, "…": 0 },
-    "unresolvable_designed": 21, "unresolvable_detected_as_such": 19
+    "by_severity": { "high": 45, "medium": 15, "low": 5 },
+    "candidate_cap_hits": 3,
+    "batch_search_exhausted": 5, "batch_search_bound_exceeded": 2
   },
+  "population": { "ingested": 850, "excluded": 27, "rejected_rows": 0, "non_primary_duplicates": 9, "reconcilable": 823 },
   "throughput": {
     "records_per_sec_engine": 412.0,
     "records_per_sec_wall_clock": 96.5,
+    "stage_ms": { "parse": 180, "normalize": 90, "dedupe": 20, "block": 35, "tier1": 60, "tier15": 25, "identity": 15, "tier2": 940, "batch": 310, "group": 40, "classify": 120 },
     "note": "engine excludes LLM latency; wall_clock includes it"
   },
   "llm_cost": { "distinct_signatures": 22, "api_calls": 3, "cache_hits": 53, "tokens_in": 4180, "tokens_out": 1960 }
 }
 ```
 
-Two reporting rules that are non-negotiable:
+`stage_ms` is new and earns its place: throughput is a judged axis, and a per-stage breakdown turns "412 rec/s" into a claim about *where the time goes* — which is also how the scale benchmark (ADR-045) shows that the blocking strategy works.
+
+### 11.2 `score_reports` — measured against ground truth
+
+```sql
+CREATE TABLE score_reports (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id            UUID NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+
+  truth_key_file    TEXT NOT NULL,          -- 'data/truth/holdout_seed_90210.json'
+  truth_key_hash    CHAR(64) NOT NULL,      -- must match the run's input_file_hashes manifest
+  scorer_version    TEXT NOT NULL,
+  scored_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  report            JSONB NOT NULL,         -- the full measurement (shape below)
+
+  UNIQUE (run_id, scorer_version, truth_key_hash)
+);
+
+CREATE INDEX ix_score_run ON score_reports (run_id, scored_at DESC);
+```
+
+```json
+{
+  "matching": { "precision": 0.976, "recall": 0.847, "f1": 0.907,
+                "true_positives": 661, "false_positives": 5, "false_negatives": 119 },
+  "classification": { "macro_precision": 0.91, "macro_recall": 0.88,
+                      "confusion_matrix": { "AMOUNT_MISMATCH": { "AMOUNT_MISMATCH": 16, "TIMING_DRIFT": 2 } },
+                      "secondary_flag_jaccard": 0.84 },
+  "by_difficulty": { "EASY": 0.99, "MEDIUM": 0.91, "HARD": 0.62 },
+  "resolvability": { "unresolvable_designed": 21, "unresolvable_recall": 1.0, "false_despair_rate": 0.14 },
+  "alias": { "alias_tier_precision": 1.0, "held_out_variants_learned": 4 },
+  "ceiling": { "theoretical_max_match_rate_pct": 93.0, "achieved_pct": 82.4 }
+}
+```
+
+`truth_key_hash` is checked against the run's `input_file_hashes` manifest before the report is accepted; a mismatch is rejected with `422`. Scoring a run against a key built from different bytes is a mistake you want to be *impossible*, not one you want to notice late.
+
+**The engine never reads this table.** It is written by one endpoint and read by the dashboard and the accuracy report. ADR-021's guarantee — no ground truth anywhere in the decision path — is unchanged and is still enforced by the grep in `validation-strategy.md`.
+
+### 11.3 Two reporting rules that are non-negotiable
 
 1. **Never report the warm (alias-assisted) match rate as if it were the cold one.** Both numbers ship, always labelled. A match rate that quietly includes the benefit of prior human corrections is exactly the kind of unverified number the track's bar rejects.
-2. **`false_positive_matches` is reported alongside match rate every time.** An 82% match rate with 5 wrong matches is worse than a 78% rate with 0, and the dashboard must make that comparison possible rather than hiding it behind a single headline percentage.
+2. **`false_positives` is reported alongside match rate every time.** An 82% match rate with 5 wrong matches is worse than a 78% rate with 0, and the dashboard must make that comparison possible rather than hiding it behind a single headline percentage. Because false positives now live in `score_reports`, the API composes the two objects for the dashboard (`GET /api/runs/:runId/metrics` returns both) — the pairing is enforced at the contract level so no UI decision can separate them.
+3. **A `pending_review` match is not a match** (ADR-040). It is a proposal, counted in `review_burden`, never in `match_rate`. Counting proposals as reconciliations puts work a human hasn't done into the headline number.
+4. **Manual matches are excluded from engine match rate** (ADR-043) and reported in `tier_attribution.manual`. A human fixing something is not the engine matching it.
 
 ---
 
@@ -804,3 +992,6 @@ Not decided here, deliberately:
 - **Multi-currency** — column exists, logic doesn't. Would need FX rate sourcing. **Flagged as scope creep; not doing it.**
 - **Alias suggestion by the LLM** — the model could propose alias candidates for a human to approve. Tempting, and it would sit cleanly on the review queue. **Flagged as scope creep for v1** — it puts the LLM adjacent to a matching decision, which §10.1 exists to prevent. Revisit only if everything else is done by Day 10.
 - **Alias export/import between environments** — useful for seeding the demo. Small, but not required. Decide on Day 9 if the demo needs it.
+- **Optimal (Hungarian) assignment** instead of greedy score-ordered assignment — arithmetically better, materially harder to explain in an audit trail. **Decided against**, with reasoning, in ADR-032.
+- **Transitive group closure across sources** — resolved: groups assemble from pairs sharing a member, conflicts are refused rather than resolved, and group confidence is the *minimum* of its pairs. See [matching-engine.md](./matching-engine.md) §10.
+- **Cycle detection in aliases** — still unguarded, still harmless under one-hop resolution (§6.3). Unchanged by the Day 4 review.

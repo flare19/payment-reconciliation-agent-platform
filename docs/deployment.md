@@ -1,8 +1,8 @@
 # Deployment
 
 Payment Reconciliation Engine · Razorpay AI Buildathon Track 4
-Status: **Day 2 decision — deployed early on purpose, not on Day 12.**
-Companion docs: [adr-log.md](./adr-log.md) (ADR-005, ADR-026) · [api-contract.md](./api-contract.md)
+Status: **Locked.** Deployed early on purpose, not on Day 12. Revised by the Day 4 design review (ADR-046).
+Companion docs: [adr-log.md](./adr-log.md) (ADR-005, ADR-026, ADR-046) · [api-contract.md](./api-contract.md)
 
 **No Kubernetes. No container orchestration. No Dockerfiles authored by us.** Per ADR-005, K8s is parked as a separate future learning project — it earns zero points against this rubric. This is a managed-platform deploy: two dashboards, two `git push`es.
 
@@ -66,6 +66,9 @@ Companion docs: [adr-log.md](./adr-log.md) (ADR-005, ADR-026) · [api-contract.m
 | `HOLDOUT_SEED` | `90210` | no | Seed for the reported/demo dataset. Never tuned against. |
 | `LOG_LEVEL` | `info` | no | `debug` locally. |
 | `RUN_MIGRATIONS_ON_BOOT` | `true` | no | Convenient at this scale; see §5.3 for the caveat. |
+| `STALE_RUN_TIMEOUT_MINUTES` | `5` | no | On boot, non-terminal runs older than this are marked `failed` (ADR-046). Without it a crashed run polls forever mid-demo. |
+| `CANDIDATE_CAP` | `200` | no | Per-record candidate cap (ADR-033). Cap hits are surfaced, never silent. |
+| `BATCH_SUBSET_BUDGET_MS` | `250` | no | Subset-sum time budget per batch (ADR-038). |
 
 ### `apps/web` (Vercel)
 
@@ -151,6 +154,10 @@ Push to `main` → both platforms rebuild automatically. No manual step.
 - [ ] Match rate, **false-positive count**, and cold-start rate all visible on the landing screen (ADR-020)
 - [ ] Exception list renders with explanations populated
 - [ ] Audit drill-down works for at least one alias-tier match
+- [ ] `GET /api/runs/:runId/audit/verify` returns `valid: true` on the demo run (ADR-042)
+- [ ] A score report exists for the demo run, so the dashboard shows **measured** accuracy rather than "not measured" (ADR-041)
+- [ ] The scale-benchmark table is committed and linked from the README (ADR-045)
+- [ ] Excluded / rejected / duplicate row counts are visible via endpoint 24 — the denominator is inspectable
 - [ ] Alias management screen shows the seeded aliases and their lineage
 - [ ] CORS works from the production Vercel domain (test in a private window, not a warm tab)
 - [ ] No secret in `git log -p`, in the Vercel bundle, or in any committed `.env`
@@ -168,5 +175,6 @@ Push to `main` → both platforms rebuild automatically. No manual step.
 | CI/CD pipeline beyond push-to-deploy | Both platforms build on push. A GitHub Action adds config to maintain and catches nothing at solo scale. |
 | Monitoring / APM / error tracking | Platform logs suffice for a 13-day demo. **Flagged as scope creep.** |
 | DB backups | The data is synthetic and regenerable from a seed. Regeneration *is* the backup. |
+| Job queue / worker process | Runs execute in-process after a `202` (ADR-024). The stale-run reaper (ADR-046) covers the one failure mode this creates. A queue would be infrastructure for a workload that finishes in seconds. |
 | Rate limiting / WAF | See the flagged note in §4. |
 | Autoscaling | One instance, a few hundred records. |

@@ -1,8 +1,8 @@
 # API Contract
 
 Payment Reconciliation Engine · Razorpay AI Buildathon Track 4
-Status: **Day 2 architecture — this is the contract. Frontend and backend are built in separate sessions on different days; if this doc and the code disagree, the code is wrong until an ADR says otherwise.**
-Companion docs: [schema.md](./schema.md) · [adr-log.md](./adr-log.md) · [deployment.md](./deployment.md)
+Status: **Locked. This is the contract.** Frontend and backend are built in separate sessions on different days; if this doc and the code disagree, the code is wrong until an ADR says otherwise. Revised by the Day 4 design review (ADR-040…ADR-046).
+Companion docs: [schema.md](./schema.md) · [matching-engine.md](./matching-engine.md) · [ui-spec.md](./ui-spec.md) · [adr-log.md](./adr-log.md) · [deployment.md](./deployment.md)
 
 Per ARCHITECTURE §7, this is a lightweight table — **not** an OpenAPI/Swagger file. That's explicitly excluded.
 
@@ -39,10 +39,10 @@ Per ARCHITECTURE §7, this is a lightweight table — **not** an OpenAPI/Swagger
 | HTTP | `code` values used |
 |---|---|
 | 400 | `INVALID_REQUEST`, `UNSUPPORTED_FILE_TYPE`, `MISSING_REQUIRED_FILE`, `INVALID_ALIAS` |
-| 404 | `RUN_NOT_FOUND`, `EXCEPTION_NOT_FOUND`, `TRANSACTION_NOT_FOUND`, `MATCH_NOT_FOUND`, `ALIAS_NOT_FOUND` |
-| 409 | `RUN_NOT_COMPLETE` (metrics requested too early), `MATCH_NOT_REVIEWABLE` (status isn't `pending_review`), `ALIAS_CONFLICT_UNCONFIRMED` |
+| 404 | `RUN_NOT_FOUND`, `EXCEPTION_NOT_FOUND`, `TRANSACTION_NOT_FOUND`, `MATCH_NOT_FOUND`, `ALIAS_NOT_FOUND`, `SCORE_REPORT_NOT_FOUND` |
+| 409 | `RUN_NOT_COMPLETE` (metrics requested too early), `MATCH_NOT_REVIEWABLE` (status isn't `pending_review`), `ALIAS_CONFLICT_UNCONFIRMED`, `EXCEPTION_ALREADY_RESOLVED`, `TRANSACTION_ALREADY_MATCHED` |
 | 413 | `FILE_TOO_LARGE` (>10 MB per file) |
-| 422 | `PARSE_FAILED` (file readable but not the expected shape) |
+| 422 | `PARSE_FAILED` (file readable but not the expected shape), `TRUTH_KEY_MISMATCH` (score report built against different bytes) |
 | 500 | `INTERNAL_ERROR` |
 
 ---
@@ -70,8 +70,17 @@ Per ARCHITECTURE §7, this is a lightweight table — **not** an OpenAPI/Swagger
 | 17 | `/api/aliases/:aliasId` | PATCH | `{ status: "revoked", revokedReason, actor }` | `{ alias, auditEntryIds[] }` | Revoke only. Aliases are never edited in place. |
 | 18 | `/api/aliases/:aliasId/history` | GET | — | `{ alias, lineage: Alias[], entries: AuditEntry[] }` | Supersession chain + every event. |
 | 19 | `/api/runs/:runId/export` | GET | `?format=csv&scope=exceptions\|matches` | `text/csv` | Download for the pitch/demo. |
+| 20 | `/api/exceptions/:exceptionId/resolve` | POST | `{ resolvedBy, resolution, note }` | `{ exception, auditEntryIds[] }` | Mark an exception `human_resolved` or `wont_fix`. (ADR-043) |
+| 21 | `/api/runs/:runId/matches` | POST | `{ createdBy, reason, members[], aliasProposals?[] }` | `201` `{ match, auditEntryIds[] }` | **Manual match** — a human asserting records are the same. (ADR-043) |
+| 22 | `/api/runs/:runId/audit/verify` | GET | — | `{ valid, entriesChecked, firstDivergenceSequenceNo }` | Recompute the audit hash chain. (ADR-042) |
+| 23 | `/api/runs/:runId/score-report` | POST | `ScoreReport` (from `tools/score`) | `201` `{ scoreReportId }` | Offline scorer posts a measurement. (ADR-041) |
+| 24 | `/api/runs/:runId/population` | GET | `?kind=excluded\|rejected\|duplicates` | `{ items[], pagination }` | Rows outside the reconcilable denominator, with the reason for each. |
 
-19 endpoints, all `GET` except four `POST`s and one `PATCH`. Nothing here needs a `DELETE` — nothing in this system is ever deleted.
+24 endpoints, all `GET` except seven `POST`s and one `PATCH`. Nothing here needs a `DELETE` — nothing in this system is ever deleted.
+
+**Why endpoints 20 and 21 exist.** `exceptions.status` already permitted `human_resolved` and `wont_fix`, and no endpoint could produce either state — the column was unreachable. More importantly, the obvious action from an exception drill-down is *"these two are the same, the engine just couldn't prove it"*, and there was no way to record it. Without these the exception list is a report; with them it is a workflow, which is what a finance controller actually needs (ADR-043).
+
+**Why endpoint 24 exists.** Excluded rows, rejected rows and non-primary duplicates are all removed from the match-rate denominator (ADR-040). Any number with a shrunken denominator invites the question "what did you take out?", and the honest answer is an endpoint that lists exactly that, with a per-row reason. Excluded is not hidden.
 
 ---
 
@@ -139,6 +148,48 @@ Per ARCHITECTURE §7, this is a lightweight table — **not** an OpenAPI/Swagger
 
 > Design note: approval and alias-teaching succeed or fail independently on purpose. A reviewer's judgement about *this* match should never be discarded because of a disagreement about a *general* rule.
 
+### 20 · `POST /api/exceptions/:exceptionId/resolve`
+
+```json
+{ "resolvedBy": "tejas", "resolution": "human_resolved",
+  "note": "Confirmed with the bank: settlement was held for KYC re-verification." }
+```
+
+`resolution` is `human_resolved` | `wont_fix`. **`note` is required for both** — a resolution without a stated reason is the same hole in the audit trail that a reason-less rejection would be. `409 EXCEPTION_ALREADY_RESOLVED` if it is not `open` or `explained`; resolving is not idempotent because the second call would overwrite a different human's reasoning.
+
+### 21 · `POST /api/runs/:runId/matches` — manual match
+
+```json
+{
+  "createdBy": "tejas",
+  "reason": "Settlement advice PDF confirms these are the same payment; the RRN was truncated in the bank file.",
+  "members": [
+    { "transactionId": "…", "role": "gateway" },
+    { "transactionId": "…", "role": "bank" }
+  ],
+  "aliasProposals": []
+}
+```
+
+Creates a match with `tier: 'manual'`, `confidence: 1.0000`, `status: 'human_confirmed'`, `rule_id: 'MANUAL_MATCH_V1'`. Any open exceptions on the member records are transitioned to `human_resolved` with a pointer to the match. `409 TRANSACTION_ALREADY_MATCHED` if a member already belongs to a non-rejected match — the human must reject that match first, which keeps the single-match invariant a database fact rather than a UI convention.
+
+**Manual matches are excluded from the engine match rate** and reported in `tierAttribution.manual` (ADR-043). A human fixing something is not the engine matching it, and folding the two together would let a slow afternoon of manual work inflate a number that claims to measure an engine.
+
+### 22 · `GET /api/runs/:runId/audit/verify`
+
+```json
+{ "valid": true, "entriesChecked": 4412, "firstDivergenceSequenceNo": null,
+  "chainHead": "9f2c…", "verifiedAt": "2026-09-04T11:02:00.000Z" }
+```
+
+Recomputes the hash chain (`schema.md` §9.0) and reports the first entry whose recomputed hash disagrees. `valid: false` with a `firstDivergenceSequenceNo` means the log was altered outside the application. Read-only, safe to run at any time, and fast enough to run live during the pitch — which is the point of it existing (ADR-042).
+
+### 23 · `POST /api/runs/:runId/score-report`
+
+Accepts the JSON emitted by `tools/score/`. The server checks `truthKeyHash` against the run's recorded `inputFileHashes` manifest and returns `422 TRUTH_KEY_MISMATCH` if they disagree — scoring a run against a key built from different bytes should be impossible, not merely noticed late.
+
+This is the **only** path by which a ground-truth-derived number enters the database, it writes to `score_reports` and never to `runs.metrics`, and no engine module reads either the truth file or this table (ADR-021, ADR-041).
+
 ### 11 · `POST /api/matches/:matchId/reject`
 
 ```json
@@ -159,8 +210,12 @@ Per ARCHITECTURE §7, this is a lightweight table — **not** an OpenAPI/Swagger
   "datasetSeed": 90210,
   "startedAt": "2026-08-24T09:00:00.000Z", "finishedAt": "2026-08-24T09:00:07.240Z",
   "progress": { "stage": "completed", "pct": 100 },
-  "recordCounts": { "gateway": 312, "bank": 240, "ledger": 298, "excluded": 27, "reconcilable": 823 },
-  "headline": { "matchRatePct": 82.4, "exceptionCount": 65, "pendingReviewCount": 11 },
+  "referenceDate": "2026-08-20",
+  "recordCounts": { "gateway": 312, "bank": 240, "ledger": 298,
+                    "excluded": 27, "rejectedRows": 0, "nonPrimaryDuplicates": 9, "reconcilable": 823 },
+  "inputFileHashes": { "gateway": "sha256:…", "bank": "sha256:…", "ledger": "sha256:…" },
+  "headline": { "matchRatePct": 82.4, "falsePositiveMatches": 5, "coldStartMatchRatePct": 74.1,
+                "exceptionCount": 65, "pendingReviewCount": 11 },
   "configSnapshot": { "…": "as submitted, fully resolved" }
 }
 ```
@@ -169,12 +224,31 @@ Per ARCHITECTURE §7, this is a lightweight table — **not** an OpenAPI/Swagger
 
 ### `Metrics` (endpoint 5)
 
-The full object from `schema.md` §11, verbatim. Restating it here would guarantee drift; `schema.md` is authoritative for its shape. Two fields the frontend must render prominently:
+**Endpoint 5 composes two objects that live in two tables** (`schema.md` §11, ADR-041):
 
-- `accuracy.falsePositiveMatches` — displayed **next to** the match rate, never in a separate tab.
-- `coldStart.matchRatePct` — displayed as a paired figure whenever `aliasLearning.humanCorrectionsToDate > 0`.
+```json
+{
+  "engine": { "…": "runs.metrics — what the engine did, self-reported" },
+  "measured": { "…": "score_reports.report — how right it was, per the answer key" },
+  "measuredAt": "2026-09-04T10:15:00.000Z",
+  "measuredAgainst": "data/truth/holdout_seed_90210.json",
+  "scorerVersion": "1.0.0"
+}
+```
 
-`409 RUN_NOT_COMPLETE` if the run hasn't finished. `accuracy.precision/recall/f1` are `null` when no ground-truth key exists for the dataset (i.e. user-uploaded files) — the frontend shows "not measurable for uploaded data" rather than a fabricated number.
+`schema.md` §11.1 and §11.2 are authoritative for the two shapes; restating them here would guarantee drift.
+
+**`measured` is `null` when no score report exists** — for user-uploaded files there is no answer key, and for a freshly completed run the scorer may not have run yet. The frontend renders "not measured against ground truth" and must **never** substitute engine figures into a slot labelled as measured. A fabricated accuracy number is worse than an absent one; that substitution is the exact failure this whole architecture is built to prevent.
+
+Three fields the frontend must render prominently:
+
+- `measured.matching.falsePositives` — displayed **next to** the match rate, never in a separate tab (ADR-020).
+- `engine.coldStart.matchRatePct` — displayed as a paired figure whenever `aliasLearning.humanCorrectionsToDate > 0`.
+- `engine.matchRate.denominatorNote` — available on hover over the match rate. A percentage whose denominator is not inspectable is not a measurement.
+
+The pairing is enforced here, at the contract level, rather than left to UI discretion: the endpoint returns both objects or neither, so no frontend decision can separate a match rate from its false-positive count.
+
+`409 RUN_NOT_COMPLETE` if the run hasn't finished.
 
 ### `ExceptionSummary` (endpoint 6)
 
@@ -192,9 +266,17 @@ The full object from `schema.md` §11, verbatim. Restating it here would guarant
   "explanationText": "The gateway and bank records refer to the same payment…",
   "explanationSource": "llm_cache",
   "suggestedAction": "Check whether a partial capture was applied.",
-  "sharedExplanationCount": 14
+  "sharedExplanationCount": 14,
+  "amountAtRiskPaise": 41200,
+  "amountAtRiskDisplay": "₹412.00",
+  "requiresHumanConfirmation": false,
+  "resolvability": "resolvable_by_human"
 }
 ```
+
+`amountAtRisk` drives severity (ADR-044) and is the exception list's default secondary sort, because a finance controller triages by money.
+
+`resolvability` is `resolvable_by_human` | `needs_external_data` | `unresolvable_from_sources` — derived deterministically from the evidence (was any candidate found? was any anchor present at all?). It answers the question a reviewer asks before opening anything: *is it worth my time?* It is a rule output, never an LLM judgement.
 
 `facets` accompanies the list so the UI can render category/severity filter counts without a second request:
 
@@ -215,13 +297,20 @@ The full object from `schema.md` §11, verbatim. Restating it here would guarant
     "candidatesConsidered": 3,
     "candidates": [
       { "transactionId": "…", "sourceSystem": "bank", "score": 0.61,
-        "scoreBreakdown": { "anchor": 0.45, "amount": 0.00, "date": 0.12, "counterparty": 0.04 },
+        "scoreBreakdown": { "anchor": 0.30, "amount": 0.00, "date": 0.20, "counterparty": 0.11 },
         "rejectedBecause": "amount delta ₹412.00 exceeds band ₹100.00",
         "preview": { "externalId": "SBIN0R52…", "amountDisplay": "₹822.50", "txnDate": "2026-08-16" } }
     ],
     "anchorStrength": "strong",
     "aliasesAttempted": [],
-    "windowUsed": { "amountBandPaise": 10000, "dateWindow": [-1, 3] }
+    "windowUsed": { "amountBandPaise": 10000, "dateWindow": [-1, 3] },
+    "comparisonBasis": "gateway.netAmount vs bank.creditAmount",
+    "candidateCapHit": false,
+    "severityBasis": { "base": "high", "amountAtRiskPaise": 41200, "escalated": false },
+    "searchExhausted": null,
+    "searchBoundExceeded": null,
+    "displacedByMatchId": null,
+    "wouldMatchIfWindowWidened": null
   },
   "detectedByRule": "CLASSIFY_AMOUNT_MISMATCH_V1",
   "ruleVersion": "1.0.0",
@@ -232,12 +321,14 @@ The full object from `schema.md` §11, verbatim. Restating it here would guarant
 
 `rejectedBecause` is generated by the **rule engine**, not the LLM — it is the deterministic answer to "why didn't this match," and it renders even when the explain layer is disabled or the API key is absent.
 
+`searchExhausted` and `searchBoundExceeded` are mutually exclusive and only set on `UNSPLITTABLE_BATCH`. They are **different claims** and the UI must render them differently (ADR-038): "the engine searched every combination and none works" is a proof, while "the engine hit its 250 ms budget" is a limit. Collapsing both into the word *unsplittable* would overstate the first and hide the second.
+
 ### `ReviewItem` (endpoint 9)
 
 ```json
 {
   "matchId": "…", "tier": "fuzzy", "confidence": 0.7420,
-  "scoreBreakdown": { "anchor": 0.25, "amount": 0.30, "date": 0.15, "counterparty": 0.042 },
+  "scoreBreakdown": { "anchor": 0.20, "amount": 0.35, "date": 0.14, "counterparty": 0.052 },
   "members": [
     { "transactionId": "…", "role": "gateway", "externalId": "pay_QK29…",
       "amountDisplay": "₹1,234.50", "txnDate": "2026-08-14", "counterpartyRaw": "AMZN" },
@@ -308,10 +399,16 @@ Sanity check that every endpoint has a consumer and every screen has its data:
 | Alias management | 15, 16, 17, 18 |
 | Transaction inspector + audit trail | 12, 13 |
 | Run-level audit | 14 |
+| Exception resolution | 20 |
+| Manual match (from exception drill-down or record inspector) | 21, 12 |
+| Audit chain verification (pitch demo) | 22 |
+| Excluded / rejected / duplicate rows | 24 |
 | Export for the demo | 19 |
 | Deploy check | 1 |
 
-No orphans in either direction.
+Endpoint 23 (`score-report`) has no screen: it is written by `tools/score` and read only through endpoint 5. That is the one deliberate asymmetry in this table, and it is the boundary ADR-041 exists to draw.
+
+No other orphans in either direction.
 
 ---
 

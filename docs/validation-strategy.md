@@ -1,8 +1,8 @@
 # Validation & Ground-Truth Strategy
 
 Payment Reconciliation Engine · Razorpay AI Buildathon Track 4
-Status: **Day 2 architecture.** Describes the approach. No code here by design.
-Companion docs: [schema.md](./schema.md) · [adr-log.md](./adr-log.md) (ADR-021, ADR-027)
+Status: **Locked.** Describes the approach. No code here by design. Revised by the Day 4 design review (ADR-041, ADR-045).
+Companion docs: [schema.md](./schema.md) · [matching-engine.md](./matching-engine.md) · [adr-log.md](./adr-log.md) (ADR-021, ADR-027, ADR-041, ADR-045)
 
 ---
 
@@ -121,6 +121,8 @@ Flattened pairwise expectations, because precision/recall is defined over pairs:
 
 Seed, generator version, generation timestamp, counts per source, scenario distribution actually realized (not just intended), and a **content hash of each emitted source file**. The scorer refuses to run if a file's hash doesn't match the key's — which makes "we scored against the wrong dataset" structurally impossible rather than a thing you notice too late.
 
+The same hashes are recorded independently by the engine in `runs.input_file_hashes` (`schema.md` §4), and `POST /api/runs/:runId/score-report` rejects a report whose key hash disagrees with them (`422 TRUTH_KEY_MISMATCH`). The check therefore holds from both ends: the scorer will not read the wrong files, and the API will not store a measurement of the wrong run.
+
 ---
 
 ## 3. Scenario distribution
@@ -129,8 +131,8 @@ Weights for a ~300-event dataset. These are the shipped defaults; the generator 
 
 | Scenario | Share | Events | Expected outcome |
 |---|---|---|---|
-| `CLEAN_3WAY` | 40% | ~120 | `MATCH_3WAY` at exact |
-| `TIMING_LAG_NORMAL` | 12% | ~36 | `MATCH_3WAY` at fuzzy (inside window) |
+| `CLEAN_3WAY` | 36% | ~108 | `MATCH_3WAY` at exact |
+| `TIMING_LAG_NORMAL` | 10% | ~30 | `MATCH_3WAY` at fuzzy (inside window) |
 | `FEE_NET_SETTLEMENT` | 10% | ~30 | `MATCH_3WAY` at fuzzy (net-amount rule) |
 | `MERCHANT_NAME_VARIANT` | 8% | ~24 | `MATCH_3WAY`, `requiresAlias: true` |
 | `REF_MISSING_OR_TYPO` | 6% | ~18 | `MATCH_3WAY` at fuzzy, or exception if too degraded |
@@ -138,8 +140,19 @@ Weights for a ~300-event dataset. These are the shipped defaults; the generator 
 | `MISSING_IN_BANK` | 5% | ~15 | `EXCEPTION` |
 | `AMOUNT_TRUE_MISMATCH` | 4% | ~12 | `EXCEPTION` |
 | `DUPLICATE_ROW` | 3% | ~9 | `EXCEPTION` |
+| `SPLIT_SETTLEMENT` | 3% | ~9 | `MATCH_3WAY`, `one_to_many` |
+| `REFUND_REVERSAL` | 3% | ~9 | `MATCH_3WAY`, direction `debit` |
 | **Unresolvable family (§4)** | **7%** | **~21** | `EXCEPTION`, `UNRESOLVABLE` |
 | Total | 100% | ~300 | |
+
+`CLEAN_3WAY` drops from 40 % to 36 % and `TIMING_LAG_NORMAL` from 12 % to 10 % to make room for two scenarios added by the Day 4 review:
+
+- **`SPLIT_SETTLEMENT`** — one gateway payment settled across 2–4 bank credits. `matches.cardinality` already had `one_to_many` and nothing exercised it. It is the mirror of the net-batch case, it is *resolvable*, and a dataset that contains only the unresolvable half of that pair would make the engine look worse than it is.
+- **`REFUND_REVERSAL`** — a `refunded` gateway row with a matching bank **debit**. This exercises the direction gate (ADR-035). Without it, `direction` is never tested by the data, and the guard that prevents a capture matching a chargeback would ship unverified. A defence nothing in the dataset tests is a defence you do not know you have.
+
+**A generator constraint the classifier depends on (ADR-034).** `DUPLICATE_ROW` events must emit their duplicate copy carrying the **same strong anchor** as the original. Duplicates are detected by anchor evidence, never by amount+date+counterparty similarity — because the `IDENTITY_DESTROYED` family deliberately plants 3+ same-amount, same-day, same-merchant anchorless rows, and a similarity-based duplicate rule would classify the dataset's hardest designed case as duplicates. The two scenarios must stay distinguishable by construction, and this is the constraint that keeps them so.
+
+**A second generator constraint (ADR-037).** For every event that is not `AMOUNT_TRUE_MISMATCH`, the ledger projection must satisfy `net_amount == gateway.amount` exactly. Gateway amount is what the customer was charged, which is the ledger *net* (after discount, including sale GST) — not the ledger gross. If the generator emits gross-equals-gateway instead, every discounted sale becomes a false `AMOUNT_MISMATCH` and the exception list fills with arithmetic artifacts.
 
 Plus **noise rows outside the event model**: ~25 `failed`/`authorized` gateway rows and ~12 `draft`/`void` ledger rows, keyed as `EXCLUDED`. They exist to verify the engine *filters* rather than *fails* on them — a record that should never have been reconciled must not appear in the exception list. Counting them as exceptions would inflate the exception count dishonestly, and the key catches that.
 
@@ -207,7 +220,26 @@ F1        = 2PR / (P + R)
 
 **Precision is the metric that matters most here, and it is the one the engine's own match rate cannot see.** A finance controller can work with a missed match — it sits in the exception list and a human picks it up. A wrong match is a wrong book, silently. FP count is reported as a raw integer alongside every percentage (ADR-020), because "3 wrong matches" lands with a finance audience in a way "precision 0.988" does not.
 
-**Reported match rate** is a separate, simpler figure — `matched_records / reconcilable_records` — and it is exactly what the engine sees. Both ship. Publishing match rate *and* precision/recall side by side is what converts "the number the code printed" into a measurement.
+**Reported match rate** is a separate, simpler figure and it is exactly what the engine sees. Its denominator is fixed by ADR-040 and restated here so the scorer and the engine cannot drift apart:
+
+```
+reconcilable = ingested − excluded − rejected_rows − non_primary_duplicates
+matched      = records in ≥1 match with status auto_confirmed OR human_confirmed
+```
+
+Both ship. Publishing match rate *and* precision/recall side by side is what converts "the number the code printed" into a measurement.
+
+### 5.1.1 How `pending_review` pairs are scored (ADR-040)
+
+A proposal is not a claim, and scoring it as one would be wrong in either direction — counting a pending pair as a match inflates recall with work no human has done; counting it as a miss punishes the engine for correctly asking.
+
+**Primary precision/recall count `auto_confirmed` and `human_confirmed` pairs only.** Pending pairs are scored separately and reported as a third figure:
+
+```
+review_queue_precision = correct pending proposals / all pending proposals
+```
+
+That number answers the question the review queue actually raises: *when this engine asks a human, is it asking about the right things?* A queue at 0.9 precision is a useful assistant; a queue at 0.4 is noise that costs more attention than it saves. It is also the number that justifies the review band existing at all, and it would be invisible if pending pairs were folded into either bucket.
 
 ### 5.2 Classification accuracy
 
@@ -217,24 +249,53 @@ This catches an entire class of failure that match rate cannot see: an engine th
 
 `secondaryFlags` are scored as set overlap (Jaccard) and reported separately, not folded into the primary category score.
 
+**Two confusion-matrix cells to watch specifically**, both of which the Day 4 review showed were previously unreachable and are now the load-bearing output of stage S8 (ADR-029):
+
+- `AMOUNT_MISMATCH` predicted as a `pending_review` match — the old failure mode, where identity was established but the pair was scored instead of decided.
+- `TIMING_DRIFT` predicted as `auto_confirmed` — the worse old failure mode, where a nine-day-late settlement scored exactly 0.85 and auto-matched silently.
+
+If either cell is non-zero, S8 is not running where it should be. They are worth an explicit assertion in the scorer rather than a reading of the matrix.
+
 ### 5.3 Resolvability honesty
 
 Two numbers that speak directly to the "honest exception list" bar:
 
 - **Unresolvable recall** — of the ~21 designed-unresolvable events, how many did the engine correctly leave unmatched? A number below 100% means the engine **invented** a match that cannot exist. That is the single most damning failure available in this project and it should be treated as a build-blocker, not a metric.
 - **False-despair rate** — of the events the engine gave up on, how many were actually `RESOLVABLE`? This is the honest measure of the engine's headroom, and the right place to look for the next day's work.
+- **Bound-honesty check** — of the `UNSPLITTABLE_BATCH` exceptions, how many claim `searchExhausted` versus `searchBoundExceeded` (ADR-038)? A run where every batch reports `searchBoundExceeded` has not proved anything about the data; it has proved its own bounds are too tight. The scorer reports the split, and the accuracy report prints it, because "I proved no combination works" and "I gave up after 250 ms" are different claims and only one of them is a finding.
 
 ### 5.4 Accuracy by difficulty
 
 Precision/recall sliced by `EASY | MEDIUM | HARD`. A system at 99% on easy and 40% on hard has a different story than one at 85% flat, and the aggregate hides it. Also the fastest way to find what to fix next.
 
-### 5.5 Throughput
+### 5.5 Throughput — two figures and a curve
 
 Two figures, always labelled, never merged:
 - `records_per_sec_engine` — ingest + match + classify. The real engineering number.
 - `records_per_sec_wall_clock` — including LLM explain latency. The honest end-to-end number.
 
 Quoting only the first is misleading; quoting only the second measures Anthropic's API, not this engine.
+
+### 5.6 The scale benchmark (ADR-045)
+
+Throughput is one of three judged axes, and a single figure measured on ~820 records mostly advertises how small the dataset is. The generator is already parameterized by event count, so the scorer publishes a curve:
+
+| Records | Events | What is reported |
+|---|---|---|
+| ~820 | 300 | The demo dataset. Full accuracy scoring. |
+| ~2,700 | 1,000 | Timing only. |
+| ~27,000 | 10,000 | Timing only. |
+| ~270,000 | 100,000 | Timing only, plus candidate-cap-hit rate. |
+
+Reported at each size: wall-clock, `records_per_sec_engine`, the per-stage `stage_ms` breakdown from `runs.metrics`, mean and p95 candidate-pool size, and the LLM call count.
+
+**What the curve is meant to demonstrate**, and what it would expose if the design were wrong:
+
+1. **The candidate search is `O(n × k)`, not `O(n²)`.** Blocking (ADR-033) is the claim; the curve is the evidence. A quadratic curve here would falsify it in one glance, which is exactly why the benchmark is worth running rather than asserting.
+2. **LLM calls stay roughly flat as records grow 100×.** Because explanations are cached by discrepancy *shape* (ADR-018), a 100k-record run has more exceptions but barely more distinct shapes. That is the most interesting scaling property in the system and it is invisible at demo size.
+3. **Where the time actually goes.** `stage_ms` at 100k names the real bottleneck instead of leaving it to speculation.
+
+Accuracy is **not** scored at the larger sizes: the answer key generation is fast, but the point of the benchmark is the performance curve, and scoring 270k records adds runtime without adding a claim. The demo-size run remains the only one whose accuracy is reported, and it is the one generated from `HOLDOUT_SEED`.
 
 ---
 
@@ -278,7 +339,7 @@ Tuning tolerances against the same dataset you report on is overfitting, and the
 
 ## 8. What this produces for the submission
 
-A one-page **accuracy report**, generated by the scorer, that the README links and the pitch video shows:
+A one-page **accuracy report**, generated by the scorer, that the README links and the pitch video shows. The same measurement is posted to `POST /api/runs/:runId/score-report` and stored in `score_reports` (ADR-041), so the dashboard renders the identical numbers rather than a second, separately-computed set that could quietly disagree.
 
 ```
 Dataset: holdout_seed_90210 · 300 events → 823 reconcilable records
@@ -297,7 +358,14 @@ WARM RUN (9 human corrections → 9 aliases)
   Alias precision: 1.00   Leverage: 3.0× (27 records / 9 corrections)
 
 Accuracy by difficulty:  EASY 0.99 · MEDIUM 0.91 · HARD 0.62
+Review queue precision:  0.91  (11 proposals, 10 correct)
+Unsplittable batches:    5 proved exhaustively · 2 hit the search bound
 Throughput: 412 rec/s engine · 96 rec/s wall-clock (incl. LLM)
+
+SCALE BENCHMARK (timing only, no accuracy scoring)
+  ~2.7k rec    0.9 s    3,000 rec/s   ·  LLM calls: 3
+  ~27k rec     7.4 s    3,650 rec/s   ·  LLM calls: 4
+  ~270k rec   82.1 s    3,290 rec/s   ·  LLM calls: 5
 ```
 
 *(Illustrative figures — the shape of the report, not predicted results.)*
@@ -310,5 +378,6 @@ Every number there is measured against a key that existed before the engine ran.
 
 - **Hand-labelling real anonymized payment data** — would be stronger evidence, but ARCHITECTURE §5 puts live Razorpay APIs out of scope and the track asks for synthetic data. Not doing it.
 - **Cross-validation across many seeds** — statistically nicer, and genuinely tempting. **Flagged as scope creep**: two seeds answer the overfitting objection; ten answer a question nobody asked. If time exists on Day 11, running 3–5 extra seeds for a variance band is the cheapest credibility upgrade available — as a *reporting* addition only, with no tuning against them.
+- **Accuracy scoring at benchmark scale** — the 10k/100k runs report timing only (§5.6). Scoring them would add runtime without adding a claim: the accuracy question is answered by the holdout run, and the throughput question is what the larger sizes exist to answer. Deliberate, not an omission.
 - **Adversarial/property-based test data** — a different discipline from reconciliation accuracy. Out.
 - **Scoring the LLM explanations for quality** — would need human judgement or an LLM-as-judge harness. **Flagged as scope creep.** The explanations are narration of deterministic decisions (ADR-017); their accuracy is bounded by the decisions they narrate, which are already scored.

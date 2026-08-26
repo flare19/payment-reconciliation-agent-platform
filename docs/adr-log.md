@@ -180,6 +180,134 @@ One file, short dated entries, newest section at the bottom. **Not** a folder of
 
 ---
 
+## 2026-08-26 — Day 4 pre-build design review
+
+Twenty entries from a principal-engineer review of the Day 2 architecture, conducted before any code was written. Three of them (ADR-028, ADR-029, ADR-030) correct flaws that would have made documented exception categories structurally unreachable. Nothing here reduces scope.
+
+### ADR-028 · Tier 1 uses the real per-pair date window and the real amount basis
+**Decision:** The Tier 1 exact predicate uses the §5.2 window for the source pair being compared (not a fixed `[-1,+1]`) and the §4.3 comparison basis (not raw "amount equal").
+**Because:** `schema.md` §6.2 described Tier 1 as "strong anchor + amount equal + date within `[-1,+1]`", which contradicted §5.2's `[-1,+3]` gateway→bank window. A perfectly-anchored card settlement at T+2 — the most common case in the dataset — would fail Tier 1 and be re-decided by the fuzzy scorer, so the engine's strongest evidence class would report as fuzzy inference and the audit trail would say "matched at 0.87 confidence" about a byte-exact reference identity. "Amount equal" was wrong for the same pair in a second way: gateway gross is never equal to a bank credit net of a 2.36–2.95 % fee. Tier 1 means *identity is certain and everything corroborates*, not *the numbers are byte-identical*.
+**Rejected:** Widening every window to `[-1,+3]` (breaks the ledger pair); keeping Tier 1 narrow and accepting fuzzy attribution (destroys the tier story, which is the audit story per ADR-004).
+**Revisit if:** never — this was a defect, not a preference.
+
+### ADR-029 · Identity-established short-circuit before fuzzy scoring
+**Decision:** New stage S8. When strong anchors agree on both sides, identity is *established* and the pair is never scored. It is resolved deterministically: amount outside tolerance → `AMOUNT_MISMATCH`; date outside window → `TIMING_DRIFT`; both → `AMOUNT_MISMATCH` primary with `TIMING_DRIFT` secondary.
+**Because:** Under the Day 2 design, a same-`payment_id` pair with a ₹412 discrepancy scored `0.45+0.00+0.15+0.10 = 0.70`, landing in the review band as a *proposed match* and never reaching classification — so `AMOUNT_MISMATCH` could not fire. The mirror case was worse: same anchor, correct amount, nine days late scored `0.45+0.30+0.00+0.10 = 0.85` and **auto-confirmed**, silently matching a settlement three times past its SLA, so `TIMING_DRIFT` could not fire either. Two of the eight documented categories were structurally unreachable. The root cause is a category error — a similarity score answers "are these the same thing?", and when an anchor already proves they are, blending that proof with unrelated evidence lets a date disagreement cancel out an identity proof.
+**Rejected:** Raising the amount component's floor (masks the problem); classifying from the review queue (makes a human the classifier); a "penalty" term (still a blend).
+**Revisit if:** never.
+
+### ADR-030 · Tier 2 weights recalibrated; no-anchor pairs cannot auto-confirm
+**Decision:** anchor `0.30` / amount `0.35` / date `0.20` / counterparty `0.15`, replacing `0.45/0.30/0.15/0.10`. Anchor earns `0.30` strong↔weak, `0.24` near-anchor, `0.20` weak↔weak, `0.00` with none, and a contradiction discards the candidate.
+**Because:** With ADR-029 removing strong-anchor pairs from Tier 2's domain, the old weights capped a weak-anchor pair at `0.25+0.30+0.15+0.10 = 0.80`, below the `0.85` auto-confirm line — **nothing at Tier 2 could ever auto-confirm**, so every fuzzy match would have queued for human review and the cold-run match rate would have collapsed for reasons unrelated to the data. The new weights make a perfect weak↔weak pair reach `0.90` while leaving a **no-anchor** pair capped at `0.70`: a pair with no shared reference of any kind can never be auto-confirmed at any amount, on any date, with any name similarity. That guarantee falls out of the arithmetic rather than out of a tunable threshold, and amount-plus-date agreement is a coincidence generator where a reference number is evidence.
+**Rejected:** Lowering the auto-confirm threshold to 0.80 (would have made no-anchor auto-confirmation reachable — the exact wrong outcome); leaving weights and accepting a 100 % review queue.
+**Revisit if:** the review band exceeds 15 % of records on the dev seed (the ADR-010 trigger), which would indicate the bands rather than the weights need attention.
+
+### ADR-031 · Near-anchor matching at edit distance 1, corroboration required
+**Decision:** Same-type anchors of length ≥12 at Damerau-Levenshtein distance exactly 1 score `0.24`, and only when amount is within tolerance **and** date within window. Rule `NEAR_ANCHOR_V1`. Candidates come from a 6-character prefix block.
+**Because:** The generator injects `REF_TYPO` on ~4 % of ledger `gateway_ref` values — a transposition in an 18-character id. Without this rule those degrade to no-anchor pairs and become unmatchable by construction, understating what a competent engine can do against a defect the dataset deliberately contains. It is not guessing: two independently generated 20-character alphanumeric ids at edit distance 1 is not a realistic coincidence, and the corroboration requirement means a near-anchor never carries a match alone.
+**Rejected:** Distance ≤2 (collision risk climbs and the corroboration no longer bounds it); an alias of type `reference_id` per typo (works, but requires a human for something arithmetic can settle safely).
+**Revisit if:** the scorer shows any near-anchor false positive against the answer key — in which case delete the rule rather than tune it.
+
+### ADR-032 · Deterministic order and global score-ordered mutual assignment
+**Decision:** Every decision-feeding query carries an explicit `ORDER BY (source_system, source_row_number)`; no `Math.random()`, no `Date.now()`, no set-iteration dependence in decision paths; scores rounded to 4dp before comparison; ties broken by canonical order. Assignment scores all candidate pairs, sorts by `(score DESC, canonical ASC)`, and accepts a pair only when **both** members are still unassigned.
+**Because:** Greedy per-record assignment is order-dependent — if gateway `A` scores 0.88 against bank credit `X` and gateway `B` scores 0.95 against the same `X`, processing `A` first hands `X` to the weaker claim and pushes the stronger into an exception. Match rate, exception list and measured precision would all depend on iteration order, and Postgres row order without `ORDER BY` changes with plan choice. A result that isn't reproducible isn't a measurement, which is the entire thesis of the project.
+**Rejected:** Hungarian / optimal maximum-weight matching — arithmetically better, but it occasionally trades one strong pair for two medium ones, which is materially harder to justify in an audit trail; the explainability of "strongest evidence is assigned first" is worth more here than optimality.
+**Revisit if:** never.
+
+### ADR-033 · Blocking strategy for candidate generation
+**Decision:** Four in-memory block indexes per run (`byStrongAnchor`, `byAnchorPrefix`, `byDateAmount` on ₹1,000 buckets, `byCounterparty`). Tier 2 candidates are the union of block lookups, capped at 200 per record, with `candidateCapHit` recorded in evidence when the cap binds.
+**Because:** Throughput is one of three judged axes and "it's fast on 820 records" is not a throughput claim. A full pairwise scan is ~340k comparisons at demo size (invisibly fine) and ~5 billion at the 100k benchmark (does not complete). Blocking makes the search `O(n × k)` in mean block occupancy, which grows with density rather than size. The cap is surfaced rather than silent because a bounded search that quietly truncates is a dishonest search.
+**Rejected:** Full pairwise scan; a Postgres-side candidate query per record (round-trip per record dominates at scale); LSH/minhash (complexity unjustified at this size).
+**Revisit if:** the measured curve (ADR-045) is materially super-linear, which would point at bucket sizing rather than at the approach.
+
+### ADR-034 · Deduplication runs before matching, and requires anchor evidence
+**Decision:** Same-source dedup is stage S4, before Tier 1. `EXACT_DUPLICATE` requires an identical **strong** anchor. `SUSPECTED_DUPLICATE` requires amount + date + counterparty **and** no anchor on either row **and** a cluster of exactly 2, stays in the matching pool, and is flagged for human confirmation. Clusters of ≥3 without anchors are never duplicates.
+**Because:** Two reasons. (1) Ordering: `DUPLICATE_RECORD` is precedence #1 because a duplicate changes the problem's cardinality; if dedup ran after matching, the second copy would compete for the same bank credit, lose, and be reported as `MISSING_IN_BANK` — inventing a missing bank record. (2) Evidence: the Day 2 rule "same amount+date+counterparty in one source" collides head-on with the dataset's own `IDENTITY_DESTROYED` class, which deliberately plants 3+ same-amount, same-day, same-merchant anchorless rows — the generator's hardest designed case would be systematically misclassified as duplicates by the classifier's first rule. It is also false in the real world: two ₹499 subscription charges on one day are ordinary. A pair looks like a retry artifact; a crowd looks like ambiguity.
+**Rejected:** Post-match dedup; amount+date+counterparty as sufficient evidence.
+**Revisit if:** never.
+
+### ADR-035 · Direction is a hard gate; refunds and chargebacks handled explicitly
+**Decision:** `a.direction === b.direction` is a precondition at every tier, never a scored component. Gateway `refunded` rows are `debit` and reconcilable against bank debits and `CHARGEBACK` rows. Unmatched chargebacks remain exceptions.
+**Because:** `schema.md` declared `refunded` reconcilable and gave the bank a `CHARGEBACK` type, but no rule anywhere handled a debit — leaving `direction` decorative and permitting a ₹5,000 capture to match a ₹5,000 chargeback on a shared anchor with a perfect score. That is a wrong book produced by an omission rather than by a judgement call.
+**Rejected:** Scoring direction as a component (a strong enough anchor could outvote it).
+**Revisit if:** never.
+
+### ADR-036 · Bank `FEE` rows excluded at ingestion; `CHARGEBACK` and `MISC_CREDIT` are not
+**Decision:** `status_norm` gains `excluded_non_reconcilable`, applied to bank `FEE` rows. They are counted, listed and visible in the UI — excluded, not hidden. `CHARGEBACK` and `MISC_CREDIT` stay in the reconcilable population.
+**Because:** Gateway fees are already accounted for inside every net-amount comparison; reconciling a fee debit separately double-counts it and guarantees a permanent block of `MISSING_IN_GATEWAY` exceptions no human would ever action. Inflating the exception list with non-problems is the opposite failure from hiding exceptions and is equally dishonest. Chargebacks are the reverse case — a chargeback nobody can tie to a payment is precisely what a controller needs surfaced.
+**Rejected:** Excluding chargebacks too (hides real findings); keeping fees in (permanent noise).
+**Revisit if:** a fee row ever carries a gateway-resolvable anchor, which this generator does not emit.
+
+### ADR-037 · Gateway amount compares to ledger NET, not ledger gross
+**Decision:** gateway↔ledger compares `gateway.amount_paise` to `ledger.net_amount_paise`. bank↔ledger pairs form on anchors only, with the amount component marked unavailable rather than scored.
+**Because:** `schema.md` §2.3 asserted both `ledger.net = gross − discount + tax` and "`gross_amount` should equal gateway `amount`". Both cannot hold — whenever discount or sale GST is non-zero, what the customer was charged equals ledger *net*. Comparing gross would turn every discounted or taxed sale into an `AMOUNT_MISMATCH`, flooding the exception list with arithmetic artifacts and destroying the credibility of the one category that most needs it. For bank↔ledger, no arithmetic relates a fee-net bank credit to a sale-GST ledger amount without the gateway row in between, so scoring them against each other would be a category error of the same kind §5.3 already forbids for gateway net vs ledger net.
+**Rejected:** Comparing gross and widening tolerance to absorb discount/tax (hides genuine mismatches behind a loose band — the exact mistake ADR-008 exists to avoid).
+**Revisit if:** never.
+
+### ADR-038 · Bounded subset-sum decomposition, with bound-exceeded reported distinctly
+**Decision:** Attempt decomposition of every unmatched bank `SETTLEMENT` credit: pool ≤24, subset size ≤8, 250 ms budget, fee bands as intervals. One subset → `many_to_one` match at `pending_review`. Two or more → `AMBIGUOUS_MATCH`. None → `UNSPLITTABLE_BATCH` with `searchExhausted`. Bound hit → `UNSPLITTABLE_BATCH` with `searchBoundExceeded` naming the bound.
+**Because:** The engine may only claim a batch is unsplittable after genuinely trying to split it — otherwise "unresolvable" is an assertion rather than a finding, and a panelist is entitled to ask which. Bounds are required because subset-sum is exponential, and the two failure modes are different claims: "I proved no combination works" and "I gave up after 250 ms" are both honest, and conflating them is not. A found decomposition always asks a human because it is a strong inference, not a certainty.
+**Rejected:** Declaring unsplittable without searching; unbounded search; auto-confirming a found subset.
+**Revisit if:** the bounds bind on more than ~2 batches in the holdout run, in which case raise the pool cap and re-report.
+
+### ADR-039 · `run_reference_date` derived from the dataset, never the wall clock
+**Decision:** `run_reference_date = MAX(txn_date)` over all ingested records, computed at load, stored on `runs` and in `config_snapshot`. Every "has the settlement window elapsed" test uses it. Wall-clock time is used only for `occurred_at` and throughput.
+**Because:** `MISSING_IN_BANK` requires a payment to be *overdue*. Answering that against the wall clock makes the engine's output depend on when it is run — the same dataset would produce different exception counts in August and in September, and the reported numbers would drift silently between rehearsal and submission. A dataset-derived reference date makes the run a pure function of its inputs.
+**Rejected:** `now()`; a hardcoded date (breaks on regeneration).
+**Revisit if:** never.
+
+### ADR-040 · Match-rate denominator defined; `pending_review` is not "matched"
+**Decision:** `reconcilable = ingested − excluded − rejected_rows − non_primary_duplicates`; `matched = records in ≥1 match with status auto_confirmed or human_confirmed`. `pending_review` and `human_rejected` count toward neither numerator and are reported as review burden alongside.
+**Because:** The Day 2 docs used "matched_records / reconcilable_records" without defining either term, leaving the headline number ambiguous for the API, the UI and the scorer independently. A `pending_review` match is a *proposal*; counting proposals as reconciliations means the headline includes work a human has not done, which is the same class of dishonesty as reporting a warm number as a cold one (ADR-020).
+**Rejected:** Counting pending review as matched; a single undefined "match rate".
+**Revisit if:** never — this is a headline-number definition.
+
+### ADR-041 · Ground-truth-derived metrics live in `score_reports`, written by the offline scorer
+**Decision:** `runs.metrics` holds only engine-computed figures. Precision, recall, F1, false positives, the confusion matrix, difficulty slices, unresolvable recall and alias precision live in a separate `score_reports` table, written via `POST /api/runs/:runId/score-report` by `tools/score`. No engine module reads either the truth file or `score_reports`.
+**Because:** `schema.md` §11 put `precision`, `recall` and `measured_against: "ground_truth/…json"` inside `runs.metrics`, which the API writes — meaning the API would have had to read the answer key, in direct contradiction of ADR-021. The shape as specified could not be produced by anything. Splitting the two sets keeps ADR-021's guarantee structurally intact while still letting the dashboard display measured accuracy, which is the whole point of measuring it. The separation also expresses the distinction honestly in the schema itself: one table is the engine's view of its own work, the other is an independent measurement.
+**Rejected:** The API reading `data/truth/` (breaks ADR-021); a static JSON file served by the frontend (the dashboard could then show numbers with no provenance record).
+**Revisit if:** never.
+
+### ADR-042 · `audit_log` entries are hash-chained
+**Decision:** Each entry carries `prev_hash` and `entry_hash = sha256(canonical_json(entry_without_hash) || prev_hash)`, chained per run. `GET /api/runs/:runId/audit/verify` recomputes the chain and reports the first divergence.
+**Because:** ADR-015's trigger prevents `UPDATE` and `DELETE` through the application, but anyone who can drop a trigger can rewrite history and nothing would show it. A chain makes tampering *detectable* rather than merely *inconvenient*, which is the actual meaning of "logged immutably" in a finance context. It costs roughly fifteen lines and one endpoint, and a live verification during the pitch is a far stronger demonstration than describing a trigger.
+**Rejected:** Trigger only; signing entries with a key (key management for no additional guarantee here).
+**Revisit if:** never.
+
+### ADR-043 · Humans can resolve exceptions and create matches manually
+**Decision:** `POST /api/exceptions/:id/resolve` (`human_resolved` | `wont_fix`, reason required) and `POST /api/runs/:runId/matches` (manual match with required reason, `tier: 'manual'`, confidence `1.0`, status `human_confirmed`). Both write full audit entries; manual matches are reported separately in tier attribution and excluded from *engine* match rate.
+**Because:** `exceptions.status` already allowed `human_resolved` and `wont_fix`, but no endpoint could produce either state — the column was unreachable. More substantively, the obvious action from an exception drill-down is "these two *are* the same, the engine just couldn't prove it", and there was no way to record it. Without these the exception list is a report; with them it is a workflow, which is what a finance controller actually needs. Excluding manual matches from the engine match rate keeps the headline honest — a human fixing something is not the engine matching it.
+**Rejected:** Read-only exception list; folding manual matches into the engine's match rate.
+**Revisit if:** never.
+
+### ADR-044 · Severity is computed from category **and** money at risk
+**Decision:** A base severity per category, escalated by absolute rupees at risk: ≥ ₹50,000 escalates one level, ≥ ₹2,00,000 escalates to `high`; `TIMING_DRIFT` never escalates above `medium`. Stored on the exception with the inputs recorded in `evidence.severityBasis`.
+**Because:** Day 2 fixed severity per category, so a ₹5 rounding mismatch and a ₹5,00,000 partial capture were both `high`. A finance controller triages by money at risk, and a severity column that ignores amount makes the primary screen's sort order useless — which matters because the exception list is the product. Timing drift is capped because a late settlement is a process artifact regardless of size.
+**Rejected:** Pure category severity; pure amount severity (a ₹50 duplicate is still a duplicate).
+**Revisit if:** the thresholds misfit the generated amount distribution; they are config, not code.
+
+### ADR-045 · Throughput is reported as a curve at 1k / 10k / 100k, not a single number
+**Decision:** `tools/score` publishes a scale benchmark: wall-clock and per-stage timings at 1k, 10k and 100k generated records, plus per-stage complexity notes and the LLM call count at each size.
+**Because:** Throughput is one of three judged axes, and a single "412 rec/s on 820 records" figure advertises how small the dataset is. A curve demonstrates that the design was reasoned about rather than measured once, makes the blocking strategy (ADR-033) verifiable rather than asserted, and shows a property that is genuinely interesting: because explanations are cached by signature (ADR-018), LLM calls stay roughly flat as records grow 100×. The generator is already parameterized by event count, so the marginal cost is a script and a table.
+**Rejected:** Quoting demo-size throughput alone; a load-testing harness (out of proportion).
+**Revisit if:** never.
+
+### ADR-046 · Rejected rows are not exceptions; interrupted runs are reaped on boot
+**Decision:** Malformed source rows are captured with their parse error into `runs.rejected_row_count` and audit `RECORD_REJECTED`, excluded from the reconcilable denominator, and never classified. On API boot, any run in a non-terminal state older than 5 minutes is marked `failed` with `error_detail: 'interrupted by restart'`.
+**Because:** A row that could not be read is an ingestion defect, not a reconciliation finding; mixing the two corrupts the exception count, which is the number under the most scrutiny. And without a reaper, a crashed run sits at `matching` forever while the dashboard polls it indefinitely — a failure mode that surfaces during a live demo rather than during development, since only then does anything restart mid-run.
+**Rejected:** A ninth exception category for bad rows; failing the whole run on one bad row; no reaper.
+**Revisit if:** never.
+
+### ADR-047 · `ARCHITECTURE.md` authored; four new binding docs
+**Decision:** `ARCHITECTURE.md`, `docs/matching-engine.md`, `docs/ui-spec.md` and `docs/testing-strategy.md` are written and added to the binding set in `CLAUDE.md` §3.
+**Because:** Every Day 2 doc referenced `ARCHITECTURE §3/§4/§5/§6/§7` as the scope lock — 23 citations across seven files — and the file did not exist, so the entire doc set hung off a phantom whose section numbering had to be inferred. Separately, `schema.md` defined the shapes and tolerances of matching but never the algorithm, which is where three structural flaws were hiding (ADR-028/029/030); an algorithm doc is what made them visible. The UI and testing docs exist for the same reason `api-contract.md` does: they are built by a later session on a different day, and a binding spec is what prevents that session from redesigning under time pressure.
+**Rejected:** Folding everything into `schema.md` (already 800 lines and would bury the algorithm); leaving `ARCHITECTURE.md` unwritten and rewriting the 23 references.
+**Revisit if:** never.
+
+---
+
 ## Superseded
 
-*(none yet — when an entry is superseded, move a one-line pointer here: "ADR-0NN superseded by ADR-0MM on <date>")*
+- **ADR-021** — not superseded, but *clarified* by **ADR-041** (2026-08-26): the no-truth-in-the-engine rule stands; ground-truth-derived metrics move to a separate `score_reports` table written by the offline scorer, because the metrics shape in `schema.md` §11 could not otherwise have been produced by anything.
+- **ADR-004 / ADR-012** — extended by **ADR-029** (2026-08-26): a fourth stage (identity-established short-circuit) sits between the alias tier and the fuzzy tier. The tier ordering itself is unchanged.
+- **ADR-010** — thresholds unchanged; the component weights they operate on were recalibrated by **ADR-030** (2026-08-26).

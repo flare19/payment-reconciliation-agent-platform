@@ -44,10 +44,14 @@ Rationale for each is in [docs/adr-log.md](docs/adr-log.md). Don't re-litigate t
 
 | Doc | What it owns |
 |---|---|
-| [docs/schema.md](docs/schema.md) | **The core doc.** Source schemas, normalized model, all table shapes, tolerance values, exception taxonomy + precedence, alias design, LLM prompt + caching. |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | **The scope lock.** In-scope / out-of-scope, model routing, concrete numbers, build plan, risks. Read §4 and §5 before proposing anything new. |
+| [docs/schema.md](docs/schema.md) | **Data shapes.** Source schemas, normalized model, all table shapes, tolerance values, exception taxonomy + precedence, alias design, LLM prompt + caching, metrics. |
+| [docs/matching-engine.md](docs/matching-engine.md) | **Execution.** Stage order, determinism guarantees, blocking, assignment, dedup, identity short-circuit, batch decomposition, group assembly. `schema.md` says *what the data looks like*; this says *what runs when*. |
 | [docs/api-contract.md](docs/api-contract.md) | Every endpoint. Frontend and backend are built on different days — **this contract is binding.** |
-| [docs/adr-log.md](docs/adr-log.md) | Every locked decision with reasoning. Append-only. |
-| [docs/validation-strategy.md](docs/validation-strategy.md) | Ground-truth generation, precision/recall scoring, the honesty protocols. |
+| [docs/ui-spec.md](docs/ui-spec.md) | Screens, states, the demo path, and the pre-agreed degradation order if Day 12 overruns. |
+| [docs/adr-log.md](docs/adr-log.md) | Every locked decision with reasoning. Append-only. 47 entries. |
+| [docs/validation-strategy.md](docs/validation-strategy.md) | Ground-truth generation, precision/recall scoring, the scale benchmark, the honesty protocols. |
+| [docs/testing-strategy.md](docs/testing-strategy.md) | What gets tested and what deliberately doesn't. |
 | [docs/deployment.md](docs/deployment.md) | Hosting, env vars, secrets, deploy steps. |
 | [docs/what-broke.md](docs/what-broke.md) | **Update daily.** Part of the submission. |
 
@@ -64,10 +68,13 @@ Rationale for each is in [docs/adr-log.md](docs/adr-log.md). Don't re-litigate t
 ├── ARCHITECTURE.md            ← scope lock; the source of truth for in/out of scope
 ├── docs/
 │   ├── schema.md
+│   ├── matching-engine.md
 │   ├── api-contract.md
+│   ├── ui-spec.md
 │   ├── adr-log.md
-│   ├── deployment.md
 │   ├── validation-strategy.md
+│   ├── testing-strategy.md
+│   ├── deployment.md
 │   └── what-broke.md
 ├── apps/
 │   ├── api/                   ← Express + TS
@@ -75,8 +82,10 @@ Rationale for each is in [docs/adr-log.md](docs/adr-log.md). Don't re-litigate t
 │   │   │   ├── routes/        ← HTTP only: parse, validate, delegate, serialize
 │   │   │   ├── services/      ← business logic
 │   │   │   │   ├── ingestion/     parsers + normalizers, one file per source
-│   │   │   │   ├── matching/      tier1-exact, tier1_5-alias, tier2-fuzzy, scoring
-│   │   │   │   ├── classification/ exception rules, precedence
+│   │   │   │   ├── matching/      dedupe, blocking, tier1-exact, tier1_5-alias,
+│   │   │   │   │                  identity-resolution, tier2-fuzzy, scoring,
+│   │   │   │   │                  assignment, batch-decomposition, group-assembly
+│   │   │   │   ├── classification/ exception rules, precedence, severity
 │   │   │   │   ├── explain/       LLM client, signature hashing, cache, templates
 │   │   │   │   └── metrics/       run metric computation
 │   │   │   ├── repositories/  ← ALL SQL lives here. Nowhere else.
@@ -107,6 +116,9 @@ Rationale for each is in [docs/adr-log.md](docs/adr-log.md). Don't re-litigate t
 5. **`audit_log` is append-only,** enforced by a DB trigger. Never write an `UPDATE` against it. (ADR-015)
 6. **Money is `BIGINT` paise.** Never a float, never a `number` holding rupees. (ADR-006)
 7. **Frontend fetches only through `lib/api-client.ts`.** One place for the base URL, error envelope, and casing.
+8. **Nothing in the decision path reads the wall clock.** Date comparisons use `runs.reference_date` (ADR-039). `Date.now()` is for `occurred_at` and timing only. A run must be a pure function of its inputs.
+9. **Every decision-feeding query has an explicit `ORDER BY`.** Determinism is the foundation of a measured accuracy claim; unspecified row order silently breaks it. (ADR-032)
+10. **Ground-truth-derived numbers go to `score_reports`, never to `runs.metrics`.** One table is the engine's account of itself, the other is a measurement. (ADR-041)
 
 ---
 
@@ -183,8 +195,15 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 
 ## 10. Current state
 
-**As of 2026-08-24 (Day 2): documentation only. No application code exists yet.**
+**As of 2026-08-26 (Day 4): documentation only. No application code exists yet. Architecture is LOCKED.**
 
-Day 2 produced the six docs in §3 (plus this file). Implementation had not started as of that date — if `apps/` is still empty when you read this, that is expected, and Day 3's work is scaffolding `apps/api` against [docs/schema.md](docs/schema.md).
+- **Day 2 (Aug 24)** produced six docs plus this file.
+- **Day 3 (Aug 25)** — no session logged.
+- **Day 4 (Aug 26)** — pre-build design review. `ARCHITECTURE.md` was written (it had been referenced 23 times by docs that existed before it did), plus `matching-engine.md`, `ui-spec.md` and `testing-strategy.md`. ADR-028…ADR-047 appended. Three structural flaws were found and fixed **before any code was written**:
+  1. Tier 1's date window contradicted §5.2, so every T+2 card settlement would have fallen through to fuzzy. (ADR-028)
+  2. `AMOUNT_MISMATCH` and `TIMING_DRIFT` were **structurally unreachable** — a strong-anchor pair with a bad amount scored 0.70 and became a review-queue proposal; one with a bad date scored exactly 0.85 and auto-matched silently. (ADR-029)
+  3. With those pairs correctly removed from the fuzzy tier's domain, **nothing at Tier 2 could ever auto-confirm** (max reachable score 0.80 vs a 0.85 threshold). (ADR-030)
+
+**Next: Day 5 (Aug 27) — scaffold `apps/api` against [docs/schema.md](docs/schema.md) and [docs/matching-engine.md](docs/matching-engine.md), then deploy to Railway + Vercel the same day** (ARCHITECTURE §7.4). The full day-by-day plan is ARCHITECTURE §8.
 
 Update this section as the build progresses so the next session knows where it is.
