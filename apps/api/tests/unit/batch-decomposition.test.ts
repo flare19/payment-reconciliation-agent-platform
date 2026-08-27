@@ -12,11 +12,12 @@ const config: RunConfig = { ...ENGINE_DEFAULTS, referenceDate: '2026-08-31', ali
 function txn(
   id: string, source: SourceSystem, row: number,
   o: { amount?: number; net?: number | null; date?: string; cp?: string | null;
-       direction?: 'credit' | 'debit'; method?: 'card' | 'upi' } = {},
+       direction?: 'credit' | 'debit'; method?: 'card' | 'upi';
+       refs?: NormalizedTransaction['referenceIds'] } = {},
 ): NormalizedTransaction {
   return {
     id, runId: 'r', sourceSystem: source, sourceFile: `${source}.csv`, sourceRowNumber: row,
-    externalId: id, referenceIds: {}, anchorStrength: 'none',
+    externalId: id, referenceIds: o.refs ?? {}, anchorStrength: 'none',
     amountPaise: o.amount ?? 100_000, feePaise: null, taxPaise: null,
     netAmountPaise: o.net === undefined ? (o.amount ?? 100_000) : o.net,
     currency: 'INR', direction: o.direction ?? 'credit',
@@ -294,6 +295,7 @@ describe('S10.1 — split settlements (the mirror case)', () => {
     assert.equal(r.kind, 'split');
     assert.ok(r.kind === 'split');
     assert.deepEqual(r.legs.map((l) => l.id), ['b1', 'b2']);
+    assert.equal(r.ruleId, 'SPLIT_SETTLEMENT_V1');
     assert.match(r.reason, /proposed for review/);
   });
 
@@ -303,11 +305,44 @@ describe('S10.1 — split settlements (the mirror case)', () => {
     assert.equal(r.kind, 'none', 'the tiers own 1:1; this stage owns split shapes');
   });
 
-  test('more than four legs is out of scope', () => {
+  test('the subset-size cap is a search cap, not an eligible-pool ceiling (issue #4)', () => {
+    // 5 eligible candidates — over the size-4 cap — but only 4 of them (b0-b3)
+    // actually sum to the expected net; b4 is a same-window distractor that
+    // does not belong to the split. A pool-size ceiling would give up outright
+    // ("legs.length > 4 -> none"); a genuine subset search finds the real
+    // 4-of-5 combination and ignores the distractor.
+    const g = txn('g1', 'gateway', 1, { amount: 100_000, net: 100_000, date: '2026-08-14' });
+    const legs = [
+      ...Array.from({ length: 4 }, (_, i) => txn(`b${i}`, 'bank', i, { amount: 25_000, date: '2026-08-15' })),
+      txn('b4', 'bank', 4, { amount: 999_00, date: '2026-08-15' }),
+    ];
+    const r = findSplitSettlement(g, legs, config);
+    assert.equal(r.kind, 'split');
+    assert.ok(r.kind === 'split');
+    assert.deepEqual(r.legs.map((l) => l.id).sort(), ['b0', 'b1', 'b2', 'b3']);
+  });
+
+  test('more than four legs with no ≤4 combination summing to the target is not a split', () => {
     const g = txn('g1', 'gateway', 1, { amount: 100_000, net: 100_000 });
     const legs = Array.from({ length: 5 }, (_, i) =>
       txn(`b${i}`, 'bank', i, { amount: 20_000, date: '2026-08-15' }));
+    // All 5 sum to the target, but no subset of ≤4 of them does — the cap is
+    // genuinely enforced by the search, not sidestepped.
     assert.equal(findSplitSettlement(g, legs, config).kind, 'none');
+  });
+
+  test('a bank credit sharing a strong anchor is a candidate leg even outside the window', () => {
+    const g = txn('g1', 'gateway', 1, {
+      amount: 100_000, net: 100_000, date: '2026-08-14', refs: { payment_id: 'pay_shared_1' },
+    });
+    const near = txn('b1', 'bank', 1, { amount: 60_000, date: '2026-08-15' });
+    const far = txn('b2', 'bank', 2, {
+      amount: 40_000, date: '2026-09-20', refs: { payment_id: 'pay_shared_1' },
+    });
+    const r = findSplitSettlement(g, [near, far], config);
+    assert.equal(r.kind, 'split');
+    assert.ok(r.kind === 'split');
+    assert.deepEqual(r.legs.map((l) => l.id).sort(), ['b1', 'b2']);
   });
 
   test('legs outside the settlement window are not legs', () => {

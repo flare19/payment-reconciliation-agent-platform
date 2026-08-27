@@ -25,6 +25,7 @@
 import { compareCanonical, type Paise } from '../../types/domain.js';
 import type { NormalizedTransaction, RunConfig } from '../../types/engine.js';
 import { addDays, dayDelta } from '../ingestion/dates.js';
+import { sharedStrongAnchor } from './anchors.js';
 import { amountToleranceBand, expectedNetBand } from './tolerance.js';
 
 /** How much a gateway payment is expected to contribute to a bank credit. */
@@ -149,6 +150,32 @@ export function searchSubsets(
   config: RunConfig,
   poolCapped: boolean,
 ): { solutions: Contribution[][]; stats: SearchStats } {
+  return searchSubsetsInBand(
+    contributions, targetPaise - tolerancePaise, targetPaise + tolerancePaise, config, poolCapped);
+}
+
+/**
+ * Same search as {@link searchSubsets}, but takes the acceptance band directly
+ * instead of a symmetric target ± tolerance.
+ *
+ * `searchSubsets`' target-and-tolerance shape cannot exactly represent an
+ * ASYMMETRIC band (e.g. an inferred fee band widened by amount tolerance on
+ * each side by a different amount) without rounding the interval — and this is
+ * a money-comparison stage, so an interval is taken exactly rather than
+ * approximated by a nearby symmetric one.
+ *
+ * `minSubsetSize` excludes solutions below it from being reported: the split-
+ * settlement search (§8.1) uses 2, because a size-1 "solution" is an ordinary
+ * 1:1 match that belongs to the tiers, not to this stage.
+ */
+export function searchSubsetsInBand(
+  contributions: Contribution[],
+  loPaise: Paise,
+  hiPaise: Paise,
+  config: RunConfig,
+  poolCapped: boolean,
+  minSubsetSize = 1,
+): { solutions: Contribution[][]; stats: SearchStats } {
   // Descending by maximum contribution: the largest amounts fail the "too big"
   // prune earliest, which is what makes the pruning effective.
   const items = [...contributions].sort((a, b) =>
@@ -159,8 +186,8 @@ export function searchSubsets(
   const suffixMax = new Array<number>(n + 1).fill(0);
   for (let i = n - 1; i >= 0; i -= 1) suffixMax[i] = suffixMax[i + 1]! + items[i]!.maxPaise;
 
-  const lo = targetPaise - tolerancePaise;
-  const hi = targetPaise + tolerancePaise;
+  const lo = loPaise;
+  const hi = hiPaise;
 
   const solutions: Contribution[][] = [];
   const chosen: Contribution[] = [];
@@ -190,7 +217,7 @@ export function searchSubsets(
       return;
     }
 
-    if (chosen.length > 0 && minSum <= hi && maxSum >= lo) {
+    if (chosen.length >= minSubsetSize && minSum <= hi && maxSum >= lo) {
       solutions.push([...chosen]);
       if (solutions.length >= 2) { complete = false; return; }
     }
@@ -301,7 +328,7 @@ export function decomposeBatch(
 // ── §8.1 Split settlements — the mirror case ──────────────────────────────────
 
 export type SplitOutcome =
-  | { kind: 'split'; legs: NormalizedTransaction[]; reason: string }
+  | { kind: 'split'; legs: NormalizedTransaction[]; ruleId: 'SPLIT_SETTLEMENT_V1'; reason: string }
   | { kind: 'none' };
 
 /**
@@ -310,6 +337,14 @@ export type SplitOutcome =
  * Far cheaper than the batch case and worth doing for its own sake: a dataset
  * containing only the unresolvable half of the split/batch pair would make the
  * engine look worse than it is.
+ *
+ * Candidate legs are unmatched bank credits that either SHARE A STRONG ANCHOR
+ * with the gateway record (identity evidence, so the settlement window does not
+ * gate it) or fall in the gateway's window with a non-contradicting counterparty
+ * (matching.engine.md §8.1). A genuine bounded subset search over that pool then
+ * decides the shape — summing every eligible candidate, as before, answers a
+ * different and much narrower question ("is the eligible pool exactly the
+ * answer") than the one this rule is meant to ask.
  */
 export function findSplitSettlement(
   gateway: NormalizedTransaction,
@@ -325,6 +360,7 @@ export function findSplitSettlement(
   const legs = unmatchedBank.filter((b) => {
     if (b.sourceSystem !== 'bank' || b.direction !== 'credit') return false;
     if (b.statusNorm !== 'reconcilable') return false;
+    if (sharedStrongAnchor(gateway.referenceIds, b.referenceIds) !== null) return true;
     const delta = dayDelta(gateway.txnDate, b.txnDate);
     if (delta < window[0] || delta > window[1]) return false;
     const party = b.counterpartyKey ?? b.counterpartyNorm;
@@ -332,19 +368,31 @@ export function findSplitSettlement(
     return true;
   }).sort(compareCanonical);
 
-  // Only consider genuinely split shapes: a single leg is an ordinary 1:1 match
-  // and belongs to the tiers, not here.
-  if (legs.length < 2 || legs.length > 4) return { kind: 'none' };
+  if (legs.length < 2) return { kind: 'none' };
 
-  const sum = legs.reduce((acc, b) => acc + b.amountPaise, 0);
-  if (sum >= expected.minPaise - tolerance && sum <= expected.maxPaise + tolerance) {
-    return {
-      kind: 'split',
-      legs,
-      reason:
-        `${legs.length} bank credits sum to this payment's expected net within ` +
-        `${tolerance} paise; proposed for review as a split settlement`,
-    };
-  }
-  return { kind: 'none' };
+  const contributions: Contribution[] = legs.map((b) => (
+    { transaction: b, minPaise: b.amountPaise, maxPaise: b.amountPaise, inferred: false }));
+
+  // Capped at 4 legs (matching-engine.md §8.1) — the split search's own subset
+  // cap, independent of S10's batch-decomposition cap of 8.
+  const splitConfig = { ...config, batchMaxSubsetSize: 4 };
+  const { solutions } = searchSubsetsInBand(
+    contributions, expected.minPaise - tolerance, expected.maxPaise + tolerance,
+    splitConfig, false, 2);
+
+  // Only a SINGLE genuine multi-leg solution is a proposable split. Zero means
+  // no combination works; two or more means arithmetic cannot choose between
+  // them, which is not a confident finding either.
+  if (solutions.length !== 1) return { kind: 'none' };
+
+  const chosen = solutions[0]!.map((c) => c.transaction).sort(compareCanonical);
+  return {
+    kind: 'split',
+    legs: chosen,
+    ruleId: 'SPLIT_SETTLEMENT_V1',
+    reason:
+      `${chosen.length} bank credits sum to this payment's expected net within ` +
+      `${tolerance} paise (searched up to ${splitConfig.batchMaxSubsetSize} of ` +
+      `${legs.length} eligible candidates); proposed for review as a split settlement`,
+  };
 }
