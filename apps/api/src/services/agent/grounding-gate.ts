@@ -25,13 +25,18 @@ import type {
   AgentConfidence, ProposedAction, RawVerdict, ReasoningStep, ToolCallRecord,
   ValidatedVerdict, Verdict,
 } from '../../types/agent.js';
-import type { Direction, SourceSystem } from '../../types/domain.js';
+import type { AliasType, Direction, SourceSystem } from '../../types/domain.js';
+import { AGENT_DEFAULTS } from '../../config/defaults.js';
 
 const VERDICTS: readonly Verdict[] = [
   'RESOLUTION_PROPOSED', 'CONFIRMED_UNRESOLVABLE', 'NEEDS_EXTERNAL_DATA', 'INSUFFICIENT_EVIDENCE',
 ];
 const CONFIDENCES: readonly AgentConfidence[] = ['high', 'medium', 'low'];
 const ACTION_TYPES = ['MANUAL_MATCH', 'CREATE_ALIAS', 'MARK_WONT_FIX', 'ADJUST_SEARCH_BOUNDS'] as const;
+const SOURCE_SYSTEMS: readonly SourceSystem[] = ['gateway', 'bank', 'ledger'];
+/** Mirrors `learned_aliases.alias_type`'s CHECK constraint (migration 005). */
+const ALIAS_TYPES: readonly AliasType[] =
+  ['merchant_name', 'counterparty_name', 'reference_id', 'description_token'];
 
 /** Everything the gate needs about the world, so the gate itself stays pure. */
 export interface GateContext {
@@ -124,26 +129,98 @@ function checkSchema(raw: unknown): string | null {
   if (!isProposal && action !== null && action !== undefined) {
     return `${String(v['verdict'])} must not carry a proposedAction`;
   }
-  if (isProposal) {
-    const a = action as Record<string, unknown>;
-    if (typeof a['type'] !== 'string' || !ACTION_TYPES.includes(a['type'] as never)) {
-      return `proposedAction.type must be one of ${ACTION_TYPES.join(', ')}`;
-    }
-    if (typeof a['rationale'] !== 'string' || a['rationale'].trim() === '') {
-      return 'proposedAction.rationale is required';
-    }
-    if (a['type'] === 'MANUAL_MATCH') {
+  if (isProposal) return checkActionSchema(action);
+  return null;
+}
+
+/** A non-empty string. `undefined`, `null`, `''`, `'   '` and every non-string are not one. */
+function isText(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== '';
+}
+
+/**
+ * EVERY action variant's payload is validated here, not just `MANUAL_MATCH`
+ * (issue #19).
+ *
+ * The old version descended into `MANUAL_MATCH` alone and left the other three
+ * unchecked, which mattered more than it looks: `checkConstraints` then compared
+ * fields that might not exist, and `undefined <= 0` is `false`. So the one bounds
+ * check that did exist SILENTLY AFFIRMED for every value that was not a positive
+ * number — a check written to reject that accepted instead, which is the precise
+ * shape of failing open. A `CREATE_ALIAS` missing `canonicalValue` slipped past
+ * the self-map test the same way, since `'AMZN' === undefined` is false.
+ *
+ * The union is exhausted deliberately: adding a fifth action type without a
+ * branch here is a TypeScript error rather than a silently unvalidated proposal.
+ */
+function checkActionSchema(action: unknown): string | null {
+  if (action === null || typeof action !== 'object' || Array.isArray(action)) {
+    return 'proposedAction must be an object';
+  }
+  const a = action as Record<string, unknown>;
+  if (typeof a['type'] !== 'string' || !ACTION_TYPES.includes(a['type'] as never)) {
+    return `proposedAction.type must be one of ${ACTION_TYPES.join(', ')}`;
+  }
+  // Required on every variant: a human reads this before acting on the proposal.
+  if (!isText(a['rationale'])) return 'proposedAction.rationale is required';
+
+  const type = a['type'] as ProposedAction['type'];
+  switch (type) {
+    case 'MANUAL_MATCH': {
       if (!Array.isArray(a['members']) || a['members'].length < 2) {
         return 'MANUAL_MATCH requires at least two members';
       }
       for (const [i, m] of (a['members'] as unknown[]).entries()) {
+        if (m === null || typeof m !== 'object') return `members[${i}] is not an object`;
         const member = m as Record<string, unknown>;
-        if (typeof member?.['transactionId'] !== 'string') return `members[${i}].transactionId required`;
-        if (typeof member['role'] !== 'string') return `members[${i}].role required`;
+        if (!isText(member['transactionId'])) return `members[${i}].transactionId required`;
+        // Checked against the source systems, not merely `typeof 'string'`. The
+        // constraint pass compares role to the record's own source, so a junk role
+        // was caught there by accident; naming the real reason here is better than
+        // depending on a coincidence two checks away.
+        if (!SOURCE_SYSTEMS.includes(member['role'] as SourceSystem)) {
+          return `members[${i}].role must be one of ${SOURCE_SYSTEMS.join(', ')}`;
+        }
       }
+      return null;
+    }
+
+    case 'CREATE_ALIAS': {
+      if (!ALIAS_TYPES.includes(a['aliasType'] as AliasType)) {
+        return `CREATE_ALIAS.aliasType must be one of ${ALIAS_TYPES.join(', ')}`;
+      }
+      if (!isText(a['rawValue'])) return 'CREATE_ALIAS.rawValue is required';
+      if (!isText(a['canonicalValue'])) return 'CREATE_ALIAS.canonicalValue is required';
+      return null;
+    }
+
+    case 'MARK_WONT_FIX':
+      // The rationale IS the proposal here; nothing further to carry.
+      return null;
+
+    case 'ADJUST_SEARCH_BOUNDS': {
+      for (const field of ['poolSize', 'maxSubsetSize', 'budgetMs'] as const) {
+        const value = a[field];
+        if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+          return `ADJUST_SEARCH_BOUNDS.${field} must be a positive integer`;
+        }
+        // ADR-054's ceilings, enforced on the PROPOSAL. The gate is the only
+        // deterministic check on what a human is shown, so a request for a pool of
+        // a billion must not reach them looking actionable.
+        const ceiling = AGENT_DEFAULTS.rerunSubsetCeilings[field];
+        if (value > ceiling) {
+          return `ADJUST_SEARCH_BOUNDS.${field} is ${value}, above the ADR-054 ceiling of ${ceiling}`;
+        }
+      }
+      return null;
+    }
+
+    default: {
+      // Exhaustiveness: a new action type must be handled above, not fall through.
+      const unreachable: never = type;
+      return `unhandled proposedAction.type ${String(unreachable)}`;
     }
   }
-  return null;
 }
 
 // ─── 2. Citation grounding ───────────────────────────────────────────────────
@@ -284,11 +361,11 @@ function checkConstraints(verdict: RawVerdict, context: GateContext): string | n
     }
   }
 
-  if (action.type === 'ADJUST_SEARCH_BOUNDS') {
-    if (action.poolSize <= 0 || action.maxSubsetSize <= 0 || action.budgetMs <= 0) {
-      return 'search bounds must be positive';
-    }
-  }
+  // ADJUST_SEARCH_BOUNDS has no constraint check: its bounds are a matter of TYPE
+  // and CEILING, both of which the schema pass now owns outright (issue #19). The
+  // check that used to live here — `action.poolSize <= 0` — is exactly what failed
+  // open, because `undefined <= 0` and `'lots' <= 0` are both false. Leaving a
+  // weaker copy of a check that already ran is how the first one got trusted.
   return null;
 }
 

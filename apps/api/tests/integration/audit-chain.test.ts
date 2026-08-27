@@ -35,8 +35,11 @@ describe('audit hash chain (integration)', { skip: DB_URL === null ? 'no TEST_DA
   before(async () => {
     createPool({ databaseUrl: DB_URL!, corsOrigins: [] } as never);
     await runMigrations(getPool());
+    // audit_chain_heads is named explicitly rather than left to CASCADE: a stale
+    // anchor beside an empty audit_log is exactly the state that reads as
+    // truncation, so the reset must not depend on cascade ordering.
     await getPool().query(`TRUNCATE runs, transactions, matches, match_members, exceptions,
-      audit_log, learned_aliases, explanation_cache, score_reports,
+      audit_log, audit_chain_heads, learned_aliases, explanation_cache, score_reports,
       agent_investigations, agent_questions CASCADE`);
     for (const id of [RUN, OTHER_RUN]) {
       await getPool().query(
@@ -112,6 +115,35 @@ describe('audit hash chain (integration)', { skip: DB_URL === null ? 'no TEST_DA
     assert.equal((await verifyRunChain(null)).valid, true);
   });
 
+  test('THE HASH INPUT IS THE STORED FORM: shapes JSON.stringify and canonicalJson disagree on', async () => {
+    // Issue #17. The hash was computed over the caller's object while the columns
+    // were written with JSON.stringify, and the two disagree in two places:
+    // `details ?? {}` coerces null to an object, and JSON.stringify DROPS an
+    // undefined-valued key where canonicalJson emits "k":null. Either one makes an
+    // untampered entry verify as entry_altered.
+    const shapes: Array<[string, Partial<AuditEntryInput>]> = [
+      ['details = null', { details: null }],
+      ['details = undefined', { details: undefined }],
+      ['undefined key in afterState', { afterState: { a: 1, b: undefined } }],
+      ['undefined key in beforeState', { beforeState: { kept: 'x', dropped: undefined } }],
+      ['undefined key nested two deep', { details: { outer: { inner: { a: 1, b: undefined } } } }],
+      ['undefined inside an array element', { details: { xs: [{ a: 1, b: undefined }] } }],
+      ['a Date inside details', { details: { at: new Date('2026-08-27T10:00:00.000Z') } }],
+    ];
+
+    for (const [i, [label, over]] of shapes.entries()) {
+      const runId = `77770000-0000-0000-0000-${String(i).padStart(12, '0')}`;
+      await getPool().query(
+        `INSERT INTO runs (id,label,status,config_snapshot) VALUES ($1,'shape','pending','{}')
+         ON CONFLICT DO NOTHING`, [runId]);
+      await appendAuditEntry(input({ runId, subjectId: runId, reason: label, ...over }));
+      await appendAuditEntry(input({ runId, subjectId: runId, reason: `${label} (successor)` }));
+      const r = await verifyRunChain(runId);
+      assert.equal(r.valid, true,
+        `"${label}" made an untampered chain report ${r.divergenceKind}`);
+    }
+  });
+
   test('TAMPERING IS DETECTED even with the append-only trigger dropped', async () => {
     // The scenario ADR-042 exists for. The trigger stops tampering through the
     // application; anyone who can drop it can rewrite history, and only the chain
@@ -162,6 +194,115 @@ describe('audit hash chain (integration)', { skip: DB_URL === null ? 'no TEST_DA
       await client.query('ALTER TABLE audit_log ENABLE TRIGGER trg_audit_log_immutable');
       client.release();
     }
+  });
+
+  test('A CALLER-SUPPLIED CLIENT OUTSIDE A TRANSACTION IS REFUSED', async () => {
+    // The lock is `pg_advisory_xact_lock`, so it lives exactly as long as the
+    // transaction does. Handed a client in autocommit, the lock is released by the
+    // statement that took it — before the head is even read — and the append runs
+    // completely unprotected. Refusing is the only safe answer: an audit write that
+    // silently drops its own concurrency guarantee is worse than one that fails.
+    const c = await getPool().connect();
+    try {
+      await assert.rejects(
+        () => appendAuditEntry(input({ reason: 'unprotected' }), c as never),
+        /transaction/i,
+        'an append on a non-transactional client must throw, not proceed unprotected',
+      );
+    } finally { c.release(); }
+  });
+
+  test('CONCURRENT APPENDS ON BARE POOLED CLIENTS CANNOT CORRUPT THE CHAIN', async () => {
+    // The reproduction from the units 9-10 audit (issue #16). Before the fix these
+    // twelve appends all succeeded, four of them claiming one predecessor and two
+    // another, and verifyRunChain then reported `chain_broken` on a log nobody had
+    // tampered with — the worst false positive available to a tamper-evidence
+    // mechanism, and produced by the writer itself.
+    const bareRun = '55555555-5555-5555-5555-555555555555';
+    await getPool().query(
+      `INSERT INTO runs (id,label,status,config_snapshot) VALUES ($1,'bare','pending','{}')
+       ON CONFLICT DO NOTHING`, [bareRun]);
+
+    const settled = await Promise.allSettled(Array.from({ length: 12 }, async (_, i) => {
+      const c = await getPool().connect();
+      try { await appendAuditEntry(input({ runId: bareRun, subjectId: bareRun, reason: `bare ${i}` }), c as never); }
+      finally { c.release(); }
+    }));
+
+    assert.equal(settled.filter((s) => s.status === 'rejected').length, 12,
+      'every unprotected append must be refused');
+    const { rows } = await getPool().query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM audit_log WHERE run_id = $1', [bareRun]);
+    assert.equal(rows[0]!.n, 0, 'a refused append must write nothing');
+    assert.equal((await verifyRunChain(bareRun)).valid, true);
+  });
+
+  test('TRUNCATING THE TAIL IS DETECTED, not reported as a clean chain', async () => {
+    // Issue #18. Every entry that survives a tail deletion still links correctly to
+    // the one before it, so a verifier that only walks what is present certifies
+    // the log as intact. "Drop everything after the decision I want to hide" is the
+    // cheapest tamper available and it was the one the chain could not see.
+    const runId = '66660000-0000-0000-0000-000000000001';
+    await getPool().query(
+      `INSERT INTO runs (id,label,status,config_snapshot) VALUES ($1,'trunc','pending','{}')
+       ON CONFLICT DO NOTHING`, [runId]);
+    for (let i = 0; i < 5; i += 1) {
+      await appendAuditEntry(input({ runId, subjectId: runId, reason: `t${i}` }));
+    }
+    const intact = await verifyRunChain(runId);
+    assert.equal(intact.valid, true);
+    assert.equal(intact.expectedEntryCount, 5, 'the chain records how long it is');
+
+    const c = await getPool().connect();
+    try {
+      await c.query('ALTER TABLE audit_log DISABLE TRIGGER trg_audit_log_immutable');
+      await c.query(
+        `DELETE FROM audit_log WHERE sequence_no IN (
+           SELECT sequence_no FROM audit_log WHERE run_id = $1 ORDER BY sequence_no DESC LIMIT 2)`,
+        [runId]);
+    } finally {
+      await c.query('ALTER TABLE audit_log ENABLE TRIGGER trg_audit_log_immutable');
+      c.release();
+    }
+
+    const r = await verifyRunChain(runId);
+    assert.equal(r.valid, false, 'a chain cut short must not verify');
+    assert.equal(r.divergenceKind, 'chain_truncated');
+    assert.equal(r.entriesChecked, 3);
+    assert.equal(r.expectedEntryCount, 5, 'and it must say how many are missing');
+  });
+
+  test('DELETING A WHOLE CHAIN IS DETECTED, not mistaken for a run that never logged', async () => {
+    const runId = '66660000-0000-0000-0000-000000000002';
+    await getPool().query(
+      `INSERT INTO runs (id,label,status,config_snapshot) VALUES ($1,'wipe','pending','{}')
+       ON CONFLICT DO NOTHING`, [runId]);
+    for (let i = 0; i < 3; i += 1) {
+      await appendAuditEntry(input({ runId, subjectId: runId, reason: `w${i}` }));
+    }
+    const c = await getPool().connect();
+    try {
+      await c.query('ALTER TABLE audit_log DISABLE TRIGGER trg_audit_log_immutable');
+      await c.query('DELETE FROM audit_log WHERE run_id = $1', [runId]);
+    } finally {
+      await c.query('ALTER TABLE audit_log ENABLE TRIGGER trg_audit_log_immutable');
+      c.release();
+    }
+    const r = await verifyRunChain(runId);
+    assert.equal(r.valid, false);
+    assert.equal(r.divergenceKind, 'chain_truncated');
+    assert.equal(r.entriesChecked, 0);
+    assert.equal(r.expectedEntryCount, 3);
+  });
+
+  test('an unanchored chain says so rather than claiming to be verified', async () => {
+    // A run with no entries and no anchor is indistinguishable from one whose
+    // entries and anchor were both deleted. `anchored: false` states the bound
+    // rather than letting `valid: true` imply more than it proves.
+    const r = await verifyRunChain('66660000-0000-0000-0000-000000000009');
+    assert.equal(r.valid, true);
+    assert.equal(r.anchored, false);
+    assert.equal(r.expectedEntryCount, null);
   });
 
   test('the append path itself cannot break the chain under concurrency', async () => {

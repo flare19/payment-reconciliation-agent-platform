@@ -9,17 +9,18 @@
  * snake_case in, camelCase out. This layer is the mapping boundary.
  */
 
-import type pg from 'pg';
-import { getPool, withTransaction } from '../db/pool.js';
 import {
-  GENESIS_HASH, computeEntryHash, verifyChain,
-  type ChainVerification, type HashableAuditEntry, type StoredAuditEntry,
+  ADVISORY_LOCK, advisoryXactLockHeldSql, getPool, takeAdvisoryXactLock, withTransaction,
+  type TxClient,
+} from '../db/pool.js';
+import { canonicalJson } from '../services/audit/canonical-json.js';
+import {
+  GENESIS_HASH, computeEntryHash, toStoredForm, verifyChain,
+  type ChainAnchor, type ChainVerification, type HashableAuditEntry, type StoredAuditEntry,
 } from '../services/audit/hash-chain.js';
 
 /** What a caller supplies. `occurredAt` is optional here and filled in at append. */
 export type AuditEntryInput = Omit<HashableAuditEntry, 'occurredAt'> & { occurredAt?: Date };
-
-const CHAIN_LOCK_NAMESPACE = 8_241_067;
 
 /**
  * Append one entry, chained to the current head.
@@ -39,45 +40,86 @@ const CHAIN_LOCK_NAMESPACE = 8_241_067;
  * predecessor — a chain that verifies as broken, caused by the writer rather than
  * by tampering, which is the worst possible false positive for this mechanism.
  * It costs one lock acquisition per append and removes the assumption entirely.
+ *
+ * `client` is a `TxClient`, not a `PoolClient`: `pg_advisory_xact_lock` lives
+ * exactly as long as the transaction, so on a client in autocommit it is released
+ * by the statement that took it and the append runs unprotected. The type makes
+ * that unrepresentable and the `lock_held` check below catches the untyped caller
+ * (issue #16 — this is the second time an advisory lock in this repo has been
+ * taken somewhere it did not survive; see the note in `db/pool.ts`).
  */
 export async function appendAuditEntry(
-  input: AuditEntryInput, client?: pg.PoolClient,
+  input: AuditEntryInput, client?: TxClient,
 ): Promise<StoredAuditEntry> {
-  const run = async (c: pg.PoolClient): Promise<StoredAuditEntry> => {
-    await c.query('SELECT pg_advisory_xact_lock($1, $2)', [
-      CHAIN_LOCK_NAMESPACE,
-      // Chains are per run; entries with no run form their own chain, so they get
-      // their own lock key rather than colliding with run 0.
-      input.runId === null ? 0 : hashUuidToInt(input.runId),
-    ]);
+  const run = async (c: TxClient): Promise<StoredAuditEntry> => {
+    // Chains are per run; entries with no run form their own chain, so they get
+    // their own lock key rather than colliding with run 0.
+    const lockKey = input.runId === null ? 0 : hashUuidToInt(input.runId);
+    await takeAdvisoryXactLock(c, ADVISORY_LOCK.auditChain, lockKey);
 
-    const { rows } = await c.query<{ entry_hash: string }>(
-      `SELECT entry_hash FROM audit_log
-        WHERE run_id IS NOT DISTINCT FROM $1
-        ORDER BY sequence_no DESC
-        LIMIT 1`,
-      [input.runId],
+    // One statement, two answers: the chain head, and proof that the lock taken
+    // above is still held as we read it. Folding the check in here rather than
+    // issuing it separately costs no extra round trip on a path that runs
+    // thousands of times per run.
+    const { rows } = await c.query<{ lock_held: boolean; entry_hash: string | null }>(
+      `SELECT ${advisoryXactLockHeldSql(2, 3)} AS lock_held,
+              (SELECT entry_hash FROM audit_log
+                WHERE run_id IS NOT DISTINCT FROM $1
+                ORDER BY sequence_no DESC
+                LIMIT 1) AS entry_hash`,
+      [input.runId, ADVISORY_LOCK.auditChain, lockKey],
     );
-    const prevHash = rows[0]?.entry_hash ?? GENESIS_HASH;
+    if (!rows[0]!.lock_held) {
+      throw new Error(
+        'appendAuditEntry: the chain lock was not held when the head was read, which means ' +
+        'this client is not inside a transaction — pg_advisory_xact_lock was released by the ' +
+        'statement that took it. Wrap the call in withTransaction(), or pass the TxClient it ' +
+        'yields. Appending unprotected would let two writers claim the same predecessor and ' +
+        'make an untampered chain verify as broken.',
+      );
+    }
+    const prevHash = rows[0]!.entry_hash ?? GENESIS_HASH;
 
-    const entry: HashableAuditEntry = { ...input, occurredAt: input.occurredAt ?? new Date() };
+    // The stored form is computed ONCE and both the hash and the column values come
+    // out of it (issue #17). Writing the columns from anything else — a second
+    // `JSON.stringify` of the caller's object, say — is what made an untampered
+    // entry verify as `entry_altered`.
+    const entry = toStoredForm({ ...input, occurredAt: input.occurredAt ?? new Date() });
     const entryHash = computeEntryHash(entry, prevHash);
 
+    // The anchor moves in the SAME statement as the entry it describes (issue #18),
+    // so there is no window in which the log is longer than its recorded head, and
+    // no extra round trip. Both are already serialized by the advisory lock above.
     const inserted = await c.query<{ sequence_no: number; occurred_at: Date }>(
-      `INSERT INTO audit_log (
-         run_id, event_type, subject_type, subject_id, transaction_id,
-         actor_type, actor_id, tier, rule_id, rule_version, decision, confidence,
-         before_state, after_state, reason, details, prev_hash, entry_hash, occurred_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
-       RETURNING sequence_no, occurred_at`,
+      `WITH inserted AS (
+         INSERT INTO audit_log (
+           run_id, event_type, subject_type, subject_id, transaction_id,
+           actor_type, actor_id, tier, rule_id, rule_version, decision, confidence,
+           before_state, after_state, reason, details, prev_hash, entry_hash, occurred_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+         RETURNING sequence_no, occurred_at
+       ), anchor AS (
+         INSERT INTO audit_chain_heads (run_id, entry_count, head_hash, head_sequence_no)
+         VALUES ($1, 1, $18, (SELECT sequence_no FROM inserted))
+         ON CONFLICT (run_id) DO UPDATE
+           SET entry_count      = audit_chain_heads.entry_count + 1,
+               head_hash        = EXCLUDED.head_hash,
+               head_sequence_no = EXCLUDED.head_sequence_no,
+               updated_at       = now()
+       )
+       SELECT sequence_no, occurred_at FROM inserted`,
       [
         entry.runId, entry.eventType, entry.subjectType, entry.subjectId, entry.transactionId,
         entry.actorType, entry.actorId, entry.tier, entry.ruleId, entry.ruleVersion,
         entry.decision, entry.confidence,
-        entry.beforeState === undefined ? null : JSON.stringify(entry.beforeState),
-        entry.afterState === undefined ? null : JSON.stringify(entry.afterState),
+        // `canonicalJson`, never `JSON.stringify`: one serializer for the hash and
+        // for the columns. `null` stays SQL NULL rather than becoming JSON null,
+        // which keeps `before_state IS NULL` meaningful — both read back as JS
+        // `null`, so the hash agrees either way.
+        entry.beforeState === null ? null : canonicalJson(entry.beforeState),
+        entry.afterState === null ? null : canonicalJson(entry.afterState),
         entry.reason,
-        JSON.stringify(entry.details ?? {}),
+        canonicalJson(entry.details),
         prevHash, entryHash,
         entry.occurredAt,
       ],
@@ -113,9 +155,27 @@ export async function readChain(runId: string | null): Promise<StoredAuditEntry[
   return rows.map(toStored);
 }
 
+/**
+ * The chain's anchor, or null if it has never been written to.
+ *
+ * Read separately from the entries because it answers a different question: the
+ * entries say whether what is present is consistent, the anchor says whether
+ * anything is missing from the end (issue #18).
+ */
+export async function readChainAnchor(runId: string | null): Promise<ChainAnchor | null> {
+  const { rows } = await getPool().query<{ entry_count: number; head_hash: string }>(
+    `SELECT entry_count, head_hash FROM audit_chain_heads
+      WHERE run_id IS NOT DISTINCT FROM $1`,
+    [runId],
+  );
+  const row = rows[0];
+  return row === undefined ? null : { entryCount: Number(row.entry_count), headHash: row.head_hash };
+}
+
 /** Endpoint 22. Read-only, safe at any time, fast enough to run live in a pitch. */
 export async function verifyRunChain(runId: string | null): Promise<ChainVerification> {
-  return verifyChain(await readChain(runId));
+  const [entries, anchor] = await Promise.all([readChain(runId), readChainAnchor(runId)]);
+  return verifyChain(entries, anchor);
 }
 
 interface AuditRow {

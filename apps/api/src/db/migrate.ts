@@ -2,6 +2,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type pg from 'pg';
+import { ADVISORY_LOCK } from './pool.js';
 
 /**
  * Forward-only numbered migrations (ADR-022).
@@ -16,7 +17,9 @@ import type pg from 'pg';
  * makes that assumption explicit rather than merely true-for-now.
  */
 
-const MIGRATION_LOCK_ID = 8_241_066;
+// Session-scoped, because the runner spans several transactions (one per
+// migration). Registered alongside every other lock id in `db/pool.ts`.
+const MIGRATION_LOCK_ID = ADVISORY_LOCK.migrations;
 
 export interface MigrationResult {
   applied: string[];

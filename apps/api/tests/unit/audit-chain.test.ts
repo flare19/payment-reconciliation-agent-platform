@@ -1,10 +1,13 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { canonicalJson } from '../../src/services/audit/canonical-json.js';
+import { canonicalJson, canonicalize } from '../../src/services/audit/canonical-json.js';
 import {
-  computeEntryHash, verifyChain, GENESIS_HASH,
+  computeEntryHash, toStoredForm, verifyChain, GENESIS_HASH,
   type HashableAuditEntry, type StoredAuditEntry,
 } from '../../src/services/audit/hash-chain.js';
+
+/** What a jsonb column does to a value: exactly what JSON can carry, nothing more. */
+const throughJsonb = (v: unknown): unknown => JSON.parse(JSON.stringify(v) ?? 'null');
 
 function entry(over: Partial<HashableAuditEntry> = {}): HashableAuditEntry {
   return {
@@ -56,6 +59,31 @@ describe('canonical JSON — byte stability is the whole point', () => {
     // null. Both must hash the same or every nullable field breaks the chain.
     assert.equal(canonicalJson({ a: undefined }), canonicalJson({ a: null }));
     assert.equal(canonicalJson(undefined), 'null');
+  });
+
+  test('THE STORED FORM IS A FIXED POINT of a jsonb round trip', () => {
+    // The assertion above only proves canonicalJson agrees with ITSELF. The threat
+    // is that it disagrees with what the column actually holds, which is what
+    // issue #17 was: `canonicalJson({a:undefined})` is `{"a":null}` and the stored
+    // `JSON.stringify({a:undefined})` is `{}`. So the real invariant is that a
+    // canonicalized value survives storage unchanged.
+    const shapes: unknown[] = [
+      null, undefined, {}, [], 0, -0, '', 'plain',
+      { a: undefined }, { a: null }, { a: 1, b: undefined },
+      { outer: { inner: { a: 1, b: undefined } } },
+      { xs: [{ a: 1, b: undefined }, null, 3] },
+      { at: new Date('2026-08-27T10:00:00.000Z') },
+      { zebra: 1, alpha: { yankee: [3, 2, 1], bravo: 'x' }, mike: null },
+      { 'key with spaces': 'v', 'ключ': 'значение' },
+      { n: 1.1, big: 12345678901234567890, tiny: 1e-320 },
+    ];
+    for (const shape of shapes) {
+      const once = canonicalize(shape as never);
+      assert.equal(canonicalJson(once), canonicalJson(canonicalize(once)),
+        `canonicalize is not idempotent for ${JSON.stringify(shape)}`);
+      assert.equal(canonicalJson(once), canonicalJson(throughJsonb(once) as never),
+        `the canonical form does not survive storage for ${JSON.stringify(shape)}`);
+    }
   });
 
   test('Dates become ISO-8601 UTC, so a driver Date and a string agree', () => {
@@ -127,6 +155,54 @@ describe('entry hashing', () => {
     assert.equal(
       computeEntryHash(entry({ details: { b: 1, a: 2 } }), GENESIS_HASH),
       computeEntryHash(entry({ details: { a: 2, b: 1 } }), GENESIS_HASH));
+  });
+});
+
+describe('the stored form is the hash input (issue #17)', () => {
+  test('an undefined-valued key hashes as the null the column will return', () => {
+    // "The field was not set" has ONE representation, and it is the one the column
+    // holds. Before the fix the entry was hashed with "b":null while
+    // JSON.stringify wrote the key away entirely, so the row read back could never
+    // reproduce its own entry_hash.
+    assert.equal(
+      computeEntryHash(entry({ afterState: { a: 1, b: undefined } }), GENESIS_HASH),
+      computeEntryHash(entry({ afterState: { a: 1, b: null } }), GENESIS_HASH),
+    );
+    // And still DIFFERENT from the key being absent: those are two different
+    // stored values, and collapsing them would make two different entries hash
+    // identically — the same failure the NaN guard exists to prevent.
+    assert.notEqual(
+      computeEntryHash(entry({ afterState: { a: 1, b: undefined } }), GENESIS_HASH),
+      computeEntryHash(entry({ afterState: { a: 1 } }), GENESIS_HASH),
+    );
+  });
+
+  test('details null, undefined and {} are one entry, because the column stores one', () => {
+    // `details JSONB NOT NULL DEFAULT '{}'` — the column cannot hold null, so the
+    // hash must not distinguish shapes it will collapse.
+    const h = computeEntryHash(entry({ details: {} }), GENESIS_HASH);
+    assert.equal(computeEntryHash(entry({ details: null }), GENESIS_HASH), h);
+    assert.equal(computeEntryHash(entry({ details: undefined }), GENESIS_HASH), h);
+  });
+
+  test('toStoredForm is idempotent, so verification may apply it to a stored row', () => {
+    const once = toStoredForm(entry({ details: { a: undefined }, afterState: null }));
+    assert.equal(canonicalJson(once as never), canonicalJson(toStoredForm(once) as never));
+  });
+
+  test('a Date inside a JSON column hashes as the string the column returns', () => {
+    const at = new Date('2026-08-27T10:00:00.000Z');
+    assert.equal(
+      computeEntryHash(entry({ details: { at } }), GENESIS_HASH),
+      computeEntryHash(entry({ details: { at: at.toISOString() } }), GENESIS_HASH),
+    );
+  });
+
+  test('the stored form still refuses what JSON cannot represent', () => {
+    // Normalising must not become a way to smuggle NaN through as null: two
+    // different entries hashing identically is the failure this guards.
+    assert.throws(() => computeEntryHash(entry({ details: { n: NaN } }), GENESIS_HASH), /not representable/);
+    assert.throws(() => computeEntryHash(entry({ details: { n: Infinity } }), GENESIS_HASH), /not representable/);
   });
 });
 
@@ -218,6 +294,61 @@ describe('chain verification', () => {
     assert.equal(r.firstDivergenceSequenceNo, 3);
     assert.equal(r.divergenceKind, 'chain_broken',
       'covering your tracks on one row requires rewriting every row after it');
+  });
+
+  test('WITHOUT AN ANCHOR, a truncated chain is indistinguishable from a short one', () => {
+    // Not a wish: this is the limit of recomputation alone, and the reason the
+    // anchor exists. Every entry that survives a tail deletion still links to its
+    // predecessor, so the surviving prefix IS a valid chain.
+    const chain = chainOf([entry(), entry({ reason: 'second' }), entry({ reason: 'third' })]);
+    const r = verifyChain(chain.slice(0, 1));
+    assert.equal(r.valid, true);
+    assert.equal(r.anchored, false, 'and it must say the claim is the weaker one');
+  });
+
+  test('WITH AN ANCHOR, a truncated chain is caught', () => {
+    const chain = chainOf([entry(), entry({ reason: 'second' }), entry({ reason: 'third' })]);
+    const anchor = { entryCount: 3, headHash: chain[2]!.entryHash };
+
+    assert.equal(verifyChain(chain, anchor).valid, true);
+
+    const cut = verifyChain(chain.slice(0, 1), anchor);
+    assert.equal(cut.valid, false);
+    assert.equal(cut.divergenceKind, 'chain_truncated');
+    assert.equal(cut.entriesChecked, 1);
+    assert.equal(cut.expectedEntryCount, 3);
+    assert.equal(cut.expectedChainHead, chain[2]!.entryHash);
+  });
+
+  test('an emptied chain is caught, not read as a chain that was never written', () => {
+    const chain = chainOf([entry(), entry({ reason: 'second' })]);
+    const r = verifyChain([], { entryCount: 2, headHash: chain[1]!.entryHash });
+    assert.equal(r.valid, false);
+    assert.equal(r.divergenceKind, 'chain_truncated');
+    assert.equal(r.entriesChecked, 0);
+  });
+
+  test('a count that agrees but a head that does not is still truncation', () => {
+    // The count alone is forgeable by anyone who can also delete rows; the terminal
+    // hash is the half that says WHICH chain of that length you are holding.
+    const chain = chainOf([entry(), entry({ reason: 'second' })]);
+    const r = verifyChain(chain, { entryCount: 2, headHash: GENESIS_HASH });
+    assert.equal(r.valid, false);
+    assert.equal(r.divergenceKind, 'chain_truncated');
+  });
+
+  test('an anchored empty chain is valid', () => {
+    const r = verifyChain([], { entryCount: 0, headHash: GENESIS_HASH });
+    assert.equal(r.valid, true);
+    assert.equal(r.anchored, true);
+  });
+
+  test('an interior removal is still chain_broken, not truncation', () => {
+    // The two kinds are different claims and must stay distinguishable: a hole in
+    // the middle points at a surviving row, a cut end does not.
+    const chain = chainOf([entry(), entry({ reason: 'second' }), entry({ reason: 'third' })]);
+    const r = verifyChain([chain[0]!, chain[2]!], { entryCount: 3, headHash: chain[2]!.entryHash });
+    assert.equal(r.divergenceKind, 'chain_broken');
   });
 
   test('sequence_no is NOT hashed, so renumbering alone does not fail verification', () => {

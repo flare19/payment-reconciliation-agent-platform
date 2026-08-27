@@ -309,7 +309,7 @@ describe('A3 — rejection behaviour', () => {
     assert.equal(validateVerdict(verdict({ citations: ['x'] }), context()).rejection!.check, 'grounding');
   });
 
-  test('THE GATE NEVER FAILS OPEN', () => {
+  test('THE GATE NEVER FAILS OPEN — top-level fields', () => {
     // Sweep every field with a plausible corruption. Any one of these coming back
     // accepted would mean the gate is decoration.
     const corruptions: Partial<RawVerdict>[] = [
@@ -323,6 +323,122 @@ describe('A3 — rejection behaviour', () => {
       assert.equal(r.verdict.groundingPassed, false,
         `a gate that accepts ${JSON.stringify(c).slice(0, 60)} is decoration`);
     }
+  });
+
+  test('THE GATE NEVER FAILS OPEN — every action type, every field', () => {
+    // Issue #19. The old sweep's name was broader than what it tested: every
+    // corruption in it is a top-level field or a MANUAL_MATCH, and checkSchema
+    // descended into MANUAL_MATCH alone. So an ADJUST_SEARCH_BOUNDS proposal with
+    // no bounds at all was ACCEPTED — `undefined <= 0` is false, so the one check
+    // that existed silently affirmed — and a CREATE_ALIAS missing canonicalValue
+    // slipped past the self-map test for the same reason.
+    //
+    // Bad values are per field KIND, not one list for everything: 'lots' is a
+    // perfectly good rationale and a bad poolSize, and a sweep that conflates them
+    // asserts the wrong thing in both directions.
+    const NOT_TEXT = [undefined, null, '', '   ', 0, -1, NaN, [], {}, true, ['a']];
+    const NOT_ENUM = [...NOT_TEXT, 'DROP TABLE', 'gatewayy'];
+    const NOT_BOUND = [undefined, null, '', '32', 0, -1, NaN, Infinity, 1.5, [], {}, true];
+
+    const variants: Array<{
+      name: string;
+      action: Record<string, unknown>;
+      fields: Array<[string, unknown[]]>;
+    }> = [
+      {
+        name: 'MANUAL_MATCH',
+        action: { type: 'MANUAL_MATCH', rationale: 'r',
+          members: [{ transactionId: G1, role: 'gateway' }, { transactionId: B1, role: 'bank' }] },
+        fields: [
+          ['rationale', NOT_TEXT],
+          ['members', [...NOT_TEXT, [{ transactionId: G1, role: 'gateway' }],
+            [{ transactionId: G1, role: 'gateway' }, { transactionId: B1 }],
+            [{ transactionId: G1, role: 'gateway' }, { transactionId: 42, role: 'bank' }],
+            [{ transactionId: G1, role: 'gateway' }, { transactionId: B1, role: 'ledgerr' }]]],
+        ],
+      },
+      {
+        name: 'CREATE_ALIAS',
+        action: { type: 'CREATE_ALIAS', rationale: 'r',
+          aliasType: 'merchant_name', rawValue: 'AMZN', canonicalValue: 'AMAZON RETAIL' },
+        fields: [
+          ['rationale', NOT_TEXT],
+          ['aliasType', NOT_ENUM],
+          ['rawValue', NOT_TEXT],
+          ['canonicalValue', NOT_TEXT],
+        ],
+      },
+      {
+        name: 'MARK_WONT_FIX',
+        action: { type: 'MARK_WONT_FIX', rationale: 'r' },
+        fields: [['rationale', NOT_TEXT]],
+      },
+      {
+        name: 'ADJUST_SEARCH_BOUNDS',
+        action: { type: 'ADJUST_SEARCH_BOUNDS', rationale: 'r',
+          poolSize: 32, maxSubsetSize: 6, budgetMs: 1_500 },
+        fields: [
+          ['rationale', NOT_TEXT],
+          ['poolSize', NOT_BOUND],
+          ['maxSubsetSize', NOT_BOUND],
+          ['budgetMs', NOT_BOUND],
+        ],
+      },
+    ];
+
+    const propose = (action: unknown): boolean => passes(verdict({
+      verdict: 'RESOLUTION_PROPOSED', citations: [G1, B1], proposedAction: action as never,
+    }));
+
+    let swept = 0;
+    for (const { name, action, fields } of variants) {
+      // The well-formed variant must PASS, or every rejection below proves nothing.
+      assert.equal(propose(action), true, `${name} is well-formed and must be accepted`);
+
+      for (const [field, badValues] of fields) {
+        for (const value of badValues) {
+          assert.equal(propose({ ...action, [field]: value }), false,
+            `${name}.${field} = ${JSON.stringify(value) ?? 'undefined'} was ACCEPTED — the gate failed open`);
+          swept += 1;
+        }
+        // And the field missing entirely, which is how a model most often gets it
+        // wrong: `undefined <= 0` and `'AMZN' === undefined` both read as "fine".
+        const { [field]: _dropped, ...without } = action;
+        assert.equal(propose(without), false,
+          `${name} with ${field} MISSING was ACCEPTED — the gate failed open`);
+        swept += 1;
+      }
+    }
+    assert.ok(swept >= 60, `the sweep must actually sweep; it covered ${swept}`);
+  });
+
+  test('ADR-054 ceilings are enforced on a proposal, not merely on the tool', () => {
+    // The gate is the only deterministic check on the proposal a human sees, so a
+    // request for a pool of a billion must not reach them looking actionable.
+    for (const over of [
+      { poolSize: 65 }, { maxSubsetSize: 11 }, { budgetMs: 2_001 },
+      { poolSize: 1e9, maxSubsetSize: 500, budgetMs: 86_400_000 },
+    ]) {
+      assert.equal(passes(verdict({
+        verdict: 'RESOLUTION_PROPOSED', citations: [G1],
+        proposedAction: { type: 'ADJUST_SEARCH_BOUNDS', rationale: 'wider',
+          poolSize: 32, maxSubsetSize: 6, budgetMs: 1_500, ...over } as never,
+      })), false, `bounds above ADR-054's ceiling were accepted: ${JSON.stringify(over)}`);
+    }
+    // Exactly at the ceiling is legal.
+    assert.equal(passes(verdict({
+      verdict: 'RESOLUTION_PROPOSED', citations: [G1],
+      proposedAction: { type: 'ADJUST_SEARCH_BOUNDS', rationale: 'wider',
+        poolSize: 64, maxSubsetSize: 10, budgetMs: 2_000 },
+    })), true);
+  });
+
+  test('an unknown alias type is rejected', () => {
+    assert.equal(passes(verdict({
+      verdict: 'RESOLUTION_PROPOSED', citations: [G1],
+      proposedAction: { type: 'CREATE_ALIAS', aliasType: 'DROP TABLE' as never,
+        rawValue: 'a', canonicalValue: 'b', rationale: 'r' },
+    })), false);
   });
 
   test('validation is pure — the same input always gives the same result', () => {
