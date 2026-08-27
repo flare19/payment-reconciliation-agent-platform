@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Payment Reconciliation Engine · Razorpay AI Buildathon Track 4
-Status: **Day 4 — binding.**
+Status: **Day 3 — binding.**
 Companion docs: [validation-strategy.md](./validation-strategy.md) · [matching-engine.md](./matching-engine.md)
 
 **Division of labour:** [validation-strategy.md](./validation-strategy.md) measures whether the engine is *right about payments*. This doc covers whether the code is *right about itself*. They are different questions and neither substitutes for the other — an engine can pass every unit test and still reconcile badly, and it can score 82 % while a parser silently drops every row with a comma in it.
@@ -44,7 +44,7 @@ Off-by-one at a boundary is the classic accuracy bug and it never crashes.
 
 ### 1.3 The precedence table — one test per row of `schema.md` §8.2
 
-Including every worked overlap, and specifically the two the Day 4 review corrected:
+Including every worked overlap, and specifically the two the Day 3 review corrected:
 
 - A duplicate copy produces **no** `MISSING_IN_BANK` flag (ADR-034).
 - Three anchorless same-amount same-day rows classify as `AMBIGUOUS_MATCH`, **not** duplicates (ADR-034).

@@ -1,7 +1,7 @@
 # Deployment
 
 Payment Reconciliation Engine · Razorpay AI Buildathon Track 4
-Status: **Locked.** Deployed early on purpose, not on Day 12. Revised by the Day 4 design review (ADR-046).
+Status: **Locked.** Deployed early on purpose, not on Day 13. Revised by the Day 3 design review (ADR-046).
 Companion docs: [adr-log.md](./adr-log.md) (ADR-005, ADR-026, ADR-046) · [api-contract.md](./api-contract.md)
 
 **No Kubernetes. No container orchestration. No Dockerfiles authored by us.** Per ADR-005, K8s is parked as a separate future learning project — it earns zero points against this rubric. This is a managed-platform deploy: two dashboards, two `git push`es.
@@ -50,7 +50,7 @@ The schema targets **PostgreSQL 16**, and the migrations are tested against a re
 This is not pedantry. A local machine running 17 while production runs 16 is the
 same class of problem as the audit trigger that installed cleanly and only failed
 when exercised: the divergence is invisible until the environment that matters
-behaves differently, and by then it is Day 12. "Nothing I used happens to be
+behaves differently, and by then it is Day 13. "Nothing I used happens to be
 version-specific" is a claim about code written by the same process that wrote the
 code — it needs an independent check, and the check is cheap.
 
@@ -70,7 +70,7 @@ authoring deployment containers, not using an off-the-shelf image as a local tes
 dependency. Nothing about the deploy topology changes.
 
 **When provisioning on Railway**, pick Postgres 16 explicitly rather than
-accepting the default, and record the actual server version in the Day 5 deploy
+accepting the default, and record the actual server version in the Day 4 deploy
 notes. If Railway only offers a newer major, that is fine — but then re-run the
 suite against that major and update this section, rather than assuming forward
 compatibility.
@@ -151,7 +151,7 @@ The rule, stated plainly: **`ANTHROPIC_API_KEY` exists in exactly two places —
 
 ## 5. Deploy steps
 
-### 5.1 One-time setup (target: Day 3, ~40 minutes)
+### 5.1 One-time setup (target: Day 4, ~40 minutes)
 
 **Railway — API + database**
 1. New project → **Deploy from GitHub repo**, select this repo.
@@ -191,7 +191,7 @@ Push to `main` → both platforms rebuild automatically. No manual step.
 
 **Migrations** run on API boot when `RUN_MIGRATIONS_ON_BOOT=true`. Acceptable here because there is exactly one API instance and no rolling deploy — with multiple replicas this races and would need a separate release step. **Noted so a future session doesn't copy this pattern into somewhere it's wrong.** Migrations are forward-only numbered files; a bad migration is fixed by a new migration, never by editing a shipped one.
 
-### 5.4 Pre-submission checklist (Day 12)
+### 5.4 Pre-submission checklist (Day 13)
 
 - [ ] `/api/health` returns `dbConnected: true` and `llmConfigured: true`
 - [ ] Production Postgres major version matches the one the migrations were validated against (§2.1)

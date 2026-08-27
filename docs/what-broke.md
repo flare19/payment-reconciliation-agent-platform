@@ -1,6 +1,6 @@
 # What Broke
 
-Required submission artifact. **Updated daily from Day 1** — not reconstructed on Day 12.
+Required submission artifact. **Updated daily from Day 1** — not reconstructed on the final day.
 Format: date · what broke · how it was recovered · what changed as a result.
 
 An empty day gets an explicit `—`. A missing day is worse than a boring one.
@@ -9,8 +9,8 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
 - **2026-08-23** — —
 - **2026-08-24** — — *(Day 2: architecture documentation. Nothing broke; nothing was built.)*
-- **2026-08-25** — *(Day 3: no session logged. If work happened this day, replace this line — a reconstructed entry is worth less than an honest gap, but an unmarked gap is worth least of all.)*
-- **2026-08-26** — **Day 4: pre-build design review found three structural flaws in the Day 2 architecture. All three were in documentation only — no code existed yet, which is the entire reason the review happened before Day 5 rather than after.**
+- **2026-08-25** — *(no session. Deliberately **not** a numbered build day: numbering a day nobody worked inflated every subsequent day by one, which is why the count was corrected on Day 4.)*
+- **2026-08-26** — **Day 3, first pass: pre-build design review found three structural flaws in the Day 2 architecture. All three were in documentation only — no code existed yet, which is the entire reason the review happened before Day 5 rather than after.**
 
   1. **Two of the eight exception categories were unreachable.** `AMOUNT_MISMATCH` is defined as "identity established, amounts differ" — but a pair sharing a `payment_id` with a ₹412 discrepancy scored `0.45 + 0.00 + 0.15 + 0.10 = 0.70` in the fuzzy tier, landing in the 0.65–0.849 review band as a *proposed match*. It never reached classification, so the category could never fire. `TIMING_DRIFT` was worse: same anchor, correct amount, nine days late scored exactly `0.85` — the auto-confirm threshold — so the engine would have silently auto-matched settlements three times past their SLA and reported it as a clean match.
      **Recovered by:** a new pipeline stage (S8) that short-circuits pairs whose strong anchors agree. Identity is *established*, not scored — a similarity score answers "are these the same thing", and blending that with a date disagreement lets the calendar cancel out an identity proof. ADR-029.
@@ -27,7 +27,7 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
   **The honest summary:** the Day 2 architecture read well and was internally wrong in three places that no amount of careful writing would have surfaced. Writing the *algorithm* down — which stage runs when, and what each one hands the next — is what exposed all three within an hour. Twenty ADRs, nothing built yet, and a day spent not writing code that would have needed rewriting on Day 9.
 
-- **2026-08-26 (second pass)** — **Read the architecture back against the track's actual problem statement and found it answering a different question.**
+- **2026-08-26** — **Day 3, second pass: read the architecture back against the track's actual problem statement and found it answering a different question.**
 
   The statement says *"Build an agent that closes one finance-ops loop."* What had been designed was a deterministic rules engine: fourteen of fifteen stages are arithmetic, tie-breaks and rule precedence, and the only AI touchpoint (S13) writes captions for decisions the engine already finalized — with a template fallback that makes the run complete identically when the API is down. Excellent rules engine. Not an agent, and a panel reading the architecture would have seen that in about ninety seconds.
 
@@ -39,13 +39,13 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
   **What changed as a result:** one genuine conflict, handled openly rather than papered over. ADR-017 explicitly rejected "LLM-proposed aliases in v1", and the Analyst proposes aliases. Rather than quietly building it and leaving the ADR stale, **ADR-055 amends that single clause under four stated conditions** and preserves the rest of ADR-017 intact. The same discipline applied to a safety claim: `deployment.md` §4 asserted there was no user-facing "ask the AI" box and therefore no way for an anonymous visitor to burn quota. The Q&A endpoint makes that false, so the claim is corrected in the same change that breaks it, with rate limits and a kill switch. Leaving either one stale would have been the exact species of dishonesty the project is built to avoid.
 
-  **Also, later the same day (Day 5 scaffold + migrations):** `schema.md` §9's audit-immutability trigger raised `OLD.id`, but the `id` and `sequence_no` columns had been consolidated into one earlier that day. plpgsql resolves `OLD.<field>` at *trigger execution* time, not at `CREATE FUNCTION` time — so the trigger would have installed cleanly, passed a migration run, and then failed with "record OLD has no field id" the first time anyone tried to tamper with the audit log. A tamper-evidence mechanism that breaks only when exercised is worse than none. Found by actually running the DDL against a real Postgres rather than reading it; fixed in the doc and written correctly in `007_audit_log.sql`. The lesson is the boring one: SQL in a design doc is untested code until something runs it.
+  **Also, later the same day (Day 3, third pass — scaffold + migrations):** `schema.md` §9's audit-immutability trigger raised `OLD.id`, but the `id` and `sequence_no` columns had been consolidated into one earlier that day. plpgsql resolves `OLD.<field>` at *trigger execution* time, not at `CREATE FUNCTION` time — so the trigger would have installed cleanly, passed a migration run, and then failed with "record OLD has no field id" the first time anyone tried to tamper with the audit log. A tamper-evidence mechanism that breaks only when exercised is worse than none. Found by actually running the DDL against a real Postgres rather than reading it; fixed in the doc and written correctly in `007_audit_log.sql`. The lesson is the boring one: SQL in a design doc is untested code until something runs it.
 
   **Cost:** roughly a day and a half of build time, absorbed by pairing the Analyst with the explain layer on Day 11 and its read tools with the classifier on Day 10. That compresses the frontend to a single day and pushes the pitch video to Sep 5 — both now listed as risks in ARCHITECTURE §10 with pre-decided degradation orders, rather than discovered on Sep 4.
 
-- **2026-08-27** — **Day 5: first code. Scaffold, migrations, parsing primitives, the Tier 2 scorer and assignment. Three things broke, all caught by tests written alongside the code rather than after it.**
+- **2026-08-26** — **Day 3, third pass: first code. Scaffold, migrations, parsing primitives, the Tier 2 scorer and assignment. Three things broke, all caught by tests written alongside the code rather than after it.**
 
-  1. **`schema.md`'s audit-immutability trigger would have failed the first time it was exercised.** It raised `OLD.id`, but the `id` and `sequence_no` columns had been consolidated during the Day 4 review. plpgsql resolves `OLD.<field>` at *trigger execution* time, not at `CREATE FUNCTION` time — so it installed cleanly, passed a migration run, and would have thrown "record OLD has no field id" the first time anyone tried to tamper with the audit log. A tamper-evidence mechanism that only breaks when exercised is worse than none, because you discover it during the demo or never. Found by running the DDL against a real Postgres instead of reading it. **SQL in a design doc is untested code until something runs it.**
+  1. **`schema.md`'s audit-immutability trigger would have failed the first time it was exercised.** It raised `OLD.id`, but the `id` and `sequence_no` columns had been consolidated earlier the same day, in the first pass. plpgsql resolves `OLD.<field>` at *trigger execution* time, not at `CREATE FUNCTION` time — so it installed cleanly, passed a migration run, and would have thrown "record OLD has no field id" the first time anyone tried to tamper with the audit log. A tamper-evidence mechanism that only breaks when exercised is worse than none, because you discover it during the demo or never. Found by running the DDL against a real Postgres instead of reading it. **SQL in a design doc is untested code until something runs it.**
 
   2. **`parseMoney("--5")` returned `500`.** The sign handler consumed one minus, then `STRICT_DECIMAL` still permitted a leading `-`, so the second survived into the regex and the negative was applied twice — flipping back to positive. Not an error: a plausible number, from code written carefully ten minutes earlier. Fixed by making the pattern unsigned. This is exactly the failure mode the money parser exists to prevent, which is the uncomfortable part.
 
@@ -58,4 +58,14 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
   Also corrected an earlier overstatement of my own: the ADR-049 claim that `score_pair` runs the engine's own code was **aspirational** when I first described it, because the scorer did not exist yet. It is now real, and `single-scorer-guard.test.ts` enforces structurally that there is exactly one `scorePair`, one `trigramSimilarity`, one edit-distance function, and no score arithmetic anywhere under `services/agent`.
 
-  **Nothing deployed yet.** ARCHITECTURE §7.4 wants a live URL on Day 5 and that did not happen — the day went into the engine's highest-risk internals instead. Flagged rather than quietly reslotted: deploying is now Day 6's first task, and every day it slips increases the chance of discovering a platform problem late.
+  **Nothing deployed yet.** ARCHITECTURE §7.4 wants a live URL early and that did not happen — the day went into the engine's highest-risk internals instead. Flagged rather than quietly reslotted: deploying is now Day 4's first task, and every day it slips increases the chance of discovering a platform problem late.
+
+- **2026-08-27** — **Day 4: the day count itself was wrong.** Aug 25 had been numbered as a build day despite no session happening, which pushed every subsequent day one ahead — yesterday was logged as "Day 5" when it was Day 3, and today would have been Day 6 rather than Day 4.
+
+  Nothing broke in the code, but the error was in two *submission artifacts* — this file and the ADR log — plus the build plan, so it was worth correcting properly rather than patching the visible instances. Caught by Tejas, not by me.
+
+  **What made it obvious once stated:** dropping the empty day gives exactly **13 working days, Aug 23 → Sep 5, ending on submission day**. The project has always described itself as a 13-day build; the old numbering quietly made it 14 calendar days with a phantom in the middle.
+
+  **What changed as a result.** The build plan was re-slotted rather than shifted by one, because Day 3 turned out to hold three passes — design review, the Analyst, and five code units — which puts the engine's highest-risk internals about a day ahead. That buffer is already spent on the deploy that did not happen. The re-slot also moves the **first honest cold-run number from Day 12 to Day 10**: a measured accuracy figure with two days left to react to it is useful, and the same figure on the final day is only a report.
+
+  The lesson is small and boring: a day counter is state, and state that nobody reconciles against reality drifts. It drifted for four days inside a project whose entire thesis is measuring things honestly.

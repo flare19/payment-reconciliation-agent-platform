@@ -10,7 +10,7 @@ One file, short dated entries, newest section at the bottom. **Not** a folder of
 
 ---
 
-## 2026-08-23 — Pre-lock decisions
+## 2026-08-23 — Day 1: pre-lock decisions
 
 ### ADR-001 · Node.js / TypeScript over Go
 **Decision:** Single language, Node/TS, across backend and frontend.
@@ -44,7 +44,7 @@ One file, short dated entries, newest section at the bottom. **Not** a folder of
 
 ---
 
-## 2026-08-24 — Day 2 architecture decisions
+## 2026-08-24 — Day 2: architecture decisions
 
 ### ADR-006 · Money stored as integer paise
 **Decision:** `BIGINT` minor units everywhere. No floats, no `NUMERIC` arithmetic in application code.
@@ -146,7 +146,7 @@ One file, short dated entries, newest section at the bottom. **Not** a folder of
 **Decision:** `pg` driver, hand-written SQL, `migrations/NNN_name.sql`, hand-written row types in TypeScript.
 **Because:** The schema is small, fixed by Day 2 and unlikely to churn. The queries that matter (candidate search, audit trail, faceted exception counts) are the ones an ORM obscures and that get hand-written anyway. Avoiding an ORM removes a codegen step, a migration DSL and a class of "why did it emit that query" debugging from a 13-day clock.
 **Rejected:** Prisma (codegen + migration ceremony), Drizzle (lighter, but still a layer between the SQL in `schema.md` and the SQL that runs), TypeORM.
-**Revisit if:** hand-mapping row types becomes a real error source by Day 6.
+**Revisit if:** hand-mapping row types becomes a real error source by Day 5.
 
 ### ADR-023 · Express + TypeScript for the API
 **Decision:** Express 5 on Node 22, TypeScript throughout.
@@ -168,7 +168,7 @@ One file, short dated entries, newest section at the bottom. **Not** a folder of
 
 ### ADR-026 · Deploy: Vercel (frontend) + Railway (API + Postgres)
 **Decision:** See [deployment.md](./deployment.md). Two managed platforms, no containers authored by us.
-**Because:** Railway gives a Node service and a managed Postgres in one project with one internal `DATABASE_URL` and no networking to configure; Vercel gives the frontend a URL in one push. Together that's a public demo URL on Day 3 rather than Day 12, which ARCHITECTURE §7.4 explicitly calls out as a strong signal. Consistent with ADR-005.
+**Because:** Railway gives a Node service and a managed Postgres in one project with one internal `DATABASE_URL` and no networking to configure; Vercel gives the frontend a URL in one push. Together that's a public demo URL early rather than on the final day, which ARCHITECTURE §7.4 explicitly calls out as a strong signal. *(Day numbers in this entry predate the Day-4 count correction; see ARCHITECTURE §8 for the authoritative table.)* Consistent with ADR-005.
 **Rejected:** Render (equivalent; Railway chosen for the tighter DB+service pairing — noted as the fallback), Fly.io (more control, more config), any self-managed VPS.
 **Revisit if:** Railway's free-tier limits bite before Sept 5; fall back to Render with no architectural change.
 
@@ -180,7 +180,7 @@ One file, short dated entries, newest section at the bottom. **Not** a folder of
 
 ---
 
-## 2026-08-26 — Day 4 pre-build design review
+## 2026-08-26 — Day 3, first pass: pre-build design review
 
 Twenty entries from a principal-engineer review of the Day 2 architecture, conducted before any code was written. Three of them (ADR-028, ADR-029, ADR-030) correct flaws that would have made documented exception categories structurally unreachable. Nothing here reduces scope.
 
@@ -306,7 +306,7 @@ Twenty entries from a principal-engineer review of the Day 2 architecture, condu
 
 ---
 
-## 2026-08-26 (second pass) — The Analyst: an agentic layer downstream of the engine
+## 2026-08-26 — Day 3, second pass: The Analyst, an agentic layer downstream of the engine
 
 Ten entries adding an agent layer to close a gap against the track's problem statement, which asks for an *agent*. **Nothing in S0–S14, the scoring logic, the determinism guarantees or ADR-001…ADR-047 is modified**, with one explicit and stated exception: ADR-055 amends a single clause of ADR-017 under four conditions that did not exist when it was written.
 
@@ -372,7 +372,7 @@ Ten entries adding an agent layer to close a gap against the track's problem sta
 
 ---
 
-## 2026-08-27 — Day 5 scaffold
+## 2026-08-26 — Day 3, third pass: scaffold and first code
 
 ### ADR-058 · Three independent packages, no npm workspaces
 **Decision:** `apps/api`, `apps/web` and the repo root (which owns `tools/`) are independent packages with their own `package.json` and lockfile. No workspaces, no monorepo tooling, no shared internal package. Wire types are duplicated between `apps/api/src/types` and `apps/web/types`.

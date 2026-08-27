@@ -1,11 +1,11 @@
 # ARCHITECTURE
 
 Payment Reconciliation Engine · Razorpay AI Buildathon Track 4 (AI Finance Controller)
-Locked 2026-08-24 · Revised 2026-08-26 (Day 4 design review, ADR-028…ADR-047; Analyst layer, ADR-048…ADR-057) · **Submission 2026-09-05**
+Locked 2026-08-24 · Revised 2026-08-26 (Day 3 design review, ADR-028…ADR-047; Analyst layer, ADR-048…ADR-057) · **Submission 2026-09-05**
 
 **This file is the scope lock.** Every other doc references it. If something is not in §4, it is not being built; if it is in §5, it is not being built *on purpose*, and the reason is recorded.
 
-> **Note on authorship:** this file was referenced by name from `CLAUDE.md` and all six `docs/` files from Day 2 but was never actually written. It was authored on Day 4 as part of the pre-build design review, reconstructing the section numbering those references already assumed (§3 model routing, §4 in-scope, §4.4 exception classification, §4.6 audit trail, §4.7 metrics, §5 out-of-scope, §6 concrete numbers, §7 working practices, §7.4 deploy-early). See ADR-047.
+> **Note on authorship:** this file was referenced by name from `CLAUDE.md` and all six `docs/` files from Day 2 but was never actually written. It was authored on Day 3 as part of the pre-build design review, reconstructing the section numbering those references already assumed (§3 model routing, §4 in-scope, §4.4 exception classification, §4.6 audit trail, §4.7 metrics, §5 out-of-scope, §6 concrete numbers, §7 working practices, §7.4 deploy-early). See ADR-047.
 
 ---
 
@@ -214,9 +214,9 @@ Architecture that doesn't commit to numbers isn't architecture. Full reasoning f
 
 **7.2 One ADR log, not a folder of files.** [docs/adr-log.md](docs/adr-log.md) is one append-only file with short dated entries. A folder of per-decision markdown files is ceremony that makes the set harder to read in one sitting, which defeats the purpose. Entries are never edited or deleted; a reversal appends a superseding entry.
 
-**7.3 `docs/what-broke.md` is updated every day.** It is a required submission artifact and cannot be honestly reconstructed on Day 12. An empty day gets an explicit `—`. A missing day is worse than a boring one.
+**7.3 `docs/what-broke.md` is updated every day.** It is a required submission artifact and cannot be honestly reconstructed on Day 13. An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
-**7.4 Deploy on Day 3, not Day 12.** A live URL early is a strong signal to a panel and removes the single most common last-week failure mode. It also means every subsequent day's work is verified in the environment it will be judged in. See [docs/deployment.md](docs/deployment.md).
+**7.4 Deploy on Day 4, not Day 13.** A live URL early is a strong signal to a panel and removes the single most common last-week failure mode. It also means every subsequent day's work is verified in the environment it will be judged in. See [docs/deployment.md](docs/deployment.md).
 
 **7.5 Never tune against `HOLDOUT_SEED`.** Develop against `DEV_SEED`. Seed-shopping until a good number appears is the exact failure the validation strategy exists to prevent (ADR-027).
 
@@ -226,31 +226,30 @@ Architecture that doesn't commit to numbers isn't architecture. Full reasoning f
 
 ## 8. Build plan
 
-Day 1–2 are complete (decisions and documentation). Day 4 is this design review.
+The build is **13 working days**, Aug 23 → Sep 5. There is no Day for Aug 25 — no session happened, and numbering a day nobody worked would inflate the count.
 
 | Day | Date | Deliverable |
 |---|---|---|
-| 1–2 | Aug 23–24 | Decisions, six design docs, `CLAUDE.md`. **Done.** |
-| 3 | Aug 25 | *(no session logged — see what-broke.md)* |
-| 4 | Aug 26 | **Pre-build design review.** `ARCHITECTURE.md`, `matching-engine.md`, `ui-spec.md`, `testing-strategy.md` authored; ADR-028…ADR-047; all docs reconciled. Architecture locked. |
-| 5 | Aug 27 | Scaffold `apps/api`, migrations 001–00N, DB pool, repository layer skeleton, `/api/health`. **Deploy to Railway + Vercel the same day** (§7.4). |
-| 6 | Aug 28 | Generator (`tools/generate`): economic events → projections → three CSVs + answer key + manifest hashes. Unresolvability assertions. |
-| 7 | Aug 29 | Ingestion: three parsers, normalizers, exclusion rules, rejected-row handling, `RECORD_INGESTED` audit. |
-| 8 | Aug 30 | Matching engine: dedup pass, Tier 1, Tier 1.5, blocking, candidate generation. |
-| 9 | Aug 31 | Matching engine: Tier 2 scorer, assignment, ambiguity guard, batch decomposition, group assembly. |
-| 10 | Sep 1 | Classifier (S12) + precedence + severity + evidence. **Agent tool registry** — thin wrappers over repository functions the classifier needs anyway. |
-| 11 | Sep 2 | Explain layer (S13) + signature cache + templates. **Analyst loop A1–A4** + grounding gate. Shared Anthropic client, prompt versioning and cost caps across both. |
-| 12 | Sep 3 | Scorer (`tools/score`), score-report endpoint, engine **and** agent metrics. **First honest cold-run number.** Scale benchmark. |
-| 13 | Sep 4 | Frontend: dashboard, exception list, drill-down, review queue, alias screen, audit view, Analyst panel, Q&A box. |
-| — | Sep 5 | Holdout run, accuracy report, README, pitch video, build-challenges write-up, submit. |
+| 1 | Aug 23 | Pre-lock decisions (ADR-001…005). **Done.** |
+| 2 | Aug 24 | Six design docs plus `CLAUDE.md`. **Done.** |
+| — | Aug 25 | No session. |
+| 3 | Aug 26 | **Three passes.** Pre-build design review (`ARCHITECTURE.md`, `matching-engine.md`, `ui-spec.md`, `testing-strategy.md`; ADR-028…047) · the Analyst (`agent-design.md`; ADR-048…057) · first five code units: scaffold, migrations 001–010, parsing primitives, the Tier 2 scorer, assignment. **Done.** |
+| 4 | Aug 27 | **Deploy to Railway + Vercel — carried from Day 3 and now the first task** (§7.4). Dedupe S4, identity short-circuit S8, batch decomposition S10. |
+| 5 | Aug 28 | Generator (`tools/generate`): economic events → projections → three CSVs + answer key + manifest hashes. Unresolvability assertions. |
+| 6 | Aug 29 | Ingestion: three parsers wired to the Day 3 primitives, exclusion rules, rejected-row handling. |
+| 7 | Aug 30 | Blocking S5, Tier 1 S6, Tier 1.5 alias S7, group assembly S11. |
+| 8 | Aug 31 | Classification S12 — precedence, severity, evidence — plus the audit hash chain and the repository layer. |
+| 9 | Sep 1 | Routes and run orchestration. **First end-to-end run.** |
+| 10 | Sep 2 | Scorer (`tools/score`), score-report endpoint, metrics. **First honest cold-run number.** Scale benchmark. |
+| 11 | Sep 3 | Explain layer S13 + signature cache + templates; Analyst loop A1–A4 + grounding gate. Shared Anthropic client and cost caps across both. |
+| 12 | Sep 4 | Frontend: dashboard, exception list, drill-down, review queue, alias screen, audit view, Analyst panel, Q&A box. |
+| 13 | Sep 5 | Holdout run, accuracy report, README, pitch video, build-challenges write-up, **submit**. |
 
-**Two schedule notes, stated rather than discovered later.**
+**Two notes, stated rather than discovered later.**
 
-The Analyst costs roughly a day and a half, taken by pairing it with the explain layer on Day 11 (they share the Anthropic client, prompt versioning, cost caps and audit integration) and by building its read tools on Day 10 alongside the classifier that needs the same queries. It does not get its own block because it does not need one.
+Day 3 absorbed both the design review and five code units, which puts the engine's highest-risk internals — the scorer, assignment, the parsing primitives — roughly a day ahead of where a linear plan would have them. That is the buffer, and it is already spent on the one thing that slipped: **nothing is deployed**, which §7.4 wanted on Day 4 at the latest.
 
-That compresses the frontend to a single day and moves the video to Sep 5. Both are real risks (§10) with pre-decided degradation orders — [ui-spec.md](docs/ui-spec.md) §8 for screens, [agent-design.md](docs/agent-design.md) §11 for the Analyst. The API contract has been binding since Day 4 precisely so no design work happens on a build day.
-
----
+The first honest accuracy number lands on **Day 10, not Day 12**. That is deliberate: a measured number with two days left to react to it is useful, and the same number on the final day is only a report.
 
 ## 9. Submission artifacts
 
@@ -270,8 +269,8 @@ The accuracy report generated by `tools/score` (validation-strategy §8) is the 
 
 | Risk | Mitigation |
 |---|---|
-| **Frontend compressed into Day 13.** The largest schedule risk, and worse than it was before the Analyst took a day. | The API contract is binding from Day 4, so no design work happens on a build day. If Day 13 overruns, the exception list and metrics panel ship and the alias-management screen degrades to a read-only table — decided in advance, in ui-spec §8. |
-| **Pitch video on submission day (Sep 5).** | The holdout run and accuracy report are a single command and can be produced any evening from Day 12; only the video and README genuinely need Sep 5. A rehearsal-quality video recorded on Day 13 is the fallback and is better than none. |
+| **Frontend compressed into Day 12 (Sep 4).** The largest schedule risk. | The API contract is binding from Day 4, so no design work happens on a build day. If Day 13 overruns, the exception list and metrics panel ship and the alias-management screen degrades to a read-only table — decided in advance, in ui-spec §8. |
+| **Pitch video on submission day (Sep 5).** | The holdout run and accuracy report are a single command and can be produced any evening from Day 10; only the video and README genuinely need Sep 5. A rehearsal-quality video recorded on Day 12 is the fallback and is better than none. |
 | **The Analyst hallucinates a resolution for a designed-unresolvable exception.** | Treated as a build blocker, not a metric (ADR-053). Three structural defences: a read-only tool registry, the A3 citation-grounding gate (ADR-050), and budget exhaustion returning an honest verdict rather than a best guess (ADR-054). |
 | **The Analyst cannot be finished in time.** | It is a strict addition — nothing in the engine depends on it. Degradation order is pre-decided (agent-design §11): investigation on the two highest-value categories ships first, the Q&A agent is cut first. If the whole phase is cut, the engine stands alone and the submission is honest about what it is. |
 | **Cold-run match rate lands embarrassingly low.** | It is *reported anyway* (ADR-020, ADR-027). A published ceiling and an honest number below it is the thesis of the project; a suspiciously high number is the failure mode. `false-despair rate` (validation-strategy §5.3) tells us where the headroom is. |

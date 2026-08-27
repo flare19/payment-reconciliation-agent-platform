@@ -192,7 +192,7 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 
 ## 9. Daily habits
 
-1. **Update `docs/what-broke.md` every single day.** It's a required submission artifact and it cannot be honestly reconstructed on Day 12. One line is fine; blank is not.
+1. **Update `docs/what-broke.md` every single day.** It's a required submission artifact and it cannot be honestly reconstructed on Day 13. One line is fine; blank is not.
 2. **Append to `docs/adr-log.md`** whenever you make a decision a future session might otherwise reverse.
 3. **Never tune against `HOLDOUT_SEED`.** Develop against `DEV_SEED`. (ADR-027)
 4. **Report cold and warm match rates together**, with the false-positive count next to them. (ADR-020)
@@ -202,14 +202,19 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 
 ## 10. Current state
 
-**As of 2026-08-27 (Day 5): architecture LOCKED. First code landed. Branch `day5-scaffold-and-core`, not yet merged.**
+**As of 2026-08-27 (Day 4): architecture LOCKED. Five code units landed on Day 3, on branch `day5-scaffold-and-core` (named before the day count was corrected — the branch holds Day 3's work). Not yet merged.**
+
+> **Day numbering.** The build is 13 *working* days, Aug 23 → Sep 5. **Aug 25 is not a numbered day** — no session happened, and numbering it inflated every subsequent day by one. Corrected on Day 4; the full table is ARCHITECTURE §8.
 
 ### History
+- **Day 1 (Aug 23)** — pre-lock decisions, ADR-001…005.
 - **Day 2 (Aug 24)** — six docs plus this file.
-- **Day 3 (Aug 25)** — no session logged.
-- **Day 4 (Aug 26)** — pre-build design review. `ARCHITECTURE.md` written (it had been cited 23 times by docs that existed before it did), plus `matching-engine.md`, `ui-spec.md`, `testing-strategy.md`. ADR-028…047. Three structural flaws fixed **before any code existed**: Tier 1's date window contradicted §5.2; `AMOUNT_MISMATCH` and `TIMING_DRIFT` were structurally unreachable; nothing at Tier 2 could ever auto-confirm.
-- **Day 4, second pass** — added **the Analyst** (Phase A), the agentic layer downstream of S14, to close a gap against the track's "build an agent" requirement without weakening ADR-017. ADR-048…057 plus `agent-design.md`.
-- **Day 5 (Aug 27)** — first code, in five reviewed units.
+- *(Aug 25 — no session.)*
+- **Day 3 (Aug 26)**, three passes in one day:
+  1. Pre-build design review. `ARCHITECTURE.md` written (it had been cited 23 times by docs that existed before it did), plus `matching-engine.md`, `ui-spec.md`, `testing-strategy.md`. ADR-028…047. Three structural flaws fixed **before any code existed**: Tier 1's date window contradicted §5.2; `AMOUNT_MISMATCH` and `TIMING_DRIFT` were structurally unreachable; nothing at Tier 2 could ever auto-confirm.
+  2. **The Analyst** (Phase A) — the agentic layer downstream of S14, closing a gap against the track's "build an agent" requirement without weakening ADR-017. ADR-048…057 plus `agent-design.md`.
+  3. First code, in five reviewed units.
+- **Day 4 (Aug 27)** — *today.*
 
 ### What exists in code
 
@@ -224,18 +229,20 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 **113 tests passing.** API typechecks and builds; `apps/web` builds via `next build`.
 
 ### Working agreement for these units
-One logical unit → show the diff → wait for explicit approval → commit that unit alone → next. **Do not merge `day5-scaffold-and-core`** — Tejas reviews and merges it.
+One logical unit → show the diff → wait for explicit approval → commit that unit alone → next. **Do not merge these branches** — Tejas reviews and merges.
 
-### Next: unit 6 — dedupe (S4) and identity short-circuit (S8)
-The two fixes from the Day 4 review, and the highest-risk remaining logic:
-- **S4 dedupe** requires *anchor evidence* (ADR-034). The Day 2 rule "same amount+date+counterparty in one source" collides head-on with the generator's `IDENTITY_DESTROYED` class, which deliberately plants 3+ anchorless same-amount/day/merchant rows. `SUSPECTED_DUPLICATE` needs a cluster of exactly 2; a crowd is ambiguity, not duplication.
-- **S8 identity short-circuit** (ADR-029) is why `AMOUNT_MISMATCH` and `TIMING_DRIFT` are reachable at all. Strong anchors agreeing means identity is *established*, so the pair is resolved deterministically on value and time and **never scored**.
+### Day 4 (today): deploy first, then units 6–7
+- **Deploy is the first task**, carried from Day 3 (ARCHITECTURE §7.4). Every day it slips raises the odds of finding a platform problem late.
+- **Unit 6 — S4 dedupe + S8 identity short-circuit.** The two fixes from the Day 3 review, and the highest-risk remaining logic:
+  - **S4 dedupe** requires *anchor evidence* (ADR-034). The Day 2 rule "same amount+date+counterparty in one source" collides head-on with the generator's `IDENTITY_DESTROYED` class, which deliberately plants 3+ anchorless same-amount/day/merchant rows. `SUSPECTED_DUPLICATE` needs a cluster of exactly 2; a crowd is ambiguity, not duplication.
+  - **S8 identity short-circuit** (ADR-029) is why `AMOUNT_MISMATCH` and `TIMING_DRIFT` are reachable at all. Strong anchors agreeing means identity is *established*, so the pair is resolved deterministically on value and time and **never scored**.
+- **Unit 7 — S10 batch decomposition**, with `searchExhausted` and `searchBoundExceeded` as genuinely distinct claims (ADR-038).
 
-Then: 7 batch decomposition · 8 classification/precedence/severity · 9 audit hash chain · 10 the Analyst's grounding gate.
+Then: 8 classification/precedence/severity · 9 audit hash chain · 10 the Analyst's grounding gate.
 
 ### Carried debt, stated rather than buried
-- **Nothing is deployed.** ARCHITECTURE §7.4 wanted a live URL on Day 5; the day went into engine internals instead. Deploy is Day 6's first task — every day it slips raises the odds of finding a platform problem late.
-- `tools/generate` and `tools/score` are still stubs. The engine cannot be scored against anything until the generator exists (Day 6).
+- **Nothing is deployed.** Day 4's first task.
+- `tools/generate` and `tools/score` are still stubs. The engine cannot be scored against anything until the generator exists (Day 5).
 - No routes are mounted yet; `createApp` serves 404s by design.
 
 Update this section as the build progresses so the next session knows where it is.

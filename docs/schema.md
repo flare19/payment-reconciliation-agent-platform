@@ -1,7 +1,7 @@
 # Data & Schema Design
 
 Payment Reconciliation Engine · Razorpay AI Buildathon Track 4
-Status: **Locked.** Day 2 architecture, revised by the Day 4 design review (ADR-028…ADR-047). Changes require a new ADR.
+Status: **Locked.** Day 2 architecture, revised by the Day 3 design review (ADR-028…ADR-047). Changes require a new ADR.
 Companion docs: [api-contract.md](./api-contract.md) · [matching-engine.md](./matching-engine.md) · [agent-design.md](./agent-design.md) · [adr-log.md](./adr-log.md) · [validation-strategy.md](./validation-strategy.md)
 
 **Division of ownership:** this doc owns *shapes* — tables, columns, tolerances, taxonomy, prompt. [matching-engine.md](./matching-engine.md) owns *execution* — stage order, candidate generation, assignment, determinism. If you are asking "what does the data look like", you are in the right file; if you are asking "what runs when", you are not.
@@ -444,7 +444,7 @@ Tier 2   FUZZY          scored candidate search over blocked candidates (§5.4)
 Tier 3   EXCEPTION      classified (§8)
 ```
 
-> **Two corrections from the Day 4 review are embedded above.** Tier 1's date test uses the per-pair window from §5.2, not a fixed `[-1,+1]` (ADR-028) — the old text would have failed every T+2 card settlement, the most common case in the dataset. And S8 exists because without it `AMOUNT_MISMATCH` and `TIMING_DRIFT` were structurally unreachable (ADR-029). Full reasoning in [matching-engine.md](./matching-engine.md) §4.2 and §6.
+> **Two corrections from the Day 3 review are embedded above.** Tier 1's date test uses the per-pair window from §5.2, not a fixed `[-1,+1]` (ADR-028) — the old text would have failed every T+2 card settlement, the most common case in the dataset. And S8 exists because without it `AMOUNT_MISMATCH` and `TIMING_DRIFT` were structurally unreachable (ADR-029). Full reasoning in [matching-engine.md](./matching-engine.md) §4.2 and §6.
 
 **Justification for placing it at 1.5 rather than inside Tier 2 or before Tier 1:**
 
@@ -1078,7 +1078,7 @@ Not decided here, deliberately:
 - **Reviewer identity** — `created_by` / `reviewed_by` are free-text labels because auth is out of scope (ARCHITECTURE §5). Known limitation, not being fixed.
 - **Multi-currency** — column exists, logic doesn't. Would need FX rate sourcing. **Flagged as scope creep; not doing it.**
 - ~~**Alias suggestion by the LLM**~~ — **now in scope, under four stated conditions** (ADR-055). The original flag was correct for a v1 where the LLM sat inside the pipeline with no independent measurement of its output. The Analyst proposes aliases downstream of a finalized run, cannot modify engine output, requires human confirmation through an existing endpoint, and is scored against ground truth with hallucination as a build blocker. Those conditions did not exist on Day 2. §10.1's boundary — the LLM makes no decision *inside the engine* — is unchanged. See [agent-design.md](./agent-design.md).
-- **Alias export/import between environments** — useful for seeding the demo. Small, but not required. Decide on Day 9 if the demo needs it.
+- **Alias export/import between environments** — useful for seeding the demo. Small, but not required. Decide on Day 8 if the demo needs it.
 - **Optimal (Hungarian) assignment** instead of greedy score-ordered assignment — arithmetically better, materially harder to explain in an audit trail. **Decided against**, with reasoning, in ADR-032.
 - **Transitive group closure across sources** — resolved: groups assemble from pairs sharing a member, conflicts are refused rather than resolved, and group confidence is the *minimum* of its pairs. See [matching-engine.md](./matching-engine.md) §10.
-- **Cycle detection in aliases** — still unguarded, still harmless under one-hop resolution (§6.3). Unchanged by the Day 4 review.
+- **Cycle detection in aliases** — still unguarded, still harmless under one-hop resolution (§6.3). Unchanged by the Day 3 review.

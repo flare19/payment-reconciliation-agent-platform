@@ -1,7 +1,7 @@
 # Matching Engine
 
 Payment Reconciliation Engine · Razorpay AI Buildathon Track 4
-Status: **Day 4 design review — locked.** Authored because `schema.md` defined the *shapes* and *tolerances* of matching but never the *algorithm*.
+Status: **Day 3 design review — locked.** Authored because `schema.md` defined the *shapes* and *tolerances* of matching but never the *algorithm*.
 Companion docs: [schema.md](./schema.md) · [adr-log.md](./adr-log.md) (ADR-028…ADR-039) · [validation-strategy.md](./validation-strategy.md)
 
 `schema.md` owns tables, tolerances and the exception taxonomy. **This doc owns execution**: what runs in what order, how candidates are generated, how a winner is chosen, how pairs become groups, and what guarantees the whole thing is reproducible.

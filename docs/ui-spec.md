@@ -1,7 +1,7 @@
 # UI Specification
 
 Payment Reconciliation Engine · Razorpay AI Buildathon Track 4
-Status: **Day 4 — binding.** The frontend is built on Day 12 by a session that will not have this reasoning in context. This doc is what stops that session redesigning under time pressure.
+Status: **Day 3 — binding.** The frontend is built on Day 12 by a session that will not have this reasoning in context. This doc is what stops that session redesigning under time pressure.
 Companion docs: [api-contract.md](./api-contract.md) · [schema.md](./schema.md) · [ui-spec fallback plan](#8-degradation-plan)
 
 ---

@@ -1,7 +1,7 @@
 # API Contract
 
 Payment Reconciliation Engine · Razorpay AI Buildathon Track 4
-Status: **Locked. This is the contract.** Frontend and backend are built in separate sessions on different days; if this doc and the code disagree, the code is wrong until an ADR says otherwise. Revised by the Day 4 design review (ADR-040…ADR-046).
+Status: **Locked. This is the contract.** Frontend and backend are built in separate sessions on different days; if this doc and the code disagree, the code is wrong until an ADR says otherwise. Revised by the Day 3 design review (ADR-040…ADR-046).
 Companion docs: [schema.md](./schema.md) · [matching-engine.md](./matching-engine.md) · [agent-design.md](./agent-design.md) · [ui-spec.md](./ui-spec.md) · [adr-log.md](./adr-log.md) · [deployment.md](./deployment.md)
 
 Per ARCHITECTURE §7, this is a lightweight table — **not** an OpenAPI/Swagger file. That's explicitly excluded.
@@ -496,5 +496,5 @@ If a run fails, `status: "failed"` with a populated `errorDetail`. Partial resul
 - Authentication / authorization headers — ARCHITECTURE §5.
 - OpenAPI/Swagger generation — ARCHITECTURE §7 explicitly excludes it.
 - Webhooks or callbacks on run completion — nothing external consumes this.
-- Bulk alias import — **flagged**; may be worth it on Day 9 purely to seed the demo, decide then.
+- Bulk alias import — **flagged**; may be worth it on Day 8 purely to seed the demo, decide then.
 - `DELETE` on anything — the system is append-only by design; revocation is a status change.

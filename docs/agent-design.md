@@ -1,7 +1,7 @@
 # The Analyst — Agent Design
 
 Payment Reconciliation Engine · Razorpay AI Buildathon Track 4
-Status: **Day 4 (second pass) — locked.** Authored to close a gap against the track's problem statement, which asks for an *agent*.
+Status: **Day 3 (second pass) — locked.** Authored to close a gap against the track's problem statement, which asks for an *agent*.
 Companion docs: [ARCHITECTURE.md](../ARCHITECTURE.md) · [matching-engine.md](./matching-engine.md) · [adr-log.md](./adr-log.md) (ADR-048…ADR-057) · [validation-strategy.md](./validation-strategy.md)
 
 ---
@@ -324,7 +324,7 @@ Deliberately small, because most of it already exists.
 
 | Piece | Notes |
 |---|---|
-| Tool registry (9 tools) | Thin wrappers over repository functions the engine needs anyway. Built Day 10 alongside the classifier. |
+| Tool registry (9 tools) | Thin wrappers over repository functions the engine needs anyway. Built Day 8 alongside the classifier, which needs the same repository queries. |
 | Investigation loop (A2) | One Anthropic tool-use loop. The SDK handles the turn cycle. |
 | Grounding gate (A3) | Pure functions. The highest-value tests in the suite (testing-strategy §1.6). |
 | Two tables | `agent_investigations`, `agent_questions`. Traces reuse `audit_log` (ADR-052). |
