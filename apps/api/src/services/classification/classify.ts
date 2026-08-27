@@ -62,6 +62,17 @@ export function classify(input: ClassificationInput): ClassifiedException[] {
   const byId = new Map(pool.map((t) => [t.id, t]));
   const signals = new Map<string, Signal[]>();
 
+  // Every id the classifier can emit an exception for, not just the surviving
+  // pool: an excluded exact DUPLICATE_RECORD never enters `pool` (ADR-032,
+  // issue #2), so the output-order comparator needs a second source for its key.
+  const sortKeyFor = new Map<string, { sourceSystem: SourceSystem; sourceRowNumber: number }>(
+    pool.map((t) => [t.id, t]));
+  for (const d of input.duplicates) {
+    if (!sortKeyFor.has(d.transactionId)) {
+      sortKeyFor.set(d.transactionId, { sourceSystem: d.sourceSystem, sourceRowNumber: d.sourceRowNumber });
+    }
+  }
+
   const add = (transactionId: string, signal: Signal): void => {
     const list = signals.get(transactionId);
     if (list === undefined) signals.set(transactionId, [signal]); else list.push(signal);
@@ -270,9 +281,11 @@ export function classify(input: ClassificationInput): ClassifiedException[] {
   }
 
   // Canonical order, so two runs that discovered the same facts in a different
-  // sequence emit byte-identical rows (ADR-032).
+  // sequence emit byte-identical rows (ADR-032). Uses `sortKeyFor`, not `byId`
+  // — an excluded exact duplicate has no entry in `byId`, and falling back to
+  // it here is exactly what made this comparator non-transitive (issue #2).
   out.sort((x, y) => {
-    const a = byId.get(x.transactionId ?? ''), b = byId.get(y.transactionId ?? '');
+    const a = sortKeyFor.get(x.transactionId ?? ''), b = sortKeyFor.get(y.transactionId ?? '');
     if (a === undefined || b === undefined) return 0;
     return compareCanonical(a, b);
   });

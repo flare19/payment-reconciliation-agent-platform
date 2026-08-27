@@ -169,11 +169,16 @@ describe('classify — the worked overlaps from schema.md §8.2', () => {
       txn('g2', 'gateway', 5, { refs: { payment_id: PAY_A }, date: '2026-08-14' }),
     ];
     const d = dedupe(rows);
-    const out = classify(input({ pool: d.pool.concat(rows[1]!), duplicates: d.findings }));
+    // `pool` is exactly what the real pipeline passes — d.pool, not the
+    // excluded copy concatenated back in (that was a workaround for the
+    // ordering bug fixed in issue #2, not what ClassificationInput.pool
+    // actually contains).
+    const out = classify(input({ pool: d.pool, duplicates: d.findings }));
     const dup = out.find((e) => e.transactionId === 'g2')!;
     assert.equal(dup.category, 'DUPLICATE_RECORD');
     assert.deepEqual(dup.secondaryFlags, [], 'no MISSING_IN_* on a duplicate copy');
     assert.equal(dup.severity, 'high');
+    assert.deepEqual(out.map((e) => e.transactionId), ['g1', 'g2'], 'canonical order (ADR-032)');
   });
 
   test('a suspected duplicate is medium and asks for a human', () => {
@@ -380,5 +385,39 @@ describe('classify — determinism and completeness', () => {
     const excluded = { ...txn('g1', 'gateway', 1, { date: '2026-08-14' }),
       statusNorm: 'excluded_failed' as const };
     assert.deepEqual(classify(input({ pool: [excluded] })), []);
+  });
+});
+
+describe('classify — output order is canonical even for excluded duplicates (ADR-032, issue #2)', () => {
+  test('a DUPLICATE_RECORD exception sorts by the duplicate\'s OWN (source, row), not last', () => {
+    // Reproduces the issue exactly: a ledger duplicate at row 2, a surviving
+    // ledger row at row 1, and a gateway row at row 1 with no counterpart.
+    // Canonical order is g1 (gateway,1) < l1 (ledger,1) < l2 (ledger,2).
+    const g1 = txn('g1', 'gateway', 1, { refs: {}, date: '2026-08-14' });
+    const l1 = txn('l1', 'ledger', 1, { refs: { invoice_no: 'INV1' }, date: '2026-08-14' });
+    const l2 = txn('l2', 'ledger', 2, { refs: { invoice_no: 'INV1' }, date: '2026-08-14' });
+    const d = dedupe([l1, l2]);
+    assert.equal(d.pool.length, 1, 'l2 is the non-primary exact duplicate, excluded from the pool');
+
+    const out = classify(input({ pool: [g1, ...d.pool], duplicates: d.findings }));
+    const dup = out.find((e) => e.transactionId === 'l2');
+    assert.ok(dup !== undefined && dup.category === 'DUPLICATE_RECORD');
+
+    assert.deepEqual(out.map((e) => e.transactionId), ['g1', 'l1', 'l2'],
+      'the excluded duplicate must sort by its own (source, row), not fall back to insertion order');
+  });
+
+  test('the comparator is transitive: reversing signal-discovery order does not change the result', () => {
+    const g1 = txn('g1', 'gateway', 1, { refs: {}, date: '2026-08-14' });
+    const l1 = txn('l1', 'ledger', 1, { refs: { invoice_no: 'INV2' }, date: '2026-08-14' });
+    const l2 = txn('l2', 'ledger', 2, { refs: { invoice_no: 'INV2' }, date: '2026-08-14' });
+    const l3 = txn('l3', 'ledger', 3, { refs: { invoice_no: 'INV2' }, date: '2026-08-14' });
+    const d = dedupe([l1, l2, l3]);
+    const forward = classify(input({ pool: [g1, ...d.pool], duplicates: d.findings }))
+      .map((e) => e.transactionId);
+    const reversed = classify(input({ pool: [g1, ...d.pool], duplicates: [...d.findings].reverse() }))
+      .map((e) => e.transactionId);
+    assert.deepEqual(forward, reversed);
+    assert.deepEqual(forward, ['g1', 'l1', 'l2', 'l3']);
   });
 });

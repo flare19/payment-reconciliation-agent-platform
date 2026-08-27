@@ -35,6 +35,15 @@ import { strongAnchors } from './anchors.js';
 export interface DuplicateFinding {
   /** The row being marked. Excluded from matching only when `kind` is 'exact'. */
   transactionId: string;
+  /**
+   * `transactionId`'s own canonical sort key. An exact duplicate never enters
+   * `ClassificationInput.pool` (dedupe.ts excludes it), so this is the only
+   * place its (source, row) survives for S12 to sort the exception by — without
+   * it, `classify.ts`'s output-order comparator has no key for this row's id
+   * and silently falls back to insertion order (ADR-032, issue #2).
+   */
+  sourceSystem: SourceSystem;
+  sourceRowNumber: number;
   /** The surviving row it duplicates — always the lowest source_row_number. */
   primaryTransactionId: string;
   kind: 'exact' | 'suspected';
@@ -152,6 +161,8 @@ export function dedupe(transactions: NormalizedTransaction[]): DedupeResult {
         excluded.add(copy.id);
         findings.push({
           transactionId: copy.id,
+          sourceSystem: copy.sourceSystem,
+          sourceRowNumber: copy.sourceRowNumber,
           primaryTransactionId: primary.id,
           kind: 'exact',
           anchorKey: anchor?.key ?? null,
@@ -187,6 +198,8 @@ export function dedupe(transactions: NormalizedTransaction[]): DedupeResult {
       const [primary, copy] = members as [NormalizedTransaction, NormalizedTransaction];
       findings.push({
         transactionId: copy.id,
+        sourceSystem: copy.sourceSystem,
+        sourceRowNumber: copy.sourceRowNumber,
         primaryTransactionId: primary.id,
         kind: 'suspected',
         anchorKey: null,
