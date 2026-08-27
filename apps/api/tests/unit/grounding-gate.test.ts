@@ -19,9 +19,11 @@ const G1 = 'txn-gateway-1';
 const B1 = 'txn-bank-1';
 const L1 = 'txn-ledger-1';
 
+const INV = 'inv-1';
+
 function call(over: Partial<ToolCallRecord> = {}): ToolCallRecord {
   return {
-    step: 1, tool: 'get_exception', arguments: {},
+    investigationId: INV, step: 1, tool: 'get_exception', arguments: {},
     returnedIds: [G1, B1], resultDigest: 'UNSPLITTABLE_BATCH, credit ₹4,82,110',
     durationMs: 4, ...over,
   };
@@ -36,6 +38,7 @@ function context(over: Partial<GateContext> = {}): GateContext {
       [G1, record('gateway')], [B1, record('bank')], [L1, record('ledger')],
     ]),
     runId: RUN,
+    investigationId: INV,
     activeAliases: new Map(),
     ...over,
   };
@@ -97,6 +100,51 @@ describe('A3 — citation grounding (the anti-hallucination check)', () => {
     assert.equal(passes(verdict({ citations: ['txn-from-elsewhere'] }), otherInvestigation), true);
     assert.equal(passes(verdict({ citations: [G1] }), otherInvestigation), false,
       'an id from a DIFFERENT investigation must not ground a citation here');
+  });
+
+  test('A CONTEXT CARRYING ANOTHER INVESTIGATION’S TOOL CALLS IS REFUSED', () => {
+    // Issue #21. The test above only proves the gate honours whichever context it
+    // is handed — a restatement of "the function reads its argument". It would pass
+    // unchanged if the loop passed the WHOLE RUN's tool-call log, which is the
+    // natural implementation and silently widens grounding to every investigation
+    // at once. Every existing test would still pass and the grounding-failure count
+    // would DROP, reading as an improvement.
+    //
+    // A mixed context is a caller bug, not a model failure, so it throws rather
+    // than downgrading: attributing a programming error to the model would corrupt
+    // the grounding-failure metric agent-design §7 reads as a prompt-quality signal.
+    const mixed = context({
+      toolCalls: [
+        call({ returnedIds: [G1] }),
+        call({ investigationId: 'inv-somewhere-else', step: 2, returnedIds: ['txn-laundered'] }),
+      ],
+    });
+    assert.throws(() => validateVerdict(verdict({ citations: [G1] }), mixed),
+      /investigation/i, 'a tool call from another investigation must not be silently accepted');
+
+    // And the laundering this prevents: without the check, citing an id only the
+    // foreign call returned would have grounded cleanly.
+    assert.throws(() => validateVerdict(verdict({ citations: ['txn-laundered'] }), mixed),
+      /investigation/i);
+  });
+
+  test('a context whose calls are ALL foreign is refused too', () => {
+    // Not just a mixed context: a wholesale swap is the same bug and must not read
+    // as a well-scoped investigation that happened to retrieve different ids.
+    const foreign = context({
+      toolCalls: [call({ investigationId: 'inv-elsewhere', returnedIds: [G1] })],
+    });
+    assert.throws(() => validateVerdict(verdict({ citations: [G1] }), foreign), /investigation/i);
+  });
+
+  test('an empty tool-call log is not a scoping error', () => {
+    // Nothing to be out of scope. This must still reach the ordinary checks, which
+    // reject an asserting verdict with no reasoning for the RIGHT reason.
+    const r = validateVerdict(
+      verdict({ reasoning: [], citations: [] }), context({ toolCalls: [] }));
+    assert.equal(r.verdict.groundingPassed, false);
+    assert.equal(r.rejection!.check, 'grounding');
+    assert.match(r.verdict.groundingFailure!, /requires a reasoning chain/);
   });
 
   test('a reasoning step naming a tool that was never called is rejected', () => {

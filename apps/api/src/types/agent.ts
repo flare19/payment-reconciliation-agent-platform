@@ -57,6 +57,20 @@ export interface ValidatedVerdict extends RawVerdict {
 
 /** Every tool call made during one investigation. The A3 gate's evidence base. */
 export interface ToolCallRecord {
+  /**
+   * WHICH investigation retrieved this. The A3 gate's scope key (issue #21).
+   *
+   * Grounding is per-investigation and that is load-bearing — an id returned to a
+   * different investigation is not evidence here. Without this field the gate had
+   * no way to check the claim it was making: it trusted whatever array the caller
+   * handed it, and the natural loop implementation (accumulate tool calls at the
+   * run level, pass them down) would have widened grounding to every investigation
+   * at once while every test still passed.
+   *
+   * The Q&A loop supplies its `agent_questions.id` here. The scoping requirement is
+   * identical — the evidence base must be exactly what THIS agent run retrieved.
+   */
+  investigationId: string;
   step: number;
   tool: string;
   arguments: Record<string, unknown>;
