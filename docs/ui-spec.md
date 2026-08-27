@@ -98,7 +98,7 @@ Order on the page:
 3. **Why it wasn't matched — the rule-level answer**, rendered as a candidate table: each candidate considered, its score breakdown as four small bars, and `rejectedBecause` verbatim. **This section renders identically when the LLM is disabled**, and the UI must not visually subordinate it to the prose above. The prose is narration; this is the finding.
 4. **Special-case renderings** that must not be collapsed into generic text:
    - `searchExhausted` → *"Searched all 4,096 combinations of 12 candidate payments. No subset matches this credit."*
-   - `searchBoundExceeded` → *"Stopped after 250 ms (pool capped at 24). Decomposition may exist but was not proved."*
+   - `searchBoundExceeded` → *"Stopped on its nodes bound (1,300,000 steps) over 24 candidate payments. Decomposition may exist but was not proved."* — the specific bound named (`pool` / `nodes` / `time`) and its value come from `evidence.searchBoundExceeded`.
    - These are different claims (ADR-038) and the interface says which one it is making.
    - `candidateCapHit` → an explicit note that the candidate list was truncated.
    - `displacedByMatchId` → *"The bank record matched a stronger claim (score 0.95)"*, linking to that match.

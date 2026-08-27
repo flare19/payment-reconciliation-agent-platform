@@ -95,7 +95,7 @@ export function loadEnv(): Env {
 
     aliasLearningEnabled: bool('ALIAS_LEARNING_ENABLED', true),
     candidateCap: int('CANDIDATE_CAP', 200),
-    batchSubsetBudgetMs: int('BATCH_SUBSET_BUDGET_MS', 250),
+    batchSubsetBudgetMs: int('BATCH_SUBSET_BUDGET_MS', 2_000),
     runMigrationsOnBoot: bool('RUN_MIGRATIONS_ON_BOOT', true),
     staleRunTimeoutMinutes: int('STALE_RUN_TIMEOUT_MINUTES', 5),
 

@@ -101,7 +101,7 @@ compatibility.
 | `RUN_MIGRATIONS_ON_BOOT` | `true` | no | Convenient at this scale; see §5.3 for the caveat. |
 | `STALE_RUN_TIMEOUT_MINUTES` | `5` | no | On boot, non-terminal runs older than this are marked `failed` (ADR-046). Without it a crashed run polls forever mid-demo. |
 | `CANDIDATE_CAP` | `200` | no | Per-record candidate cap (ADR-033). Cap hits are surfaced, never silent. |
-| `BATCH_SUBSET_BUDGET_MS` | `250` | no | Subset-sum time budget per batch (ADR-038). |
+| `BATCH_SUBSET_BUDGET_MS` | `2000` | no | Subset-sum safety valve, not the primary bound (ADR-060, amended by ADR-063). A lower value than the deterministic node budget's typical runtime would reintroduce the hardware-dependent split ADR-060 exists to eliminate. |
 | `AGENT_ENABLED` | `true` | no | Master switch for Phase A. Off → the engine runs exactly as before. |
 | `AGENT_MAX_INVESTIGATIONS_PER_RUN` | `20` | no | Triage cap (ADR-054). |
 | `AGENT_MAX_COST_USD_PER_RUN` | `1.00` | no | Hard spend ceiling for Phase A. |

@@ -262,7 +262,7 @@ Two numbers that speak directly to the "honest exception list" bar:
 
 - **Unresolvable recall** — of the ~21 designed-unresolvable events, how many did the engine correctly leave unmatched? A number below 100% means the engine **invented** a match that cannot exist. That is the single most damning failure available in this project and it should be treated as a build-blocker, not a metric.
 - **False-despair rate** — of the events the engine gave up on, how many were actually `RESOLVABLE`? This is the honest measure of the engine's headroom, and the right place to look for the next day's work.
-- **Bound-honesty check** — of the `UNSPLITTABLE_BATCH` exceptions, how many claim `searchExhausted` versus `searchBoundExceeded` (ADR-038)? A run where every batch reports `searchBoundExceeded` has not proved anything about the data; it has proved its own bounds are too tight. The scorer reports the split, and the accuracy report prints it, because "I proved no combination works" and "I gave up after 250 ms" are different claims and only one of them is a finding.
+- **Bound-honesty check** — of the `UNSPLITTABLE_BATCH` exceptions, how many claim `searchExhausted` versus `searchBoundExceeded` (ADR-038)? A run where every batch reports `searchBoundExceeded` has not proved anything about the data; it has proved its own bounds are too tight. The scorer reports the split, and the accuracy report prints it, because "I proved no combination works" and "I ran out of search budget" are different claims and only one of them is a finding.
 
 ### 5.4 Accuracy by difficulty
 

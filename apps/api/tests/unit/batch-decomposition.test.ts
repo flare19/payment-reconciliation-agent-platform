@@ -264,8 +264,9 @@ describe('S10 — determinism', () => {
   });
 
   test('a realistic pool completes far inside the node budget', () => {
-    // If pruning were ineffective this would exhaust 200k nodes and report a
-    // bound — which ADR-060 says would mean the pruning is broken, not the budget.
+    // If pruning were ineffective this would exhaust the 1.3M-node budget and
+    // report a bound — which ADR-060 says would mean the pruning is broken,
+    // not the budget.
     const credit = txn('c', 'bank', 1, { amount: 1_234_567, date: '2026-08-16' });
     const pool = Array.from({ length: 24 }, (_, i) => gw(`g${i}`, i, 50_000 + i * 977));
     const r = decomposeBatch(credit, pool, config);
