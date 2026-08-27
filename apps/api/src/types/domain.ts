@@ -43,10 +43,17 @@ export const EXCEPTION_PRECEDENCE = [
   'DUPLICATE_RECORD',
   'AMBIGUOUS_MATCH',
   'UNSPLITTABLE_BATCH',
+  // ADR-062: above the presence class. Presence and value cannot compete within
+  // one leg (classify.ts enforces that), so wherever both appear they concern
+  // DIFFERENT counterparts — and since severity derives from the primary
+  // category, ranking presence first filed a proved money discrepancy as
+  // `medium` instead of `high`.
+  'AMOUNT_MISMATCH',
   'MISSING_IN_GATEWAY',
   'MISSING_IN_BANK',
   'MISSING_IN_LEDGER',
-  'AMOUNT_MISMATCH',
+  // Last: identity and amount both agree, only the calendar disagrees. A late
+  // settlement is a process artifact; a wholly absent record is not.
   'TIMING_DRIFT',
 ] as const;
 

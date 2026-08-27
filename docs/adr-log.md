@@ -411,12 +411,23 @@ This is a genuine reversal, not a reinterpretation. ARCHITECTURE §7.4 and ADR-0
 **Rejected:** Deploying on Day 4 as originally planned (two places to keep correct while the codebase is still moving); deploying only on Day 13 (concentrates platform risk on submission day); a staging environment (a third place to be correct, for a demo).
 **Revisit if:** the Day 11 API deploy exposes a platform problem that is not fixed inside its slot — at which point the schedule, not the decision, is what needs attention.
 
+### ADR-062 · `AMOUNT_MISMATCH` moves above the presence class in the precedence order
+**Decision:** The order becomes `DUPLICATE_RECORD → AMBIGUOUS_MATCH → UNSPLITTABLE_BATCH → AMOUNT_MISMATCH → MISSING_IN_GATEWAY → MISSING_IN_BANK → MISSING_IN_LEDGER → TIMING_DRIFT`. `TIMING_DRIFT` stays last. Amends the order in `schema.md` §8.2; the "presence before value" *rationale* is narrowed rather than deleted.
+**Because:** §8.2 justified putting presence above value with *"you cannot have an amount disagreement with a record that isn't there."* That reasoning is sound, and it is **about a single leg**. The precedence order, however, is applied **per record** — and a record has up to two legs. A gateway payment can simultaneously have a proved ₹412 discrepancy against the bank *and* no ledger entry at all. Both statements are true, about different counterparts, and the original ordering made the bookkeeping gap the headline.
+
+That is the same failure §8.2 already warns about one line further down — *"reversing this would let a real money problem be reported as a low-severity scheduling quirk"* — because **severity is computed from the primary category** (ADR-044). Filing that record as `MISSING_IN_LEDGER` yields `medium`; filing it as `AMOUNT_MISMATCH` yields `high`. The old order silently downgraded a proven money discrepancy, which is precisely the finding a finance controller most needs at the top of the screen.
+
+The reorder is safe because presence and value **cannot compete within one leg**: `classify.ts` enforces the discriminator directly — an established identity means the question is value, so no presence signal is raised for that leg. Any record where both appear therefore has them on *different* legs, where the original justification does not apply and only consequence remains. `TIMING_DRIFT` stays below presence deliberately: a late settlement is a process artifact, while a wholly absent record is not.
+**Rejected:** Keeping the order and accepting the downgrade (contradicts ADR-044's whole purpose); making precedence per-leg rather than per-record (a record needs one headline category — the schema has one `category` column and the UI has one row per record); special-casing severity to look past the primary category (would make the severity of a row unexplainable from its own category).
+**Revisit if:** never — this is a correction, not a preference.
+
 ---
 
 ## Superseded
 
 - **ADR-021** — not superseded, but *clarified* by **ADR-041** (2026-08-26): the no-truth-in-the-engine rule stands; ground-truth-derived metrics move to a separate `score_reports` table written by the offline scorer, because the metrics shape in `schema.md` §11 could not otherwise have been produced by anything.
 - **ADR-004 / ADR-012** — extended by **ADR-029** (2026-08-26): a fourth stage (identity-established short-circuit) sits between the alias tier and the fuzzy tier. The tier ordering itself is unchanged.
+- **ADR-011 / schema.md §8.2** — the eight categories stand; the *order* is amended by **ADR-062** (2026-08-27), which lifts `AMOUNT_MISMATCH` above the presence class because precedence is applied per record while "presence before value" only holds per leg.
 - **ADR-026** — the platform choice stands; its **Day-3 deploy target is superseded by ADR-061** (2026-08-27), which defers deploying until the project runs end-to-end locally.
 - **ADR-038** — stands, with step 3 and the "250 ms budget" bound amended by **ADR-060** (2026-08-27): the primary bound is a deterministic node budget, because a wall-clock bound made exhaustiveness a property of the machine rather than of the data.
 - **ADR-010** — thresholds unchanged; the component weights they operate on were recalibrated by **ADR-030** (2026-08-26).

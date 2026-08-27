@@ -215,10 +215,20 @@ export interface ExceptionEvidence {
 
   /** S8 (ADR-029): the real delta on a TIMING_DRIFT, so a human can confirm in one click. */
   wouldMatchIfWindowWidened?: { dateDeltaDays: number } | null;
-  /** S10 (ADR-038): searched the whole bounded space, no decomposition exists. */
+  /**
+   * S10 (ADR-038): the whole DECLARED space was searched and no decomposition
+   * exists. A proof about the data.
+   */
   searchExhausted?: boolean | null;
-  /** S10 (ADR-038): hit a bound. A DIFFERENT CLAIM from searchExhausted — never conflate. */
-  searchBoundExceeded?: { bound: 'pool' | 'subset_size' | 'time'; value: number } | null;
+  /**
+   * S10 (ADR-038, ADR-060): the search was TRUNCATED — eligible candidates were
+   * discarded, or the budget cut it short. A DIFFERENT CLAIM from
+   * `searchExhausted`, and the two are never conflated.
+   *
+   * `subset_size` is deliberately absent: the size cap is part of the declared
+   * question rather than a truncation of it (ADR-060).
+   */
+  searchBoundExceeded?: { bound: 'pool' | 'nodes' | 'time'; value: number } | null;
   candidateSubsets?: string[][] | null;
   /** S9 (ADR-032): the counterpart went to a stronger claim. */
   displacedByMatchId?: string | null;

@@ -659,10 +659,10 @@ Every record is evaluated against the eight rules **in the order below**. The fi
 1. DUPLICATE_RECORD
 2. AMBIGUOUS_MATCH
 3. UNSPLITTABLE_BATCH
-4. MISSING_IN_GATEWAY  ┐
-5. MISSING_IN_BANK     ├─ the "presence" class (mutually exclusive in practice)
-6. MISSING_IN_LEDGER   ┘
-7. AMOUNT_MISMATCH
+4. AMOUNT_MISMATCH        ← above presence since ADR-062; see below
+5. MISSING_IN_GATEWAY  ┐
+6. MISSING_IN_BANK     ├─ the "presence" class (mutually exclusive per leg)
+7. MISSING_IN_LEDGER   ┘
 8. TIMING_DRIFT
 ```
 
@@ -671,7 +671,9 @@ Every record is evaluated against the eight rules **in the order below**. The fi
 - **Duplicates first, unconditionally.** A duplicate changes the *cardinality* of the problem. If one gateway event appears twice and the bank shows one credit, evaluating presence first yields a spurious `MISSING_IN_BANK` for the second copy — the engine would report a missing bank record that never should have existed. Deduplication must logically precede every other question.
 - **Ambiguity before presence.** "We found two candidates and won't choose" and "we found none" are opposite failures. Ambiguity must claim the record first or the exception list understates what the engine actually saw.
 - **Unsplittable batch before presence,** for the same reason: its member payments would each otherwise be reported as `MISSING_IN_BANK`, turning one honest exception into five misleading ones. Claiming them as a batch-level exception keeps the count truthful.
-- **Presence before value.** You cannot have an amount disagreement with a record that isn't there. The discriminator is `anchor_strength` + candidate existence: **if no candidate shares an identity anchor, it is a presence problem; if a candidate's anchor agrees but its value doesn't, it is a value problem.** This is the rule that resolves the single most common overlap (`MISSING_IN_BANK` vs `AMOUNT_MISMATCH`) and it is stated here so it isn't re-litigated in code.
+- **Presence and value are mutually exclusive *within a leg*, and that is enforced, not ordered.** You cannot have an amount disagreement with a record that isn't there. The discriminator is `anchor_strength` + candidate existence: **if no candidate shares an identity anchor, it is a presence problem; if a candidate's anchor agrees but its value doesn't, it is a value problem.** `classify.ts` applies this directly — an established identity suppresses the presence signal for that leg — so the two can never compete over the same counterpart.
+
+- **Across legs, value outranks presence (ADR-062).** A record has up to two legs, and the precedence order is applied per *record*. A gateway payment can have a proved ₹412 discrepancy against the bank **and** no ledger entry at all: both true, about different counterparts, and the original order made the bookkeeping gap the headline. Because severity is computed from the primary category (ADR-044), that filed a proven money discrepancy as `medium` instead of `high` — the exact downgrade the next bullet warns about. `AMOUNT_MISMATCH` therefore sits above the presence class.
 - **Amount before timing.** A record can be both off-amount and off-date. Money discrepancy has financial consequence; date drift is usually a process artifact. `AMOUNT_MISMATCH` primary, `TIMING_DRIFT` in `secondary_flags`. Reversing this would let a real money problem be reported as a low-severity scheduling quirk.
 - **Timing drift last** because it is the weakest deviation — identity and amount both agree, only the calendar disagrees. It is the category most likely to be a false alarm and is severity `low` for that reason.
 
