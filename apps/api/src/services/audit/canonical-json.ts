@@ -29,6 +29,26 @@ export function canonicalJson(value: CanonicalValue): string {
   return serialize(value);
 }
 
+/**
+ * The value as it will exist AFTER a round trip through a `jsonb` column.
+ *
+ * This is the function that makes the hash and the stored bytes the same thing
+ * rather than two things expected to agree (issue #17). `JSON.stringify` and
+ * `canonicalJson` disagree in exactly one direction — `stringify` DROPS an
+ * `undefined`-valued key, `canonicalJson` emits `"k":null` — so an entry hashed
+ * from the caller's object and stored via `stringify` could differ from the row
+ * read back, and verification would report tampering on an untouched log.
+ *
+ * Running the value through `canonicalJson` and back gives the post-storage
+ * shape: `undefined` becomes `null`, `Date` becomes an ISO string, and values
+ * JSON cannot represent still throw rather than silently becoming `null`. It is
+ * idempotent — `canonicalize(canonicalize(v))` equals `canonicalize(v)` — which
+ * is what lets verification apply it to an already-stored row safely.
+ */
+export function canonicalize(value: CanonicalValue): CanonicalValue {
+  return JSON.parse(canonicalJson(value)) as CanonicalValue;
+}
+
 function serialize(value: CanonicalValue): string {
   if (value === null || value === undefined) return 'null';
 

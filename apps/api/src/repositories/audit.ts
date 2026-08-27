@@ -13,8 +13,9 @@ import {
   ADVISORY_LOCK, advisoryXactLockHeldSql, getPool, takeAdvisoryXactLock, withTransaction,
   type TxClient,
 } from '../db/pool.js';
+import { canonicalJson } from '../services/audit/canonical-json.js';
 import {
-  GENESIS_HASH, computeEntryHash, verifyChain,
+  GENESIS_HASH, computeEntryHash, toStoredForm, verifyChain,
   type ChainVerification, type HashableAuditEntry, type StoredAuditEntry,
 } from '../services/audit/hash-chain.js';
 
@@ -79,7 +80,11 @@ export async function appendAuditEntry(
     }
     const prevHash = rows[0]!.entry_hash ?? GENESIS_HASH;
 
-    const entry: HashableAuditEntry = { ...input, occurredAt: input.occurredAt ?? new Date() };
+    // The stored form is computed ONCE and both the hash and the column values come
+    // out of it (issue #17). Writing the columns from anything else — a second
+    // `JSON.stringify` of the caller's object, say — is what made an untampered
+    // entry verify as `entry_altered`.
+    const entry = toStoredForm({ ...input, occurredAt: input.occurredAt ?? new Date() });
     const entryHash = computeEntryHash(entry, prevHash);
 
     const inserted = await c.query<{ sequence_no: number; occurred_at: Date }>(
@@ -93,10 +98,14 @@ export async function appendAuditEntry(
         entry.runId, entry.eventType, entry.subjectType, entry.subjectId, entry.transactionId,
         entry.actorType, entry.actorId, entry.tier, entry.ruleId, entry.ruleVersion,
         entry.decision, entry.confidence,
-        entry.beforeState === undefined ? null : JSON.stringify(entry.beforeState),
-        entry.afterState === undefined ? null : JSON.stringify(entry.afterState),
+        // `canonicalJson`, never `JSON.stringify`: one serializer for the hash and
+        // for the columns. `null` stays SQL NULL rather than becoming JSON null,
+        // which keeps `before_state IS NULL` meaningful — both read back as JS
+        // `null`, so the hash agrees either way.
+        entry.beforeState === null ? null : canonicalJson(entry.beforeState),
+        entry.afterState === null ? null : canonicalJson(entry.afterState),
         entry.reason,
-        JSON.stringify(entry.details ?? {}),
+        canonicalJson(entry.details),
         prevHash, entryHash,
         entry.occurredAt,
       ],

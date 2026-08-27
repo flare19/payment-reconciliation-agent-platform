@@ -27,7 +27,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { canonicalJson, type CanonicalValue } from './canonical-json.js';
+import { canonicalJson, canonicalize, type CanonicalValue } from './canonical-json.js';
 
 /** The first entry of a chain links from 64 zeros. */
 export const GENESIS_HASH = '0'.repeat(64);
@@ -60,8 +60,34 @@ export interface StoredAuditEntry extends HashableAuditEntry {
   entryHash: string;
 }
 
+/**
+ * The entry exactly as it will exist in the database.
+ *
+ * ONE SOURCE OF TRUTH FOR THE THREE JSON COLUMNS (issue #17). The hash and the
+ * column values are both derived from this, so they cannot drift: previously the
+ * hash was taken over the caller's object while the columns were written with
+ * `JSON.stringify`, and the two disagreed on `details ?? {}` and on
+ * `undefined`-valued keys. An untampered entry then failed its own verification.
+ *
+ * `details` is coerced to `{}` here rather than to JSON `null` because the column
+ * is `NOT NULL DEFAULT '{}'` — "details is always an object" is a schema
+ * invariant, and this preserves it on both sides of the hash instead of only one.
+ *
+ * Idempotent, so `verifyChain` can apply it to a row already in stored form.
+ */
+export function toStoredForm(entry: HashableAuditEntry): HashableAuditEntry {
+  return {
+    ...entry,
+    beforeState: canonicalize(entry.beforeState ?? null),
+    afterState: canonicalize(entry.afterState ?? null),
+    details: canonicalize(entry.details ?? {}),
+  };
+}
+
 export function computeEntryHash(entry: HashableAuditEntry, prevHash: string): string {
-  const payload = canonicalJson(entry as unknown as CanonicalValue);
+  // Normalised HERE, not by the caller, so there is no way to hash a shape the
+  // database would not have stored.
+  const payload = canonicalJson(toStoredForm(entry) as unknown as CanonicalValue);
   return createHash('sha256').update(payload + prevHash, 'utf8').digest('hex');
 }
 

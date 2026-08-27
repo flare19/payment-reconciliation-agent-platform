@@ -112,6 +112,35 @@ describe('audit hash chain (integration)', { skip: DB_URL === null ? 'no TEST_DA
     assert.equal((await verifyRunChain(null)).valid, true);
   });
 
+  test('THE HASH INPUT IS THE STORED FORM: shapes JSON.stringify and canonicalJson disagree on', async () => {
+    // Issue #17. The hash was computed over the caller's object while the columns
+    // were written with JSON.stringify, and the two disagree in two places:
+    // `details ?? {}` coerces null to an object, and JSON.stringify DROPS an
+    // undefined-valued key where canonicalJson emits "k":null. Either one makes an
+    // untampered entry verify as entry_altered.
+    const shapes: Array<[string, Partial<AuditEntryInput>]> = [
+      ['details = null', { details: null }],
+      ['details = undefined', { details: undefined }],
+      ['undefined key in afterState', { afterState: { a: 1, b: undefined } }],
+      ['undefined key in beforeState', { beforeState: { kept: 'x', dropped: undefined } }],
+      ['undefined key nested two deep', { details: { outer: { inner: { a: 1, b: undefined } } } }],
+      ['undefined inside an array element', { details: { xs: [{ a: 1, b: undefined }] } }],
+      ['a Date inside details', { details: { at: new Date('2026-08-27T10:00:00.000Z') } }],
+    ];
+
+    for (const [i, [label, over]] of shapes.entries()) {
+      const runId = `77770000-0000-0000-0000-${String(i).padStart(12, '0')}`;
+      await getPool().query(
+        `INSERT INTO runs (id,label,status,config_snapshot) VALUES ($1,'shape','pending','{}')
+         ON CONFLICT DO NOTHING`, [runId]);
+      await appendAuditEntry(input({ runId, subjectId: runId, reason: label, ...over }));
+      await appendAuditEntry(input({ runId, subjectId: runId, reason: `${label} (successor)` }));
+      const r = await verifyRunChain(runId);
+      assert.equal(r.valid, true,
+        `"${label}" made an untampered chain report ${r.divergenceKind}`);
+    }
+  });
+
   test('TAMPERING IS DETECTED even with the append-only trigger dropped', async () => {
     // The scenario ADR-042 exists for. The trigger stops tampering through the
     // application; anyone who can drop it can rewrite history, and only the chain
