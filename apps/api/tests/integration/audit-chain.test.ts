@@ -35,8 +35,11 @@ describe('audit hash chain (integration)', { skip: DB_URL === null ? 'no TEST_DA
   before(async () => {
     createPool({ databaseUrl: DB_URL!, corsOrigins: [] } as never);
     await runMigrations(getPool());
+    // audit_chain_heads is named explicitly rather than left to CASCADE: a stale
+    // anchor beside an empty audit_log is exactly the state that reads as
+    // truncation, so the reset must not depend on cascade ordering.
     await getPool().query(`TRUNCATE runs, transactions, matches, match_members, exceptions,
-      audit_log, learned_aliases, explanation_cache, score_reports,
+      audit_log, audit_chain_heads, learned_aliases, explanation_cache, score_reports,
       agent_investigations, agent_questions CASCADE`);
     for (const id of [RUN, OTHER_RUN]) {
       await getPool().query(
@@ -232,6 +235,74 @@ describe('audit hash chain (integration)', { skip: DB_URL === null ? 'no TEST_DA
       'SELECT count(*)::int AS n FROM audit_log WHERE run_id = $1', [bareRun]);
     assert.equal(rows[0]!.n, 0, 'a refused append must write nothing');
     assert.equal((await verifyRunChain(bareRun)).valid, true);
+  });
+
+  test('TRUNCATING THE TAIL IS DETECTED, not reported as a clean chain', async () => {
+    // Issue #18. Every entry that survives a tail deletion still links correctly to
+    // the one before it, so a verifier that only walks what is present certifies
+    // the log as intact. "Drop everything after the decision I want to hide" is the
+    // cheapest tamper available and it was the one the chain could not see.
+    const runId = '66660000-0000-0000-0000-000000000001';
+    await getPool().query(
+      `INSERT INTO runs (id,label,status,config_snapshot) VALUES ($1,'trunc','pending','{}')
+       ON CONFLICT DO NOTHING`, [runId]);
+    for (let i = 0; i < 5; i += 1) {
+      await appendAuditEntry(input({ runId, subjectId: runId, reason: `t${i}` }));
+    }
+    const intact = await verifyRunChain(runId);
+    assert.equal(intact.valid, true);
+    assert.equal(intact.expectedEntryCount, 5, 'the chain records how long it is');
+
+    const c = await getPool().connect();
+    try {
+      await c.query('ALTER TABLE audit_log DISABLE TRIGGER trg_audit_log_immutable');
+      await c.query(
+        `DELETE FROM audit_log WHERE sequence_no IN (
+           SELECT sequence_no FROM audit_log WHERE run_id = $1 ORDER BY sequence_no DESC LIMIT 2)`,
+        [runId]);
+    } finally {
+      await c.query('ALTER TABLE audit_log ENABLE TRIGGER trg_audit_log_immutable');
+      c.release();
+    }
+
+    const r = await verifyRunChain(runId);
+    assert.equal(r.valid, false, 'a chain cut short must not verify');
+    assert.equal(r.divergenceKind, 'chain_truncated');
+    assert.equal(r.entriesChecked, 3);
+    assert.equal(r.expectedEntryCount, 5, 'and it must say how many are missing');
+  });
+
+  test('DELETING A WHOLE CHAIN IS DETECTED, not mistaken for a run that never logged', async () => {
+    const runId = '66660000-0000-0000-0000-000000000002';
+    await getPool().query(
+      `INSERT INTO runs (id,label,status,config_snapshot) VALUES ($1,'wipe','pending','{}')
+       ON CONFLICT DO NOTHING`, [runId]);
+    for (let i = 0; i < 3; i += 1) {
+      await appendAuditEntry(input({ runId, subjectId: runId, reason: `w${i}` }));
+    }
+    const c = await getPool().connect();
+    try {
+      await c.query('ALTER TABLE audit_log DISABLE TRIGGER trg_audit_log_immutable');
+      await c.query('DELETE FROM audit_log WHERE run_id = $1', [runId]);
+    } finally {
+      await c.query('ALTER TABLE audit_log ENABLE TRIGGER trg_audit_log_immutable');
+      c.release();
+    }
+    const r = await verifyRunChain(runId);
+    assert.equal(r.valid, false);
+    assert.equal(r.divergenceKind, 'chain_truncated');
+    assert.equal(r.entriesChecked, 0);
+    assert.equal(r.expectedEntryCount, 3);
+  });
+
+  test('an unanchored chain says so rather than claiming to be verified', async () => {
+    // A run with no entries and no anchor is indistinguishable from one whose
+    // entries and anchor were both deleted. `anchored: false` states the bound
+    // rather than letting `valid: true` imply more than it proves.
+    const r = await verifyRunChain('66660000-0000-0000-0000-000000000009');
+    assert.equal(r.valid, true);
+    assert.equal(r.anchored, false);
+    assert.equal(r.expectedEntryCount, null);
   });
 
   test('the append path itself cannot break the chain under concurrency', async () => {

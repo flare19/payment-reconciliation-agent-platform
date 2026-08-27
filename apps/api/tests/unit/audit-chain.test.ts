@@ -296,6 +296,61 @@ describe('chain verification', () => {
       'covering your tracks on one row requires rewriting every row after it');
   });
 
+  test('WITHOUT AN ANCHOR, a truncated chain is indistinguishable from a short one', () => {
+    // Not a wish: this is the limit of recomputation alone, and the reason the
+    // anchor exists. Every entry that survives a tail deletion still links to its
+    // predecessor, so the surviving prefix IS a valid chain.
+    const chain = chainOf([entry(), entry({ reason: 'second' }), entry({ reason: 'third' })]);
+    const r = verifyChain(chain.slice(0, 1));
+    assert.equal(r.valid, true);
+    assert.equal(r.anchored, false, 'and it must say the claim is the weaker one');
+  });
+
+  test('WITH AN ANCHOR, a truncated chain is caught', () => {
+    const chain = chainOf([entry(), entry({ reason: 'second' }), entry({ reason: 'third' })]);
+    const anchor = { entryCount: 3, headHash: chain[2]!.entryHash };
+
+    assert.equal(verifyChain(chain, anchor).valid, true);
+
+    const cut = verifyChain(chain.slice(0, 1), anchor);
+    assert.equal(cut.valid, false);
+    assert.equal(cut.divergenceKind, 'chain_truncated');
+    assert.equal(cut.entriesChecked, 1);
+    assert.equal(cut.expectedEntryCount, 3);
+    assert.equal(cut.expectedChainHead, chain[2]!.entryHash);
+  });
+
+  test('an emptied chain is caught, not read as a chain that was never written', () => {
+    const chain = chainOf([entry(), entry({ reason: 'second' })]);
+    const r = verifyChain([], { entryCount: 2, headHash: chain[1]!.entryHash });
+    assert.equal(r.valid, false);
+    assert.equal(r.divergenceKind, 'chain_truncated');
+    assert.equal(r.entriesChecked, 0);
+  });
+
+  test('a count that agrees but a head that does not is still truncation', () => {
+    // The count alone is forgeable by anyone who can also delete rows; the terminal
+    // hash is the half that says WHICH chain of that length you are holding.
+    const chain = chainOf([entry(), entry({ reason: 'second' })]);
+    const r = verifyChain(chain, { entryCount: 2, headHash: GENESIS_HASH });
+    assert.equal(r.valid, false);
+    assert.equal(r.divergenceKind, 'chain_truncated');
+  });
+
+  test('an anchored empty chain is valid', () => {
+    const r = verifyChain([], { entryCount: 0, headHash: GENESIS_HASH });
+    assert.equal(r.valid, true);
+    assert.equal(r.anchored, true);
+  });
+
+  test('an interior removal is still chain_broken, not truncation', () => {
+    // The two kinds are different claims and must stay distinguishable: a hole in
+    // the middle points at a surviving row, a cut end does not.
+    const chain = chainOf([entry(), entry({ reason: 'second' }), entry({ reason: 'third' })]);
+    const r = verifyChain([chain[0]!, chain[2]!], { entryCount: 3, headHash: chain[2]!.entryHash });
+    assert.equal(r.divergenceKind, 'chain_broken');
+  });
+
   test('sequence_no is NOT hashed, so renumbering alone does not fail verification', () => {
     // Documented consequence of BIGSERIAL being DB-assigned: the hash cannot
     // include it. Ordering is guaranteed by prev_hash linkage instead, which is

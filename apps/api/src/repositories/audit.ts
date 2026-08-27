@@ -16,7 +16,7 @@ import {
 import { canonicalJson } from '../services/audit/canonical-json.js';
 import {
   GENESIS_HASH, computeEntryHash, toStoredForm, verifyChain,
-  type ChainVerification, type HashableAuditEntry, type StoredAuditEntry,
+  type ChainAnchor, type ChainVerification, type HashableAuditEntry, type StoredAuditEntry,
 } from '../services/audit/hash-chain.js';
 
 /** What a caller supplies. `occurredAt` is optional here and filled in at append. */
@@ -87,13 +87,27 @@ export async function appendAuditEntry(
     const entry = toStoredForm({ ...input, occurredAt: input.occurredAt ?? new Date() });
     const entryHash = computeEntryHash(entry, prevHash);
 
+    // The anchor moves in the SAME statement as the entry it describes (issue #18),
+    // so there is no window in which the log is longer than its recorded head, and
+    // no extra round trip. Both are already serialized by the advisory lock above.
     const inserted = await c.query<{ sequence_no: number; occurred_at: Date }>(
-      `INSERT INTO audit_log (
-         run_id, event_type, subject_type, subject_id, transaction_id,
-         actor_type, actor_id, tier, rule_id, rule_version, decision, confidence,
-         before_state, after_state, reason, details, prev_hash, entry_hash, occurred_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
-       RETURNING sequence_no, occurred_at`,
+      `WITH inserted AS (
+         INSERT INTO audit_log (
+           run_id, event_type, subject_type, subject_id, transaction_id,
+           actor_type, actor_id, tier, rule_id, rule_version, decision, confidence,
+           before_state, after_state, reason, details, prev_hash, entry_hash, occurred_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+         RETURNING sequence_no, occurred_at
+       ), anchor AS (
+         INSERT INTO audit_chain_heads (run_id, entry_count, head_hash, head_sequence_no)
+         VALUES ($1, 1, $18, (SELECT sequence_no FROM inserted))
+         ON CONFLICT (run_id) DO UPDATE
+           SET entry_count      = audit_chain_heads.entry_count + 1,
+               head_hash        = EXCLUDED.head_hash,
+               head_sequence_no = EXCLUDED.head_sequence_no,
+               updated_at       = now()
+       )
+       SELECT sequence_no, occurred_at FROM inserted`,
       [
         entry.runId, entry.eventType, entry.subjectType, entry.subjectId, entry.transactionId,
         entry.actorType, entry.actorId, entry.tier, entry.ruleId, entry.ruleVersion,
@@ -141,9 +155,27 @@ export async function readChain(runId: string | null): Promise<StoredAuditEntry[
   return rows.map(toStored);
 }
 
+/**
+ * The chain's anchor, or null if it has never been written to.
+ *
+ * Read separately from the entries because it answers a different question: the
+ * entries say whether what is present is consistent, the anchor says whether
+ * anything is missing from the end (issue #18).
+ */
+export async function readChainAnchor(runId: string | null): Promise<ChainAnchor | null> {
+  const { rows } = await getPool().query<{ entry_count: number; head_hash: string }>(
+    `SELECT entry_count, head_hash FROM audit_chain_heads
+      WHERE run_id IS NOT DISTINCT FROM $1`,
+    [runId],
+  );
+  const row = rows[0];
+  return row === undefined ? null : { entryCount: Number(row.entry_count), headHash: row.head_hash };
+}
+
 /** Endpoint 22. Read-only, safe at any time, fast enough to run live in a pitch. */
 export async function verifyRunChain(runId: string | null): Promise<ChainVerification> {
-  return verifyChain(await readChain(runId));
+  const [entries, anchor] = await Promise.all([readChain(runId), readChainAnchor(runId)]);
+  return verifyChain(entries, anchor);
 }
 
 interface AuditRow {
