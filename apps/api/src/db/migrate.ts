@@ -32,16 +32,38 @@ async function checksum(sql: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export async function runMigrations(client: pg.PoolClient | pg.Pool): Promise<MigrationResult> {
-  await client.query(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      filename    TEXT PRIMARY KEY,
-      checksum    CHAR(64) NOT NULL,
-      applied_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-    )`);
+export async function runMigrations(target: pg.PoolClient | pg.Pool): Promise<MigrationResult> {
+  // A Pool hands out a DIFFERENT connection per query, and `pg_advisory_lock` is
+  // SESSION-scoped — so locking on a pool would take the lock on one connection
+  // and run the migrations on others, protecting nothing. Pin one client for the
+  // whole operation.
+  const pooled = typeof (target as pg.Pool).connect === 'function';
+  const client = pooled
+    ? await (target as pg.Pool).connect()
+    : (target as pg.PoolClient);
 
+  try {
+    return await runOnClient(client);
+  } finally {
+    if (pooled) (client as pg.PoolClient).release();
+  }
+}
+
+async function runOnClient(client: pg.PoolClient): Promise<MigrationResult> {
+  // The lock is taken FIRST, before any DDL. `CREATE TABLE IF NOT EXISTS` is not
+  // atomic in Postgres: two sessions running it concurrently can both pass the
+  // existence check and then collide on `pg_type_typname_nsp_index`. Creating the
+  // bookkeeping table before acquiring the lock left exactly that race, which only
+  // showed up once two test files began migrating the same database in parallel.
   await client.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK_ID]);
   try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        filename    TEXT PRIMARY KEY,
+        checksum    CHAR(64) NOT NULL,
+        applied_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`);
+
     const files = (await readdir(migrationsDir()))
       .filter((f) => f.endsWith('.sql'))
       // Zero-padded NNN_ prefix, so lexical order IS numeric order.

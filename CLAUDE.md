@@ -88,6 +88,7 @@ Rationale for each is in [docs/adr-log.md](docs/adr-log.md). Don't re-litigate t
 │   │   │   │   │                  identity-resolution, tier2-fuzzy, scoring,
 │   │   │   │   │                  assignment, batch-decomposition, group-assembly
 │   │   │   │   ├── classification/ exception rules, precedence, severity
+│   │   │   │   ├── audit/         canonical JSON + the hash chain (ADR-042)
 │   │   │   │   ├── explain/       LLM client, signature hashing, cache, templates
 │   │   │   │   ├── agent/         Phase A: tool registry, investigation loop,
 │   │   │   │   │                  grounding gate, Q&A loop  ← READ-ONLY TOOLS ONLY
