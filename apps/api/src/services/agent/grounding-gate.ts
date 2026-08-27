@@ -40,6 +40,11 @@ const ALIAS_TYPES: readonly AliasType[] =
 
 /** Everything the gate needs about the world, so the gate itself stays pure. */
 export interface GateContext {
+  /**
+   * The investigation being validated. Every `toolCalls` entry must carry this id
+   * — checked, not assumed (issue #21).
+   */
+  investigationId: string;
   /** Every tool call THIS investigation made. The grounding allow-list. */
   toolCalls: readonly ToolCallRecord[];
   /** Records in this run, by id, with the facts the constraint checks need. */
@@ -66,6 +71,8 @@ export interface GateResult {
  * downgraded `INSUFFICIENT_EVIDENCE` carrying why.
  */
 export function validateVerdict(raw: unknown, context: GateContext): GateResult {
+  assertContextIsScoped(context);
+
   const schema = checkSchema(raw);
   if (schema !== null) return reject(raw, 'schema', schema);
 
@@ -90,6 +97,39 @@ export function validateVerdict(raw: unknown, context: GateContext): GateResult 
     },
     rejection: null,
   };
+}
+
+// ─── 0. Precondition: the evidence base is this investigation's ──────────────
+
+/**
+ * THROWS rather than rejecting, and the distinction is the point (issue #21).
+ *
+ * `raw` is untrusted model output, so a defect in it is a verdict to reject.
+ * `context` is trusted SYSTEM input assembled by the investigation loop, so a
+ * defect in it is a programming error — and downgrading it to
+ * INSUFFICIENT_EVIDENCE would blame the model for the caller's bug and inflate the
+ * grounding-failure count that `agent-design.md` §7 reads as a signal that the
+ * prompt or the tools need work. A metric that counts our own bugs as the model's
+ * hallucinations is worse than no metric.
+ *
+ * Why the check exists at all: grounding is per-investigation, and before this the
+ * gate had no way to verify the array it was handed. The obvious loop
+ * implementation — accumulate `ToolCallRecord`s on the run-level phase and pass
+ * them down — silently widens the allow-list to every investigation in the run.
+ * One investigation's results then ground another's conclusions, which is exactly
+ * the laundering the per-investigation rule exists to prevent. Nothing would have
+ * failed; the grounding-failure count would have gone DOWN.
+ */
+function assertContextIsScoped(context: GateContext): void {
+  for (const [i, call] of context.toolCalls.entries()) {
+    if (call.investigationId !== context.investigationId) {
+      throw new Error(
+        `grounding gate: toolCalls[${i}] belongs to investigation ${call.investigationId}, ` +
+        `not ${context.investigationId}. Grounding is per-investigation — an id retrieved by a ` +
+        `different investigation is not evidence here. Pass only this investigation's tool calls.`,
+      );
+    }
+  }
 }
 
 // ─── 1. Schema ───────────────────────────────────────────────────────────────
