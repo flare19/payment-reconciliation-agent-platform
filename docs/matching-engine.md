@@ -1,7 +1,7 @@
 # Matching Engine
 
 Payment Reconciliation Engine · Razorpay AI Buildathon Track 4
-Status: **Day 4 design review — locked.** Authored because `schema.md` defined the *shapes* and *tolerances* of matching but never the *algorithm*.
+Status: **Day 3 design review — locked.** Authored because `schema.md` defined the *shapes* and *tolerances* of matching but never the *algorithm*.
 Companion docs: [schema.md](./schema.md) · [adr-log.md](./adr-log.md) (ADR-028…ADR-039) · [validation-strategy.md](./validation-strategy.md)
 
 `schema.md` owns tables, tolerances and the exception taxonomy. **This doc owns execution**: what runs in what order, how candidates are generated, how a winner is chosen, how pairs become groups, and what guarantees the whole thing is reproducible.
@@ -164,7 +164,7 @@ Which amount is compared to which is a modelling decision, and getting it wrong 
 
 **The gateway↔ledger correction.** `schema.md` §2.3 defines `ledger.net_amount = gross − discount + tax` and separately asserts `ledger.gross_amount` "should equal gateway `amount`". Both cannot hold: whenever `discount` or `tax_amount` is non-zero, gateway amount equals ledger **net**, not ledger gross — the customer pays the discounted price plus sale GST. Comparing gross would make every discounted or taxed sale an `AMOUNT_MISMATCH`, flooding the exception list with arithmetic artifacts and destroying the honesty of the category that matters most. The generator is correspondingly constrained: for a clean event, `ledger.net_amount == gateway.amount` exactly; `AMOUNT_TRUE_MISMATCH` is what deliberately breaks it.
 
-**The bank↔ledger correction.** §5.2 defines a `[-2,+4]` bank→ledger window, implying such pairs get formed. They may — but only on a shared anchor (an `invoice_no` or a `settlement_id` appearing in both), never on amount+date, and always at Tier 2 with the amount component scored **0 and marked unavailable** rather than scored against an incomparable quantity. Where no gateway record exists to bridge them, the honest outcome is usually two separate presence exceptions, not a speculative pair.
+**The bank↔ledger correction.** §5.2 defines a `[-2,+4]` bank→ledger window, implying such pairs get formed. They may — but only on a shared anchor (an `invoice_no` or a `settlement_id` appearing in both), never on amount+date, and always at Tier 2 with the amount component scored **0 and marked unavailable** rather than scored against an incomparable quantity, and **not renormalized** (ADR-064). That caps a bank↔ledger pair's score at anchor + date + counterparty — `0.65` at strong↔weak (exactly the review floor) or `0.55` at weak↔weak (never a candidate at all) — so anchor-only bank↔ledger pairs are reachable only at strong↔weak anchor strength with perfect date and counterparty corroboration. Where no gateway record exists to bridge them, the honest outcome is usually two separate presence exceptions, not a speculative pair.
 
 ### 4.4 Rule IDs
 
@@ -252,7 +252,7 @@ Revised weights:
 | Component | Weight | Earned |
 |---|---|---|
 | **Anchor** | **0.30** | strong↔weak agreement: `0.30`. weak↔weak agreement: `0.20`. Near-anchor (§7.2): `0.24`. No comparable anchor: `0.00`. **Contradiction: candidate discarded** (not scored 0). |
-| **Amount** | **0.35** | `0.35 × (1 − |delta| / band)`, floored at 0. Exact-to-the-paisa earns full. Marked *unavailable* and renormalized out for bank↔ledger (§4.3). |
+| **Amount** | **0.35** | `0.35 × (1 − |delta| / band)`, floored at 0. Exact-to-the-paisa earns full. **Scored 0 and marked *unavailable*, not renormalized**, for bank↔ledger (§4.3, ADR-064). |
 | **Date** | **0.20** | `0.20 × (1 − days_off / window_span)`, floored at 0. Same business day earns full. |
 | **Counterparty** | **0.15** | `0.15 × trigram_similarity(key_a, key_b)`, using post-alias `counterparty_key` where available. |
 
@@ -323,7 +323,9 @@ A bank `SETTLEMENT` credit may be the net of many gateway payments minus fees, w
 
 1. Build the candidate pool: unmatched gateway records, `direction = credit`, business date within `[C.date − 4, C.date]`, same `counterparty_key` where both have one. Sort canonically; **cap the pool at 24 records** (the 24 nearest by date, then by amount descending).
 2. For each candidate, compute its expected net contribution using the §4.3 fee rule — the inferred fee band where gateway net is NULL, giving each candidate a `[min, max]` interval rather than a point.
-3. Search for a subset whose summed interval contains `C.credit_amount ± tolerance`. Meet-in-the-middle over subset sums, **subset size capped at 8**, with a **250 ms wall budget** per batch.
+3. Search for a subset whose summed interval overlaps `C.credit_amount ± tolerance`. **Depth-first with prefix pruning** over candidates sorted by descending contribution, **subset size capped at 8**, bounded by a **deterministic node budget** (default 1,300,000 visited nodes — sized to provably dominate the declared space's combinatorial ceiling of `Sum(C(24,k), k=0..8) = 1,271,626`) — see ADR-060, amended by ADR-063. A 2 s wall budget is retained as a safety valve only and should never fire; if it does, it reports itself as a distinct bound.
+
+   > **Why a node budget and not a time budget (ADR-060).** A wall-clock bound makes the same dataset report `searchExhausted` on a fast machine and `searchBoundExceeded` on a slow one — two *different claims about the data*, decided by hardware. That is ADR-039's date problem reappearing in another stage. A node budget is a pure function of the inputs, so exhaustiveness is a property of the dataset.
 4. Outcomes:
 
 | Result | Outcome |
@@ -331,9 +333,9 @@ A bank `SETTLEMENT` credit may be the net of many gateway payments minus fees, w
 | Exactly one subset found | `many_to_one` match, `tier = fuzzy`, `rule_id = BATCH_DECOMPOSED_V1`, confidence `0.80`, status `pending_review`. A batch decomposition is a strong inference, not a certainty — it always asks a human. |
 | Two or more distinct subsets found | `AMBIGUOUS_MATCH` on the bank record, with each subset recorded in `evidence.candidateSubsets`. Arithmetic cannot choose between them. |
 | No subset found within bounds | `UNSPLITTABLE_BATCH`, `evidence.searchExhausted: true` — the engine searched the whole bounded space and there is genuinely no answer. |
-| Bounds exceeded (pool cap, size cap or time budget hit) | `UNSPLITTABLE_BATCH`, `evidence.searchBoundExceeded: true` with the bound that bound. |
+| **Truncated** — the pool cap discarded eligible candidates, or the node budget / time valve cut the search short | `UNSPLITTABLE_BATCH`, `evidence.searchBoundExceeded: { bound: 'pool' \| 'nodes' \| 'time'; value: number }` naming which bound stopped it. The subset-size cap is **not** a truncation: it is part of the declared question, is named in the reason string, and is reported as a qualifier (ADR-060). |
 
-**The last two rows are different claims and the exception list says which.** "I proved no combination works" and "I gave up after 250 ms" are both honest, and conflating them is not. `evidence` carries the pool size, the subsets examined and the bound that stopped the search, and the UI renders that distinction rather than flattening both to "unsplittable".
+**The last two rows are different claims and the exception list says which.** "I proved no combination works" and "I ran out of search budget" are both honest, and conflating them is not. `evidence` carries the pool size, the subsets examined and the bound that stopped the search, and the UI renders that distinction rather than flattening both to "unsplittable".
 
 ### 8.1 Split settlements — the mirror case (ADR-036 companion)
 

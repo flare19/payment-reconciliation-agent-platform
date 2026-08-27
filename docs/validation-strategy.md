@@ -1,7 +1,7 @@
 # Validation & Ground-Truth Strategy
 
 Payment Reconciliation Engine · Razorpay AI Buildathon Track 4
-Status: **Locked.** Describes the approach. No code here by design. Revised by the Day 4 design review (ADR-041, ADR-045).
+Status: **Locked.** Describes the approach. No code here by design. Revised by the Day 3 design review (ADR-041, ADR-045).
 Companion docs: [schema.md](./schema.md) · [matching-engine.md](./matching-engine.md) · [adr-log.md](./adr-log.md) (ADR-021, ADR-027, ADR-041, ADR-045)
 
 ---
@@ -145,7 +145,7 @@ Weights for a ~300-event dataset. These are the shipped defaults; the generator 
 | **Unresolvable family (§4)** | **7%** | **~21** | `EXCEPTION`, `UNRESOLVABLE` |
 | Total | 100% | ~300 | |
 
-`CLEAN_3WAY` drops from 40 % to 36 % and `TIMING_LAG_NORMAL` from 12 % to 10 % to make room for two scenarios added by the Day 4 review:
+`CLEAN_3WAY` drops from 40 % to 36 % and `TIMING_LAG_NORMAL` from 12 % to 10 % to make room for two scenarios added by the Day 3 review:
 
 - **`SPLIT_SETTLEMENT`** — one gateway payment settled across 2–4 bank credits. `matches.cardinality` already had `one_to_many` and nothing exercised it. It is the mirror of the net-batch case, it is *resolvable*, and a dataset that contains only the unresolvable half of that pair would make the engine look worse than it is.
 - **`REFUND_REVERSAL`** — a `refunded` gateway row with a matching bank **debit**. This exercises the direction gate (ADR-035). Without it, `direction` is never tested by the data, and the guard that prevents a capture matching a chargeback would ship unverified. A defence nothing in the dataset tests is a defence you do not know you have.
@@ -249,7 +249,7 @@ This catches an entire class of failure that match rate cannot see: an engine th
 
 `secondaryFlags` are scored as set overlap (Jaccard) and reported separately, not folded into the primary category score.
 
-**Two confusion-matrix cells to watch specifically**, both of which the Day 4 review showed were previously unreachable and are now the load-bearing output of stage S8 (ADR-029):
+**Two confusion-matrix cells to watch specifically**, both of which the Day 3 review showed were previously unreachable and are now the load-bearing output of stage S8 (ADR-029):
 
 - `AMOUNT_MISMATCH` predicted as a `pending_review` match — the old failure mode, where identity was established but the pair was scored instead of decided.
 - `TIMING_DRIFT` predicted as `auto_confirmed` — the worse old failure mode, where a nine-day-late settlement scored exactly 0.85 and auto-matched silently.
@@ -262,7 +262,7 @@ Two numbers that speak directly to the "honest exception list" bar:
 
 - **Unresolvable recall** — of the ~21 designed-unresolvable events, how many did the engine correctly leave unmatched? A number below 100% means the engine **invented** a match that cannot exist. That is the single most damning failure available in this project and it should be treated as a build-blocker, not a metric.
 - **False-despair rate** — of the events the engine gave up on, how many were actually `RESOLVABLE`? This is the honest measure of the engine's headroom, and the right place to look for the next day's work.
-- **Bound-honesty check** — of the `UNSPLITTABLE_BATCH` exceptions, how many claim `searchExhausted` versus `searchBoundExceeded` (ADR-038)? A run where every batch reports `searchBoundExceeded` has not proved anything about the data; it has proved its own bounds are too tight. The scorer reports the split, and the accuracy report prints it, because "I proved no combination works" and "I gave up after 250 ms" are different claims and only one of them is a finding.
+- **Bound-honesty check** — of the `UNSPLITTABLE_BATCH` exceptions, how many claim `searchExhausted` versus `searchBoundExceeded` (ADR-038)? A run where every batch reports `searchBoundExceeded` has not proved anything about the data; it has proved its own bounds are too tight. The scorer reports the split, and the accuracy report prints it, because "I proved no combination works" and "I ran out of search budget" are different claims and only one of them is a finding.
 
 ### 5.4 Accuracy by difficulty
 
@@ -407,7 +407,7 @@ Every number there is measured against a key that existed before the engine ran.
 ## 9. Flagged / out of scope
 
 - **Hand-labelling real anonymized payment data** — would be stronger evidence, but ARCHITECTURE §5 puts live Razorpay APIs out of scope and the track asks for synthetic data. Not doing it.
-- **Cross-validation across many seeds** — statistically nicer, and genuinely tempting. **Flagged as scope creep**: two seeds answer the overfitting objection; ten answer a question nobody asked. If time exists on Day 11, running 3–5 extra seeds for a variance band is the cheapest credibility upgrade available — as a *reporting* addition only, with no tuning against them.
+- **Cross-validation across many seeds** — statistically nicer, and genuinely tempting. **Flagged as scope creep**: two seeds answer the overfitting objection; ten answer a question nobody asked. If time exists on Day 12, running 3–5 extra seeds for a variance band is the cheapest credibility upgrade available — as a *reporting* addition only, with no tuning against them.
 - **Accuracy scoring at benchmark scale** — the 10k/100k runs report timing only (§5.6). Scoring them would add runtime without adding a claim: the accuracy question is answered by the holdout run, and the throughput question is what the larger sizes exist to answer. Deliberate, not an omission.
 - **Adversarial/property-based test data** — a different discipline from reconciliation accuracy. Out.
 - **Scoring the LLM explanations for quality** — would need human judgement or an LLM-as-judge harness. **Flagged as scope creep.** The explanations are narration of deterministic decisions (ADR-017); their accuracy is bounded by the decisions they narrate, which are already scored.

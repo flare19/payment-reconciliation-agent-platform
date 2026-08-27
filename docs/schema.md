@@ -1,7 +1,7 @@
 # Data & Schema Design
 
 Payment Reconciliation Engine · Razorpay AI Buildathon Track 4
-Status: **Locked.** Day 2 architecture, revised by the Day 4 design review (ADR-028…ADR-047). Changes require a new ADR.
+Status: **Locked.** Day 2 architecture, revised by the Day 3 design review (ADR-028…ADR-047). Changes require a new ADR.
 Companion docs: [api-contract.md](./api-contract.md) · [matching-engine.md](./matching-engine.md) · [agent-design.md](./agent-design.md) · [adr-log.md](./adr-log.md) · [validation-strategy.md](./validation-strategy.md)
 
 **Division of ownership:** this doc owns *shapes* — tables, columns, tolerances, taxonomy, prompt. [matching-engine.md](./matching-engine.md) owns *execution* — stage order, candidate generation, assignment, determinism. If you are asking "what does the data look like", you are in the right file; if you are asking "what runs when", you are not.
@@ -341,7 +341,7 @@ Which amount is compared to which is a modelling decision, and getting it wrong 
 |---|---|---|
 | gateway ↔ bank | `gateway.net_amount_paise` vs `bank.credit_amount` (or the inferred fee band above) | The bank credits net of gateway fees. |
 | gateway ↔ ledger | `gateway.amount_paise` vs **`ledger.net_amount_paise`** | Both are *what the customer was charged*. |
-| bank ↔ ledger | **Anchor only — amounts are not a matching basis.** The amount component is marked unavailable, not scored 0. | Bank is net of gateway fees; ledger is a sale amount including sale GST. No arithmetic relates them without the gateway row in between. |
+| bank ↔ ledger | **Anchor only — amounts are not a matching basis.** The amount component is scored 0 and flagged `amountUnavailable` — not renormalized out of the weighted sum (ADR-064). | Bank is net of gateway fees; ledger is a sale amount including sale GST. No arithmetic relates them without the gateway row in between. |
 
 **The gateway↔ledger correction.** §2.3 previously asserted that ledger `gross_amount` "should equal gateway `amount`" while also defining `net = gross − discount + tax`. Both cannot hold: whenever discount or sale GST is non-zero, the customer pays the *net*. Comparing gross would turn every discounted or taxed sale into an `AMOUNT_MISMATCH`, flooding the exception list with arithmetic artifacts and destroying the credibility of the category that most needs it. The generator is constrained accordingly — for a clean event `ledger.net_amount == gateway.amount` exactly, and `AMOUNT_TRUE_MISMATCH` is what deliberately breaks it.
 
@@ -354,7 +354,7 @@ Tier 2 produces a score in `[0, 1]`:
 | Component | Max weight | How it's earned |
 |---|---|---|
 | Reference anchor | **0.30** | strong↔weak agreement: `0.30`. Near-anchor at edit distance 1 with corroboration (ADR-031): `0.24`. weak↔weak agreement: `0.20`. No comparable anchor: `0.00`. Anchors present on both sides but *unequal*: **candidate discarded outright** — a contradicted anchor is disqualifying, not merely unhelpful. |
-| Amount | **0.35** | `0.35 × (1 − |delta| / tolerance_band)`, floored at 0. Exact-to-the-paisa earns full. Marked *unavailable* (not 0) for bank↔ledger per §5.3.1. |
+| Amount | **0.35** | `0.35 × (1 − |delta| / tolerance_band)`, floored at 0. Exact-to-the-paisa earns full. **Scored 0 and flagged `amountUnavailable`** (not renormalized) for bank↔ledger per §5.3.1 — this caps a bank↔ledger pair at anchor + date + counterparty: `0.65` at strong↔weak anchor strength (exactly the review floor — needs a perfect same-day match and trigram similarity of `1.0`), or `0.55` at weak↔weak (never reaches the review floor at all). See ADR-064. |
 | Date | **0.20** | `0.20 × (1 − days_off / window_span)`, floored at 0. Same business day earns full. |
 | Counterparty | **0.15** | `0.15 × trigram_similarity(counterparty_key_a, counterparty_key_b)`. Uses `counterparty_key` (post-alias) when available, else `counterparty_norm`. |
 
@@ -444,7 +444,7 @@ Tier 2   FUZZY          scored candidate search over blocked candidates (§5.4)
 Tier 3   EXCEPTION      classified (§8)
 ```
 
-> **Two corrections from the Day 4 review are embedded above.** Tier 1's date test uses the per-pair window from §5.2, not a fixed `[-1,+1]` (ADR-028) — the old text would have failed every T+2 card settlement, the most common case in the dataset. And S8 exists because without it `AMOUNT_MISMATCH` and `TIMING_DRIFT` were structurally unreachable (ADR-029). Full reasoning in [matching-engine.md](./matching-engine.md) §4.2 and §6.
+> **Two corrections from the Day 3 review are embedded above.** Tier 1's date test uses the per-pair window from §5.2, not a fixed `[-1,+1]` (ADR-028) — the old text would have failed every T+2 card settlement, the most common case in the dataset. And S8 exists because without it `AMOUNT_MISMATCH` and `TIMING_DRIFT` were structurally unreachable (ADR-029). Full reasoning in [matching-engine.md](./matching-engine.md) §4.2 and §6.
 
 **Justification for placing it at 1.5 rather than inside Tier 2 or before Tier 1:**
 
@@ -659,10 +659,10 @@ Every record is evaluated against the eight rules **in the order below**. The fi
 1. DUPLICATE_RECORD
 2. AMBIGUOUS_MATCH
 3. UNSPLITTABLE_BATCH
-4. MISSING_IN_GATEWAY  ┐
-5. MISSING_IN_BANK     ├─ the "presence" class (mutually exclusive in practice)
-6. MISSING_IN_LEDGER   ┘
-7. AMOUNT_MISMATCH
+4. AMOUNT_MISMATCH        ← above presence since ADR-062; see below
+5. MISSING_IN_GATEWAY  ┐
+6. MISSING_IN_BANK     ├─ the "presence" class (mutually exclusive per leg)
+7. MISSING_IN_LEDGER   ┘
 8. TIMING_DRIFT
 ```
 
@@ -671,7 +671,9 @@ Every record is evaluated against the eight rules **in the order below**. The fi
 - **Duplicates first, unconditionally.** A duplicate changes the *cardinality* of the problem. If one gateway event appears twice and the bank shows one credit, evaluating presence first yields a spurious `MISSING_IN_BANK` for the second copy — the engine would report a missing bank record that never should have existed. Deduplication must logically precede every other question.
 - **Ambiguity before presence.** "We found two candidates and won't choose" and "we found none" are opposite failures. Ambiguity must claim the record first or the exception list understates what the engine actually saw.
 - **Unsplittable batch before presence,** for the same reason: its member payments would each otherwise be reported as `MISSING_IN_BANK`, turning one honest exception into five misleading ones. Claiming them as a batch-level exception keeps the count truthful.
-- **Presence before value.** You cannot have an amount disagreement with a record that isn't there. The discriminator is `anchor_strength` + candidate existence: **if no candidate shares an identity anchor, it is a presence problem; if a candidate's anchor agrees but its value doesn't, it is a value problem.** This is the rule that resolves the single most common overlap (`MISSING_IN_BANK` vs `AMOUNT_MISMATCH`) and it is stated here so it isn't re-litigated in code.
+- **Presence and value are mutually exclusive *within a leg*, and that is enforced, not ordered.** You cannot have an amount disagreement with a record that isn't there. The discriminator is `anchor_strength` + candidate existence: **if no candidate shares an identity anchor, it is a presence problem; if a candidate's anchor agrees but its value doesn't, it is a value problem.** `classify.ts` applies this directly — an established identity suppresses the presence signal for that leg — so the two can never compete over the same counterpart.
+
+- **Across legs, value outranks presence (ADR-062).** A record has up to two legs, and the precedence order is applied per *record*. A gateway payment can have a proved ₹412 discrepancy against the bank **and** no ledger entry at all: both true, about different counterparts, and the original order made the bookkeeping gap the headline. Because severity is computed from the primary category (ADR-044), that filed a proven money discrepancy as `medium` instead of `high` — the exact downgrade the next bullet warns about. `AMOUNT_MISMATCH` therefore sits above the presence class.
 - **Amount before timing.** A record can be both off-amount and off-date. Money discrepancy has financial consequence; date drift is usually a process artifact. `AMOUNT_MISMATCH` primary, `TIMING_DRIFT` in `secondary_flags`. Reversing this would let a real money problem be reported as a low-severity scheduling quirk.
 - **Timing drift last** because it is the weakest deviation — identity and amount both agree, only the calendar disagrees. It is the category most likely to be a false alarm and is severity `low` for that reason.
 
@@ -733,7 +735,13 @@ CREATE INDEX ix_audit_subj ON audit_log (subject_type, subject_id, sequence_no);
 -- Immutability is enforced, not assumed.
 CREATE OR REPLACE FUNCTION audit_log_immutable() RETURNS trigger AS $$
 BEGIN
-  RAISE EXCEPTION 'audit_log is append-only (attempted % on id %)', TG_OP, OLD.id;
+  -- OLD.sequence_no, not OLD.id: the two id columns were consolidated into one
+  -- (see the comment on the table above). Referencing OLD.id here raises
+  -- "record OLD has no field id" at trigger time rather than at migration time,
+  -- so the trigger would appear to install correctly and then fail on first use.
+  RAISE EXCEPTION 'audit_log is append-only (attempted % on sequence_no %)',
+    TG_OP, OLD.sequence_no
+    USING ERRCODE = 'restrict_violation';
 END; $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trg_audit_log_immutable
@@ -1072,7 +1080,7 @@ Not decided here, deliberately:
 - **Reviewer identity** — `created_by` / `reviewed_by` are free-text labels because auth is out of scope (ARCHITECTURE §5). Known limitation, not being fixed.
 - **Multi-currency** — column exists, logic doesn't. Would need FX rate sourcing. **Flagged as scope creep; not doing it.**
 - ~~**Alias suggestion by the LLM**~~ — **now in scope, under four stated conditions** (ADR-055). The original flag was correct for a v1 where the LLM sat inside the pipeline with no independent measurement of its output. The Analyst proposes aliases downstream of a finalized run, cannot modify engine output, requires human confirmation through an existing endpoint, and is scored against ground truth with hallucination as a build blocker. Those conditions did not exist on Day 2. §10.1's boundary — the LLM makes no decision *inside the engine* — is unchanged. See [agent-design.md](./agent-design.md).
-- **Alias export/import between environments** — useful for seeding the demo. Small, but not required. Decide on Day 9 if the demo needs it.
+- **Alias export/import between environments** — useful for seeding the demo. Small, but not required. Decide on Day 8 if the demo needs it.
 - **Optimal (Hungarian) assignment** instead of greedy score-ordered assignment — arithmetically better, materially harder to explain in an audit trail. **Decided against**, with reasoning, in ADR-032.
 - **Transitive group closure across sources** — resolved: groups assemble from pairs sharing a member, conflicts are refused rather than resolved, and group confidence is the *minimum* of its pairs. See [matching-engine.md](./matching-engine.md) §10.
-- **Cycle detection in aliases** — still unguarded, still harmless under one-hop resolution (§6.3). Unchanged by the Day 4 review.
+- **Cycle detection in aliases** — still unguarded, still harmless under one-hop resolution (§6.3). Unchanged by the Day 3 review.

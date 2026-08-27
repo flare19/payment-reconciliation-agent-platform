@@ -1,7 +1,7 @@
 # The Analyst — Agent Design
 
 Payment Reconciliation Engine · Razorpay AI Buildathon Track 4
-Status: **Day 4 (second pass) — locked.** Authored to close a gap against the track's problem statement, which asks for an *agent*.
+Status: **Day 3 (second pass) — locked.** Authored to close a gap against the track's problem statement, which asks for an *agent*.
 Companion docs: [ARCHITECTURE.md](../ARCHITECTURE.md) · [matching-engine.md](./matching-engine.md) · [adr-log.md](./adr-log.md) (ADR-048…ADR-057) · [validation-strategy.md](./validation-strategy.md)
 
 ---
@@ -164,7 +164,7 @@ Nine tools. **None of them writes.** The registry contains no mutating tool, so 
 
 The generic version of "self-correction" is a slogan. Here is the specific case the design targets, and it is a good one because the engine's honest dead-end is already documented.
 
-**The setup.** S10 attempts to decompose a bank `SETTLEMENT` credit into the gateway payments that net to it. Bounds: pool ≤ 24, subset ≤ 8, 250 ms. When a bound binds, the exception records `searchBoundExceeded: true` — deliberately distinct from `searchExhausted: true`, because *"I proved no combination works"* and *"I gave up after 250 ms"* are different claims (ADR-038).
+**The setup.** S10 attempts to decompose a bank `SETTLEMENT` credit into the gateway payments that net to it. Bounds: pool ≤ 24, subset ≤ 8, a 1,300,000-node deterministic budget, 2 s wall safety valve (ADR-060, amended by ADR-063). When a bound binds, the exception records `searchBoundExceeded: { bound, value }` — deliberately distinct from `searchExhausted: true`, because *"I proved no combination works"* and *"I ran out of search budget"* are different claims (ADR-038).
 
 `searchBoundExceeded` is, by design, an honest dead end. The engine cannot widen its own bounds — bounds that adapt per-record would make throughput unpredictable and the result harder to reproduce.
 
@@ -324,7 +324,7 @@ Deliberately small, because most of it already exists.
 
 | Piece | Notes |
 |---|---|
-| Tool registry (9 tools) | Thin wrappers over repository functions the engine needs anyway. Built Day 10 alongside the classifier. |
+| Tool registry (9 tools) | Thin wrappers over repository functions the engine needs anyway. Built Day 8 alongside the classifier, which needs the same repository queries. |
 | Investigation loop (A2) | One Anthropic tool-use loop. The SDK handles the turn cycle. |
 | Grounding gate (A3) | Pure functions. The highest-value tests in the suite (testing-strategy §1.6). |
 | Two tables | `agent_investigations`, `agent_questions`. Traces reuse `audit_log` (ADR-052). |

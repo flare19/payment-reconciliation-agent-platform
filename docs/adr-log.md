@@ -10,7 +10,7 @@ One file, short dated entries, newest section at the bottom. **Not** a folder of
 
 ---
 
-## 2026-08-23 — Pre-lock decisions
+## 2026-08-23 — Day 1: pre-lock decisions
 
 ### ADR-001 · Node.js / TypeScript over Go
 **Decision:** Single language, Node/TS, across backend and frontend.
@@ -44,7 +44,7 @@ One file, short dated entries, newest section at the bottom. **Not** a folder of
 
 ---
 
-## 2026-08-24 — Day 2 architecture decisions
+## 2026-08-24 — Day 2: architecture decisions
 
 ### ADR-006 · Money stored as integer paise
 **Decision:** `BIGINT` minor units everywhere. No floats, no `NUMERIC` arithmetic in application code.
@@ -146,7 +146,7 @@ One file, short dated entries, newest section at the bottom. **Not** a folder of
 **Decision:** `pg` driver, hand-written SQL, `migrations/NNN_name.sql`, hand-written row types in TypeScript.
 **Because:** The schema is small, fixed by Day 2 and unlikely to churn. The queries that matter (candidate search, audit trail, faceted exception counts) are the ones an ORM obscures and that get hand-written anyway. Avoiding an ORM removes a codegen step, a migration DSL and a class of "why did it emit that query" debugging from a 13-day clock.
 **Rejected:** Prisma (codegen + migration ceremony), Drizzle (lighter, but still a layer between the SQL in `schema.md` and the SQL that runs), TypeORM.
-**Revisit if:** hand-mapping row types becomes a real error source by Day 6.
+**Revisit if:** hand-mapping row types becomes a real error source by Day 5.
 
 ### ADR-023 · Express + TypeScript for the API
 **Decision:** Express 5 on Node 22, TypeScript throughout.
@@ -168,7 +168,7 @@ One file, short dated entries, newest section at the bottom. **Not** a folder of
 
 ### ADR-026 · Deploy: Vercel (frontend) + Railway (API + Postgres)
 **Decision:** See [deployment.md](./deployment.md). Two managed platforms, no containers authored by us.
-**Because:** Railway gives a Node service and a managed Postgres in one project with one internal `DATABASE_URL` and no networking to configure; Vercel gives the frontend a URL in one push. Together that's a public demo URL on Day 3 rather than Day 12, which ARCHITECTURE §7.4 explicitly calls out as a strong signal. Consistent with ADR-005.
+**Because:** Railway gives a Node service and a managed Postgres in one project with one internal `DATABASE_URL` and no networking to configure; Vercel gives the frontend a URL in one push. Together that's a public demo URL early rather than on the final day, which ARCHITECTURE §7.4 explicitly calls out as a strong signal. *(Day numbers in this entry predate the Day-4 count correction; see ARCHITECTURE §8 for the authoritative table.)* Consistent with ADR-005.
 **Rejected:** Render (equivalent; Railway chosen for the tighter DB+service pairing — noted as the fallback), Fly.io (more control, more config), any self-managed VPS.
 **Revisit if:** Railway's free-tier limits bite before Sept 5; fall back to Render with no architectural change.
 
@@ -180,7 +180,7 @@ One file, short dated entries, newest section at the bottom. **Not** a folder of
 
 ---
 
-## 2026-08-26 — Day 4 pre-build design review
+## 2026-08-26 — Day 3, first pass: pre-build design review
 
 Twenty entries from a principal-engineer review of the Day 2 architecture, conducted before any code was written. Three of them (ADR-028, ADR-029, ADR-030) correct flaws that would have made documented exception categories structurally unreachable. Nothing here reduces scope.
 
@@ -306,7 +306,7 @@ Twenty entries from a principal-engineer review of the Day 2 architecture, condu
 
 ---
 
-## 2026-08-26 (second pass) — The Analyst: an agentic layer downstream of the engine
+## 2026-08-26 — Day 3, second pass: The Analyst, an agentic layer downstream of the engine
 
 Ten entries adding an agent layer to close a gap against the track's problem statement, which asks for an *agent*. **Nothing in S0–S14, the scoring logic, the determinism guarantees or ADR-001…ADR-047 is modified**, with one explicit and stated exception: ADR-055 amends a single clause of ADR-017 under four conditions that did not exist when it was written.
 
@@ -372,10 +372,91 @@ Ten entries adding an agent layer to close a gap against the track's problem sta
 
 ---
 
+## 2026-08-26 — Day 3, third pass: scaffold and first code
+
+### ADR-058 · Three independent packages, no npm workspaces
+**Decision:** `apps/api`, `apps/web` and the repo root (which owns `tools/`) are independent packages with their own `package.json` and lockfile. No workspaces, no monorepo tooling, no shared internal package. Wire types are duplicated between `apps/api/src/types` and `apps/web/types`.
+**Because:** The two apps deploy to different platforms with different root directories — Railway builds `apps/api` with `npm ci`, Vercel builds `apps/web` — and `npm ci` inside a workspace subdirectory without the root lockfile does not work. Workspaces would buy one `npm install` locally and cost a build-time workaround on both platforms. The thing being shared is a handful of interfaces already specified in a binding contract doc (`api-contract.md`); duplicating them costs less than a shared package that both apps must build before either can start. Consistent with ADR-023's stated preference for the least interesting option available.
+**Rejected:** npm workspaces (breaks the platform build commands in deployment.md §5.1); a `packages/shared-types` package (adds a build step to both apps for ~10 interfaces); a build-time codegen step from the contract doc.
+**Revisit if:** a third app appears, or duplicated types drift in a way that causes a real bug — neither is likely inside 13 days.
+
+### ADR-059 · `pg` type parsers are overridden for BIGINT, NUMERIC and DATE at pool construction
+**Decision:** `src/db/pool.ts` registers parsers for int8 (→ `Number`, with a safe-integer assertion that throws), numeric (→ `Number`) and date (→ left as a `YYYY-MM-DD` string).
+**Because:** All three defaults are actively wrong for this schema and all three fail *silently*. `pg` returns BIGINT as a string, so `row.amount_paise + row.fee_paise` concatenates rather than adds — on a money column, in a project whose thesis is measured accuracy, surfacing as a mysteriously wrong match rate rather than a crash. NUMERIC has the same problem for confidence scores. And the default DATE parser builds a `Date` at *local* midnight, which shifts the calendar day for anyone running outside UTC — every date comparison in the engine is a business-day operation on an IST date, so that is a one-day error that only reproduces on someone else's machine. The int8 assertion throws rather than widening, because ₹10 crore is 10^11 paise against a safe-integer ceiling of ~9×10^15: if it ever fires, the right response is a real decision about the type, not a bigger guard.
+**Rejected:** Casting at every call site (one omission is a silent bug); `::text` casts in SQL (moves the problem into every query); leaving DATE as a `Date` and normalizing later (the timezone error is already baked in by then).
+**Revisit if:** never.
+
+---
+
+## 2026-08-27 — Day 4
+
+### ADR-060 · Subset-sum search is bounded by a deterministic node budget, not by the wall clock; and searches depth-first rather than meet-in-the-middle
+**Decision:** S10's primary bound is a **node budget** (default 200,000 visited search nodes), not the 250 ms wall clock. The time budget is retained only as a last-resort safety valve, is expected never to fire, and reports itself distinctly (`bound: 'time'`) when it does. The search itself is depth-first with prefix pruning over candidates sorted by descending contribution, not meet-in-the-middle. Amends ADR-038's step 3 and its "250 ms budget" bound; every other part of ADR-038 — the two distinct failure claims, the pool and subset caps, `pending_review` on a found decomposition — stands unchanged.
+**Because:** Two separate problems with the original step.
+
+*The wall clock is a determinism hole.* ADR-032 rule 2 and `CLAUDE.md` §4.8 both forbid `Date.now()` in any decision path, and a time-bounded search is exactly that: the same dataset produces `searchExhausted` on a fast machine and `searchBoundExceeded` on a slow one. Those are **different claims about the data** — one says "no combination exists", the other says "I ran out of room" — so the exception's evidence, and potentially the match set, would depend on the hardware the run happened to land on. That is the precise failure ADR-039 was written to prevent for dates, reappearing in a different stage. A node budget is a pure function of the inputs, so exhaustiveness becomes a property of the dataset rather than of the machine.
+
+*Meet-in-the-middle is the wrong tool at this size.* It wins for large-n **exact** subset-sum. Here `n ≤ 24`, subset size `≤ 8`, each candidate contributes an **interval** rather than a point (the inferred fee band), and the stage must distinguish "exactly one solution" from "two or more". MITM under interval arithmetic, with a size constraint and full solution enumeration, is materially more code and materially harder to argue correct. This stage's entire purpose is making a defensible claim about whether the space was exhausted — simpler code that is *obviously* exhaustive is worth more here than faster code whose exhaustiveness needs an argument. Depth-first with prefix pruning makes "I visited the whole bounded space" a one-line check, and at these caps it completes far inside any plausible budget.
+*The subset-size cap is a declared limit, not a truncation.* ADR-038's table lumped the pool cap, the size cap and the budget together as `searchBoundExceeded`. Implementing it showed why that is wrong: the DFS reaches depth 8 on essentially any pool of eight or more, so `searchExhausted` would be almost unreachable — and an honesty flag that is almost never true tells a reader nothing. The two limits sit at different levels. The **size cap is part of the question**: announced up front, identical for every batch, and named in the reason string, so searching all of it is a complete answer to the question actually asked. The **pool cap and the budgets are a failure to answer it**: eligible candidates were discarded, or the search was cut short. So `exhaustive` is defeated only by truncation, and the size cap is reported as a qualifier alongside it.
+
+*The budget was sized by measurement.* A full 24-candidate pool with no solution and zero tolerance — the worst case the caps permit — visits ~405k nodes in ~6 ms. The 250 ms figure in ADR-038 was therefore about fifty times more generous than the node count first chosen to represent it. The budget is 1,000,000 nodes (~25 ms locally, still inside the safety valve on a machine eighty times slower), and the wall valve moves to 2 s because the node cap already guarantees termination — the valve now exists only for a pathological case where individual nodes are expensive, and if it ever fires that is a bug report rather than a tuning opportunity.
+**Rejected:** Wall-clock-only bounding (non-deterministic); dropping the time budget entirely (no protection if a node ever becomes expensive); meet-in-the-middle (complexity unjustified at `n ≤ 24`, and harder to prove exhaustive); treating the subset-size cap as a truncation (makes the exhaustiveness claim almost unreachable, and so useless).
+**Revisit if:** the node budget binds on any batch in the holdout run — that would mean the pruning is ineffective, not that the budget is too small.
+
+### ADR-061 · Deploy is deferred until the project runs end-to-end locally, superseding the Day-3 deploy-early rule
+**Decision:** No deployment until the engine, the API and the frontend run and are tested locally. `ARCHITECTURE.md` §7.4's "deploy early" instruction and ADR-026's Day-3 target no longer hold. The deploy moves to **Day 11 for the API** — once the backend is locally complete and has produced a scored run — and **Day 12 for the web app**, alongside the frontend. It is not left to Day 13.
+**Because:** Deploying a half-built project means **being correct in two places at once instead of one.** A cloud deploy is not a copy of the local build: it adds a CI/CD path, a platform build environment, injected environment variables and a managed database, and every one of those has to stay correct through the changes still coming. Dependencies will change, large refactors are likely, and the migration set is still growing — so an early deploy does not lock in a working system, it creates a second system that must be re-verified after every one of those changes. The cost is paid repeatedly and the benefit accrues once.
+
+This is a genuine reversal, not a reinterpretation. ARCHITECTURE §7.4 and ADR-026 argued the opposite — that a live URL early is a strong panel signal and removes the most common last-week failure mode — and that argument is not wrong, it is outweighed. **The residual risk is real and stays on the books:** a first deploy that goes badly on Day 11 has two days of slack rather than a week. Three things keep that survivable, and they are the reason the trade is acceptable: the deploy surface is deliberately tiny (two managed platforms, no containers authored by us, no orchestration — ADR-005, ADR-026); `deployment.md` §5.1 already documents the exact one-time setup, so it is execution rather than design; and the fallback to Render is pre-decided at a 45-minute budget. What is NOT acceptable is letting this slide to Day 13 — the deploy slot is a scheduled task with a date, not a thing that happens when there is time.
+**Rejected:** Deploying on Day 4 as originally planned (two places to keep correct while the codebase is still moving); deploying only on Day 13 (concentrates platform risk on submission day); a staging environment (a third place to be correct, for a demo).
+**Revisit if:** the Day 11 API deploy exposes a platform problem that is not fixed inside its slot — at which point the schedule, not the decision, is what needs attention.
+
+### ADR-062 · `AMOUNT_MISMATCH` moves above the presence class in the precedence order
+**Decision:** The order becomes `DUPLICATE_RECORD → AMBIGUOUS_MATCH → UNSPLITTABLE_BATCH → AMOUNT_MISMATCH → MISSING_IN_GATEWAY → MISSING_IN_BANK → MISSING_IN_LEDGER → TIMING_DRIFT`. `TIMING_DRIFT` stays last. Amends the order in `schema.md` §8.2; the "presence before value" *rationale* is narrowed rather than deleted.
+**Because:** §8.2 justified putting presence above value with *"you cannot have an amount disagreement with a record that isn't there."* That reasoning is sound, and it is **about a single leg**. The precedence order, however, is applied **per record** — and a record has up to two legs. A gateway payment can simultaneously have a proved ₹412 discrepancy against the bank *and* no ledger entry at all. Both statements are true, about different counterparts, and the original ordering made the bookkeeping gap the headline.
+
+That is the same failure §8.2 already warns about one line further down — *"reversing this would let a real money problem be reported as a low-severity scheduling quirk"* — because **severity is computed from the primary category** (ADR-044). Filing that record as `MISSING_IN_LEDGER` yields `medium`; filing it as `AMOUNT_MISMATCH` yields `high`. The old order silently downgraded a proven money discrepancy, which is precisely the finding a finance controller most needs at the top of the screen.
+
+The reorder is safe because presence and value **cannot compete within one leg**: `classify.ts` enforces the discriminator directly — an established identity means the question is value, so no presence signal is raised for that leg. Any record where both appear therefore has them on *different* legs, where the original justification does not apply and only consequence remains. `TIMING_DRIFT` stays below presence deliberately: a late settlement is a process artifact, while a wholly absent record is not.
+**Rejected:** Keeping the order and accepting the downgrade (contradicts ADR-044's whole purpose); making precedence per-leg rather than per-record (a record needs one headline category — the schema has one `category` column and the UI has one row per record); special-casing severity to look past the primary category (would make the severity of a row unexplainable from its own category).
+**Revisit if:** never — this is a correction, not a preference.
+
+### ADR-063 · S10's node budget is sized to provably dominate the declared search space, not a measured hard case
+**Decision:** `batchNodeBudget` is **1,300,000** visited nodes, not the 1,000,000 ADR-060 set. The declared space for one batch decomposition is subsets of size `0..batchMaxSubsetSize` (8) drawn from a pool of up to `batchPoolCap` (24) candidates, whose combinatorial ceiling is `Sum(C(24,k), k=0..8) = 1,271,626`. 1,300,000 is stated as a **proof** that the budget dominates every input the caps permit, not as a measurement of one hard fixture. Amends ADR-060's node-budget figure and its "Revisit if" trigger; every other part of ADR-060 — the node budget over the wall clock, depth-first over meet-in-the-middle, the declared/truncating distinction — stands unchanged.
+**Because:** Audit finding F2 (Day 4 self-audit, 2026-08-27) reproduced a real input inside the declared caps — 24 point contributions of ₹10,000 each, an unreachable target, zero tolerance — that visited over 1,000,000 nodes and hit the budget, reporting `searchBoundExceeded` on a case the engine should have been able to prove unsplittable. ADR-060's 1,000,000 figure was chosen by measuring one hard-looking fixture (~405k nodes), the same mistake ADR-060 itself corrected in ADR-038's 200,000: a number meant to bound a *declared* space should be derived from that space's own ceiling, not from a case that happened to get measured. The true ceiling was computable from the caps that were already locked (`batchPoolCap`, `batchMaxSubsetSize`), so there is no reason to keep guessing at it.
+
+The engine's *behaviour* was honest throughout — a bound miss reports `searchBoundExceeded`, which is the correct claim, never a silent wrong answer. Only the budget, and the documentation asserting it was already the worst case, were wrong. Measured cost of the true worst case (~1.08M nodes) is well under 50 ms locally, so raising the budget to dominate the full ceiling is free.
+**Rejected:** Keeping 1,000,000 and rewriting the docs to state the real ceiling instead of raising the budget (weaker claim — "we measured a hard case" instead of "the budget provably dominates the declared space" — for no cost saving); sizing the budget to the exact ceiling of 1,271,626 with no headroom (leaves no margin for a future cap change to `batchPoolCap` or `batchMaxSubsetSize` being missed in this file).
+**Revisit if:** `batchPoolCap` or `batchMaxSubsetSize` changes — the ceiling must be recomputed and the budget re-raised to dominate it, not left at 1,300,000 on the assumption it still covers a different declared space.
+
+### ADR-064 · bank↔ledger's unavailable amount component is scored 0, not renormalized — and that caps the pair at the review floor
+**Decision:** For a bank↔ledger candidate pair, the amount component of the Tier 2 score is **0**, flagged `amountUnavailable: true`, and **not renormalized** across the remaining components. This is the scorer's existing behaviour (`scoring.ts`); the decision is to make the documentation agree with the code rather than the reverse. Amends `schema.md` §5.3.1 and §5.4, and `matching-engine.md` §4.3 and §7.1, which stated three different and mutually contradictory readings (`unavailable, not 0`; `unavailable and renormalized`) against the code's actual `0, not renormalized`.
+**Because:** Audit finding F7 (Day 4 self-audit, 2026-08-27) found three of four doc passages asserting a reading the code does not implement, and the fourth (`matching-engine.md` §4.3) already agreeing with the code but not stating the consequence. Renormalizing would raise a bank↔ledger pair's reachable ceiling — `strong_weak: (0.30+0.20+0.15)/0.65 = 0.846` — making ADR-037's "bank↔ledger pairs may form on a shared anchor" comfortably reachable and close to auto-confirm. Not renormalizing caps the same pair at `0.65` exactly (the review floor, reachable only with a perfect same-day match and a trigram similarity of `1.0`) and caps weak↔weak at `0.55` (never a candidate at all). That is a real behavioural difference the docs must state honestly, not paper over by picking whichever reading sounds better.
+
+This ADR takes the **conservative option** deliberately: it records the code's current arithmetic as the decision rather than changing the arithmetic to match the more generous of the four passages. Rewiring a scoring weight unattended, before the project has produced its first measured accuracy run, is exactly the kind of change ARCHITECTURE.md §7 asks to be flagged rather than decided alone — renormalization remains available as a follow-up, informed by whatever the holdout run actually shows about bank↔ledger reachability, not decided blind now.
+**Rejected:** Renormalizing to match three of the four passages (a real scoring change, made unattended and pre-measurement — the article's own "if you conclude the code must change, log it as a failed issue instead" steer applies); picking a reading anywhere in between (invents a fifth position no doc or code currently holds).
+**Revisit if:** the holdout run shows bank↔ledger `MISSING_IN_*` exceptions where a genuine anchor-matched ledger counterpart exists but never reached the review band — that would be the measured case for reconsidering renormalization, not a guess made now.
+
+### ADR-065 · A bank record's missing-gateway check gets its own fallback window, not the borrowed gateway→bank window
+**Decision:** When a **bank** record has no gateway counterpart, `classify.ts`'s settlement-due check uses a new `dateWindowGatewayLookbackDays` constant, default `[-1, 1]`, measured from the bank record's own `txnDate`. This is a stated rule with its own window, not the `dateWindowCardDays` `[-1, 3]` window ADR-009 defines for the opposite direction (gateway → bank). A **ledger** record's missing-gateway check uses ADR-009's existing `gateway_ledger` window `[-1, 1]`, applied symmetrically — no new constant needed there, since ADR-009 already defines that pair's window without reference to direction.
+**Because:** Audit finding F5 (Day 4 self-audit, 2026-08-27) found `classify.ts`'s `settlementDue()` forcing `kind = 'gateway_bank'` for every non-gateway record, so a ledger record's check silently used the wrong ADR-009 window (`[-1,3]` instead of `[-1,1]`), and a bank record's check used a window ADR-009 does not define in that direction at all — measured from the bank date rather than the gateway date the window's own name and rationale describe, and named `T+3 settlement window` in the reason string, asserting an SLA that does not exist for that source pair.
+
+The ledger case is a straightforward bug: ADR-009 already has the right answer (`gateway_ledger`), it just wasn't reached. The bank case is not — there genuinely is no ADR-009 window for "how long to wait for a gateway record, checked from the bank side." Settlement flows forward FROM the gateway capture (ADR-009's own framing): a real gateway record for an economic event is captured before or at the time of the downstream bank credit, and this project's runs process all three source files as one batch, not a stream, so there is no ingestion-lag reason to wait days for it to "arrive" the way a bank credit waits to settle after a gateway capture. `[-1, 1]` keeps the universal `-1` IST/UTC midnight-drift slack every other window in this codebase carries, and adds one day rather than `dateWindowCardDays`'s three, because this window is not standing in for a settlement SLA — there isn't one to stand in for.
+**Rejected:** Reusing `dateWindowCardDays` with a corrected `kind` label (numerically identical to the bug — the window is defined and measured in the opposite direction, so "correctly naming" it as `gateway_bank` does not fix the underlying category error); a wider fallback window matching the card SLA (invents a settlement wait that does not exist for this direction, and would silently delay genuine `MISSING_IN_GATEWAY` findings on bank rows by two extra days for no stated reason); zero slack (would make a near-midnight bank record a false exception, the exact failure the `-1` convention exists to prevent).
+**Revisit if:** the generator or a real dataset shows gateway records genuinely arriving after their bank credit's date (e.g. a batch-settled gateway feed) — that would be evidence for widening `dateWindowGatewayLookbackDays`, not a guess made now.
+
+---
+
 ## Superseded
 
 - **ADR-021** — not superseded, but *clarified* by **ADR-041** (2026-08-26): the no-truth-in-the-engine rule stands; ground-truth-derived metrics move to a separate `score_reports` table written by the offline scorer, because the metrics shape in `schema.md` §11 could not otherwise have been produced by anything.
 - **ADR-004 / ADR-012** — extended by **ADR-029** (2026-08-26): a fourth stage (identity-established short-circuit) sits between the alias tier and the fuzzy tier. The tier ordering itself is unchanged.
+- **ADR-011 / schema.md §8.2** — the eight categories stand; the *order* is amended by **ADR-062** (2026-08-27), which lifts `AMOUNT_MISMATCH` above the presence class because precedence is applied per record while "presence before value" only holds per leg.
+- **ADR-026** — the platform choice stands; its **Day-3 deploy target is superseded by ADR-061** (2026-08-27), which defers deploying until the project runs end-to-end locally.
+- **ADR-038** — stands, with step 3 and the "250 ms budget" bound amended by **ADR-060** (2026-08-27): the primary bound is a deterministic node budget, because a wall-clock bound made exhaustiveness a property of the machine rather than of the data.
+- **ADR-060** — stands, with its node-budget figure (stated inconsistently there as both 200,000 and 1,000,000) **superseded by ADR-063** (2026-08-27): the budget is 1,300,000, sized to provably dominate the declared search space's combinatorial ceiling rather than a measured hard case.
+- **ADR-037** — not superseded, but *clarified* by **ADR-064** (2026-08-27): "the amount component is marked unavailable rather than scored" is settled as *scored 0 and flagged unavailable, not renormalized* — the docs had drifted into three contradictory readings of that clause, none of them wrong about the anchors-only rule itself.
+- **ADR-009** — stands in full, and is **extended by ADR-065** (2026-08-27) for a case it never covered: how long a *bank* record waits for a missing *gateway* counterpart, which is not the inverse of any window ADR-009 defines. ADR-009's `gateway_ledger` window is unchanged and now correctly reached from both directions (a code bug, not a doc gap).
 - **ADR-010** — thresholds unchanged; the component weights they operate on were recalibrated by **ADR-030** (2026-08-26).
 - **ADR-017** — stands in full, with **one clause amended by ADR-055** (2026-08-26): "no LLM-proposed aliases in v1" no longer holds for downstream agent proposals that meet four stated conditions. The core rule — the LLM makes no matching or classification decision inside the engine — is unchanged and unweakened.
 - **ADR-043** — extended by **ADR-051** (2026-08-26): agent proposals route through the same human-confirmation endpoints and are excluded from engine match rate on the same reasoning.

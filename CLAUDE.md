@@ -88,6 +88,7 @@ Rationale for each is in [docs/adr-log.md](docs/adr-log.md). Don't re-litigate t
 │   │   │   │   │                  identity-resolution, tier2-fuzzy, scoring,
 │   │   │   │   │                  assignment, batch-decomposition, group-assembly
 │   │   │   │   ├── classification/ exception rules, precedence, severity
+│   │   │   │   ├── audit/         canonical JSON + the hash chain (ADR-042)
 │   │   │   │   ├── explain/       LLM client, signature hashing, cache, templates
 │   │   │   │   ├── agent/         Phase A: tool registry, investigation loop,
 │   │   │   │   │                  grounding gate, Q&A loop  ← READ-ONLY TOOLS ONLY
@@ -192,7 +193,7 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 
 ## 9. Daily habits
 
-1. **Update `docs/what-broke.md` every single day.** It's a required submission artifact and it cannot be honestly reconstructed on Day 12. One line is fine; blank is not.
+1. **Update `docs/what-broke.md` every single day.** It's a required submission artifact and it cannot be honestly reconstructed on Day 13. One line is fine; blank is not.
 2. **Append to `docs/adr-log.md`** whenever you make a decision a future session might otherwise reverse.
 3. **Never tune against `HOLDOUT_SEED`.** Develop against `DEV_SEED`. (ADR-027)
 4. **Report cold and warm match rates together**, with the false-positive count next to them. (ADR-020)
@@ -202,17 +203,65 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 
 ## 10. Current state
 
-**As of 2026-08-26 (Day 4): documentation only. No application code exists yet. Architecture is LOCKED.**
+**As of 2026-08-27 (Day 4): architecture LOCKED. Five code units landed on Day 3, on branch `day5-scaffold-and-core` (named before the day count was corrected — the branch holds Day 3's work). Not yet merged.**
 
-- **Day 2 (Aug 24)** produced six docs plus this file.
-- **Day 3 (Aug 25)** — no session logged.
-- **Day 4 (Aug 26)** — pre-build design review. `ARCHITECTURE.md` was written (it had been referenced 23 times by docs that existed before it did), plus `matching-engine.md`, `ui-spec.md` and `testing-strategy.md`. ADR-028…ADR-047 appended. Three structural flaws were found and fixed **before any code was written**:
-  1. Tier 1's date window contradicted §5.2, so every T+2 card settlement would have fallen through to fuzzy. (ADR-028)
-  2. `AMOUNT_MISMATCH` and `TIMING_DRIFT` were **structurally unreachable** — a strong-anchor pair with a bad amount scored 0.70 and became a review-queue proposal; one with a bad date scored exactly 0.85 and auto-matched silently. (ADR-029)
-  3. With those pairs correctly removed from the fuzzy tier's domain, **nothing at Tier 2 could ever auto-confirm** (max reachable score 0.80 vs a 0.85 threshold). (ADR-030)
+> **Day numbering.** The build is 13 *working* days, Aug 23 → Sep 5. **Aug 25 is not a numbered day** — no session happened, and numbering it inflated every subsequent day by one. Corrected on Day 4; the full table is ARCHITECTURE §8.
 
-**Day 4, second pass (Aug 26)** — closed a gap against the track's problem statement, which asks for an *agent*. The architecture as of ADR-047 was a deterministic rules engine whose only AI touchpoint was S13 writing captions for finished decisions, with a template fallback. Added **the Analyst (Phase A)**: a bounded, tool-using agent that runs strictly after S14, works the exception queue, and is measured against the same answer key. ADR-048…ADR-057, plus [docs/agent-design.md](docs/agent-design.md). **The engine, its scoring, its tiers and its determinism guarantees are untouched** — the one deliberate exception is ADR-055, which amends a single clause of ADR-017 ("no LLM-proposed aliases") under four stated conditions, rather than quietly contradicting it.
+### History
+- **Day 1 (Aug 23)** — pre-lock decisions, ADR-001…005.
+- **Day 2 (Aug 24)** — six docs plus this file.
+- *(Aug 25 — no session.)*
+- **Day 3 (Aug 26)**, three passes in one day:
+  1. Pre-build design review. `ARCHITECTURE.md` written (it had been cited 23 times by docs that existed before it did), plus `matching-engine.md`, `ui-spec.md`, `testing-strategy.md`. ADR-028…047. Three structural flaws fixed **before any code existed**: Tier 1's date window contradicted §5.2; `AMOUNT_MISMATCH` and `TIMING_DRIFT` were structurally unreachable; nothing at Tier 2 could ever auto-confirm.
+  2. **The Analyst** (Phase A) — the agentic layer downstream of S14, closing a gap against the track's "build an agent" requirement without weakening ADR-017. ADR-048…057 plus `agent-design.md`.
+  3. First code, in five reviewed units.
+- **Day 4 (Aug 27)** — *today.*
 
-**Next: Day 5 (Aug 27) — scaffold `apps/api` against [docs/schema.md](docs/schema.md) and [docs/matching-engine.md](docs/matching-engine.md), then deploy to Railway + Vercel the same day** (ARCHITECTURE §7.4). The full day-by-day plan is ARCHITECTURE §8.
+### What exists in code
+
+| Unit | Commit | What |
+|---|---|---|
+| 1 | `4ff6d07` | Scaffold: three independent packages (ADR-058), the type contract in `src/types/`, `pg` type-parser fixes (ADR-059), migration runner, ADR-021 leak guard |
+| 2 | `c02005a` | Migrations 001–010: every table, the append-only + hash-chain audit log, single-match and un-reject triggers. Validated against **both** Postgres 16 and 17 |
+| 3 | `00e280d` | `money.ts`, `dates.ts`, `normalize.ts` — Indian lakh grouping, string-decimal arithmetic (no floats), declared-never-inferred date formats, IST/UTC drift |
+| 4 | `d6b83fe` | `tolerance.ts` + `scoring.ts` — banded tolerance, asymmetric windows, comparison basis (ADR-037), **the single Tier 2 scorer** and its guard test |
+| 5 | `1ed0b26` | `assignment.ts` — global score-ordered assignment, the ambiguity guard (per target source) |
+
+**113 tests passing.** API typechecks and builds; `apps/web` builds via `next build`.
+
+### Working agreement for these units
+One logical unit → show the diff → wait for explicit approval → commit that unit alone → next. **Do not merge these branches** — Tejas reviews and merges.
+
+### Day 4 (2026-08-27) — complete. Ten code units, all reviewed and committed individually.
+
+| Unit | Commit | What |
+|---|---|---|
+| 6 | `c986847` | S4 dedupe (anchor evidence required) + S8 identity short-circuit |
+| 7 | `312806d` | S10 bounded batch decomposition + split settlements |
+| 8 | `020d25d` | S12 classification: precedence, computed severity, evidence |
+| — | 10 commits | **Independent audit pass** and its fixes (ADR-063…065) |
+| 9 | `9710362` | Audit hash chain: canonical JSON, chaining, verification |
+| 10 | `33a7b9d` | The Analyst's grounding gate (A3) |
+
+**270 tests passing.** Typecheck and build clean. Branch `day4-dedupe-and-identity`, 22 commits, **unmerged — Tejas reviews and merges.**
+
+Four locked ADRs were amended during implementation, each with a superseding entry rather than a quiet edit: **ADR-060** (deterministic node budget, not a wall clock — a time bound made exhaustiveness a property of the machine), **ADR-061** (deploy deferred until the project runs locally), **ADR-062** (`AMOUNT_MISMATCH` above the presence class — precedence is per record, but the categories describe legs), plus the build-day renumbering.
+
+### Next: Day 5 (2026-08-28) — the generator
+
+**Start with a self-contained audit of units 9–10** (the audit chain and the grounding gate), the same way units 1–8 were audited. Then `tools/generate`.
+
+The generator is the gate on everything downstream: **until it exists, nothing has been scored against ground truth, so every accuracy claim in this repo is a claim about code rather than a measurement.** Read `validation-strategy.md` §1–§4 first. Two constraints the engine already depends on:
+
+- `DUPLICATE_ROW` must emit its copy carrying the **same strong anchor** (ADR-034), because dedupe requires anchor evidence and `IDENTITY_DESTROYED` deliberately plants anchorless look-alikes.
+- For every non-`AMOUNT_TRUE_MISMATCH` event, `ledger.net_amount` must equal `gateway.amount` **exactly** (ADR-037).
+
+Unresolvability is **proved during generation**, not labelled: assert ≥3 indistinguishable candidates, run a real subset-sum check, assert no event references the orphan row.
+
+### Carried debt, stated rather than buried
+- **Nothing is deployed, deliberately** (ADR-061). Deploying a half-built project means keeping two environments correct while dependencies, refactors and migrations are still moving. Scheduled: Day 11 (API), Day 12 (web). It is a dated task, not a spare-time task.
+- `tools/generate` and `tools/score` are still stubs. **Nothing has been measured yet** — the engine's accuracy is currently an untested claim. Day 5 (generator) and Day 9 (scorer) are when that changes.
+- **Nothing is wired end to end.** The stages exist and are individually tested; no run orchestrator calls them in sequence, no routes are mounted, `createApp` serves 404s by design.
+- The repository layer is one file deep: only `repositories/audit.ts` exists. The rest are stubs.
 
 Update this section as the build progresses so the next session knows where it is.
