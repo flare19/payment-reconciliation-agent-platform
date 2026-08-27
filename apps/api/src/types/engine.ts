@@ -89,6 +89,16 @@ export interface RunConfig {
   dateWindowUpiDays: DateWindow;
   dateWindowLedgerDays: DateWindow;
   dateWindowBankLedgerDays: DateWindow;
+  /**
+   * Fallback for "has enough time passed that a gateway counterpart would have
+   * been ingested" on a BANK record with no gateway match (ADR-065). Distinct
+   * from `dateWindowCardDays`: that window is defined gateway -> bank and
+   * measured from the gateway date; there is no ADR-009 window in this
+   * direction to invert, because settlement flows forward FROM the gateway
+   * capture, so a real gateway record for this economic event should already
+   * be ingested by the time its bank credit lands.
+   */
+  dateWindowGatewayLookbackDays: DateWindow;
 
   feeBandMinPct: number;
   feeBandMaxPct: number;

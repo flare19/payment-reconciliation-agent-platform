@@ -33,6 +33,13 @@ export const ENGINE_DEFAULTS: Omit<RunConfig, 'referenceDate' | 'aliasCountAtSta
   dateWindowUpiDays: [-1, 2],
   dateWindowLedgerDays: [-1, 1],
   dateWindowBankLedgerDays: [-2, 4],
+  // ADR-065: a BANK record's own fallback wait for a missing gateway
+  // counterpart. Deliberately much tighter than dateWindowCardDays (which
+  // runs the other way, gateway -> bank) — a real gateway record should
+  // already be ingested by the time its bank credit lands, so this exists
+  // only for the same IST/UTC midnight slack every other window carries, not
+  // for a settlement SLA.
+  dateWindowGatewayLookbackDays: [-1, 1],
 
   // schema.md §5.3: 2.0–2.5% fee + 18% GST on the fee.
   feeBandMinPct: 0.0236,

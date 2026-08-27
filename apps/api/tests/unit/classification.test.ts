@@ -308,6 +308,30 @@ describe('classify — presence uses the reference date, never the wall clock', 
   });
 });
 
+describe('classify — settlementDue uses the correct window per source pair (issue #5)', () => {
+  test('a ledger row missing its gateway counterpart uses the gateway<->ledger window, not the card window', () => {
+    // dateWindowLedgerDays is [-1, 1]. dateWindowCardDays is [-1, 3] — the bug
+    // applied the card window here because `method` is always null on a
+    // non-gateway record, so the switch fell through to it.
+    const l = txn('l1', 'ledger', 1, { refs: {}, date: '2026-08-14' });
+    const out = classify(input({ pool: [l] }));
+    const e = out.find((x) => x.transactionId === 'l1')!;
+    assert.equal(e.category, 'MISSING_IN_GATEWAY');
+    assert.deepEqual(e.evidence.windowUsed.dateWindow, config.dateWindowLedgerDays);
+    assert.notDeepEqual(e.evidence.windowUsed.dateWindow, config.dateWindowCardDays);
+  });
+
+  test('a bank row missing its gateway counterpart uses its own stated fallback window (ADR-065), not the borrowed card window', () => {
+    const b = txn('b1', 'bank', 1, { refs: {}, date: '2026-08-14' });
+    const out = classify(input({ pool: [b] }));
+    const e = out.find((x) => x.transactionId === 'b1')!;
+    assert.equal(e.category, 'MISSING_IN_GATEWAY');
+    assert.deepEqual(e.evidence.windowUsed.dateWindow, config.dateWindowGatewayLookbackDays);
+    assert.notDeepEqual(e.evidence.windowUsed.dateWindow, config.dateWindowCardDays,
+      'must not silently reuse the gateway->bank card window, which is defined in the OPPOSITE direction and measured from the wrong anchor date');
+  });
+});
+
 describe('classify — a presence exception reports real candidates when S5/S9 supply them (issue #8)', () => {
   test('candidatesConsidered/candidates/candidateCapHit/displacedByMatchId come from scoredCandidates, not a hardcoded 0/[]/false/null', () => {
     const g = txn('g1', 'gateway', 1, { refs: {}, date: '2026-08-14' });

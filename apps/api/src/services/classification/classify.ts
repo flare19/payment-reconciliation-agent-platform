@@ -363,15 +363,32 @@ function candidateEvidenceOf(c: ScoredCandidate): ExceptionEvidence['candidates'
  * NEVER the wall clock (ADR-039). A gateway payment captured yesterday is not
  * "missing from the bank" — it is in flight, and calling it an exception would
  * put a normal in-progress payment in front of a controller as a problem.
+ *
+ * `record` is always the one MISSING a counterpart here (`missingTargetsFor`
+ * calls this once per candidate `target`). Its own source system, not
+ * `target`, decides which ADR-009 window applies — `target` is always
+ * 'gateway' for a bank or ledger record, so branching on it alone cannot tell
+ * those two apart (issue #5).
  */
 function settlementDue(
   record: NormalizedTransaction, target: SourceSystem, config: RunConfig,
 ): { overdue: boolean; daysOverdue: number; window: readonly [number, number]; windowLabel: string } {
-  const kind = record.sourceSystem === 'gateway'
-    ? (target === 'bank' ? 'gateway_bank' : 'gateway_ledger')
-    : 'gateway_bank';
-  const window = dateWindowFor(kind, record.method, config);
   const elapsed = dayDelta(record.txnDate, config.referenceDate);
+
+  const window =
+    record.sourceSystem === 'gateway'
+      ? dateWindowFor(target === 'bank' ? 'gateway_bank' : 'gateway_ledger', record.method, config)
+      // A ledger record's missing gateway counterpart: ADR-009's gateway<->ledger
+      // window applies symmetrically, regardless of which side is asking.
+      : record.sourceSystem === 'ledger'
+        ? dateWindowFor('gateway_ledger', null, config)
+        // A bank record's missing gateway counterpart: no ADR-009 window is
+        // defined in this direction (settlement flows FORWARD from the gateway
+        // capture, so there is no "gateway settling into bank" window to
+        // invert). This is its own stated fallback rule, not a reuse of
+        // dateWindowCardDays (ADR-065).
+        : config.dateWindowGatewayLookbackDays;
+
   return {
     overdue: elapsed > window[1],
     daysOverdue: elapsed - window[1],
