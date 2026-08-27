@@ -108,6 +108,22 @@ describe('S10 — the two failure claims are genuinely different (ADR-038)', () 
     assert.equal(r.stats.boundHit, null);
     assert.ok(r.stats.nodesVisited < zeroTol.batchNodeBudget);
   });
+
+  test('the node budget dominates the true combinatorial ceiling the caps permit (issue #1)', () => {
+    // Sum C(24,k) for k=0..8 = 1,271,626 — the real worst case, not the ~200k
+    // figure the docs used to assert. 24 equal-amount contributions with a
+    // target that no subset of them can reach means almost nothing prunes, so
+    // the search visits close to the full declared space.
+    const zeroTol = { ...config, amountToleranceFloorPaise: 0, amountToleranceCapPaise: 0,
+      amountTolerancePct: 0 };
+    const r = decomposeBatch(
+      txn('c', 'bank', 1, { amount: 8_000_001, date: '2026-08-16' }),
+      Array.from({ length: 24 }, (_, i) => gw(`g${i}`, i, 1_000_000)), zeroTol);
+    assert.equal(r.kind, 'unsplittable');
+    assert.equal(r.stats.exhaustive, true,
+      `budget must dominate the declared space; got boundHit=${JSON.stringify(r.stats.boundHit)}`);
+    assert.equal(r.stats.boundHit, null);
+  });
 });
 
 describe('S10 — declared limits vs truncating limits (ADR-060)', () => {
