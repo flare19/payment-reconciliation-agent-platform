@@ -308,6 +308,48 @@ describe('classify — presence uses the reference date, never the wall clock', 
   });
 });
 
+describe('classify — a presence exception reports real candidates when S5/S9 supply them (issue #8)', () => {
+  test('candidatesConsidered/candidates/candidateCapHit/displacedByMatchId come from scoredCandidates, not a hardcoded 0/[]/false/null', () => {
+    const g = txn('g1', 'gateway', 1, { refs: {}, date: '2026-08-14' });
+    const out = classify(input({
+      pool: [g],
+      scoredCandidates: new Map([
+        ['g1', {
+          capHit: true,
+          displacedByMatchId: 'b9',
+          candidates: [
+            { transactionId: 'b1', sourceSystem: 'bank', score: 0.61,
+              breakdown: { anchor: 0.3, amount: 0, date: 0.2, counterparty: 0.11, total: 0.61, amountUnavailable: false },
+              ruleId: 'FUZZY_NO_ANCHOR_V1', rejectedBecause: 'amount delta ₹412.00 exceeds band ₹100.00' },
+            { transactionId: 'b2', sourceSystem: 'bank', score: 0.40,
+              breakdown: { anchor: 0, amount: 0.2, date: 0.1, counterparty: 0.1, total: 0.40, amountUnavailable: false },
+              ruleId: 'FUZZY_NO_ANCHOR_V1', rejectedBecause: null },
+          ],
+        }],
+      ]),
+    }));
+    const e = out.find((x) => x.transactionId === 'g1')!;
+    assert.equal(e.evidence.candidatesConsidered, 2, 'a true count, not the hardcoded 0');
+    assert.equal(e.evidence.candidates.length, 2);
+    assert.deepEqual(e.evidence.candidates.map((c) => c.transactionId), ['b1', 'b2']);
+    assert.equal(e.evidence.candidates[0]!.rejectedBecause, 'amount delta ₹412.00 exceeds band ₹100.00');
+    assert.match(e.evidence.candidates[1]!.rejectedBecause, /0\.4|threshold/,
+      'a null rejectedBecause still gets an honest, derived reason, never a blank string');
+    assert.equal(e.evidence.candidateCapHit, true);
+    assert.equal(e.evidence.displacedByMatchId, 'b9');
+  });
+
+  test('a record with no scoredCandidates entry still gets the honest 0/[]/false/null default', () => {
+    const g = txn('g1', 'gateway', 1, { refs: {}, date: '2026-08-14' });
+    const out = classify(input({ pool: [g] }));
+    const e = out.find((x) => x.transactionId === 'g1')!;
+    assert.equal(e.evidence.candidatesConsidered, 0);
+    assert.deepEqual(e.evidence.candidates, []);
+    assert.equal(e.evidence.candidateCapHit, false);
+    assert.equal(e.evidence.displacedByMatchId, null);
+  });
+});
+
 describe('classify — batch evidence keeps the two claims distinct', () => {
   const credit = txn('c1', 'bank', 1, { amount: 500_000, date: '2026-08-16' });
 

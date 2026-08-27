@@ -20,7 +20,7 @@
 
 import { compareCanonical, type ExceptionCategory, type Paise, type SourceSystem } from '../../types/domain.js';
 import type {
-  ClassifiedException, ExceptionEvidence, NormalizedTransaction, RunConfig,
+  ClassifiedException, ExceptionEvidence, NormalizedTransaction, RunConfig, ScoredCandidate,
 } from '../../types/engine.js';
 import type { DuplicateFinding } from '../matching/dedupe.js';
 import type { IdentityVerdict } from '../matching/identity-resolution.js';
@@ -32,6 +32,20 @@ import { applyPrecedence } from './precedence.js';
 import { computeSeverity } from './severity.js';
 import { emptyEvidence } from './evidence.js';
 
+/**
+ * Every candidate S5/S9 scored for one record — including ones discarded
+ * before scoring and ones scored below the review threshold — plus whether
+ * the per-record candidate cap bound and who its counterpart ultimately went
+ * to. Populates a presence exception's `evidence.candidates`,
+ * `.candidatesConsidered`, `.candidateCapHit` and `.displacedByMatchId`
+ * (matching-engine.md §11, schema.md §8, issue #8).
+ */
+export interface RecordCandidateEvidence {
+  candidates: ScoredCandidate[];
+  capHit: boolean;
+  displacedByMatchId?: string | null;
+}
+
 /** Everything S12 needs from the stages upstream of it. */
 export interface ClassificationInput {
   /** Post-dedupe reconcilable population, canonically ordered. */
@@ -42,6 +56,14 @@ export interface ClassificationInput {
   batches: { credit: NormalizedTransaction; outcome: BatchOutcome }[];
   /** Confirmed pairs from S6/S7/S9 — used to decide which legs are genuinely absent. */
   matchedPairs: { aId: string; bId: string }[];
+  /**
+   * Keyed by the transactionId the candidates were scored FOR. Optional, and
+   * an absent map (or an absent entry for one record) is not yet distinguished
+   * from "the engine genuinely tried nothing" — no real caller populates this
+   * today (S5 blocking and S9 assignment are not wired into S12 yet); this
+   * exists so the shape is designed once rather than bolted on later.
+   */
+  scoredCandidates?: Map<string, RecordCandidateEvidence>;
   config: RunConfig;
 }
 
@@ -225,6 +247,7 @@ export function classify(input: ClassificationInput): ClassifiedException[] {
       if (!due.overdue) continue;   // in flight, not missing (ADR-039)
 
       const category = missingCategoryFor(target);
+      const scored = input.scoredCandidates?.get(record.id);
       add(record.id, {
         category,
         amountAtRiskPaise: record.amountPaise,
@@ -236,8 +259,10 @@ export function classify(input: ClassificationInput): ClassifiedException[] {
         related: [],
         evidence: {
           anchorStrength: record.anchorStrength,
-          candidatesConsidered: 0,
-          candidates: [],
+          candidatesConsidered: scored?.candidates.length ?? 0,
+          candidates: (scored?.candidates ?? []).map(candidateEvidenceOf),
+          candidateCapHit: scored?.capHit ?? false,
+          displacedByMatchId: scored?.displacedByMatchId ?? null,
           windowUsed: { amountBandPaise: 0, dateWindow: due.window },
         },
       });
@@ -313,6 +338,23 @@ function missingCategoryFor(target: SourceSystem): ExceptionCategory {
   return target === 'bank' ? 'MISSING_IN_BANK'
     : target === 'ledger' ? 'MISSING_IN_LEDGER'
     : 'MISSING_IN_GATEWAY';
+}
+
+/**
+ * `ScoredCandidate` -> `evidence.candidates` row. `rejectedBecause` is required
+ * on the evidence shape (schema.md §8: "records what the engine tried"), but
+ * optional on `ScoredCandidate` — null there means "scored, not gate-discarded,
+ * simply not chosen", so a reason is derived from the score itself rather than
+ * left blank. Never fabricated: only the score the engine already computed.
+ */
+function candidateEvidenceOf(c: ScoredCandidate): ExceptionEvidence['candidates'][number] {
+  return {
+    transactionId: c.transactionId,
+    sourceSystem: c.sourceSystem,
+    score: c.score,
+    scoreBreakdown: c.breakdown,
+    rejectedBecause: c.rejectedBecause ?? `scored ${c.score.toFixed(4)}, below the review threshold`,
+  };
 }
 
 /**
