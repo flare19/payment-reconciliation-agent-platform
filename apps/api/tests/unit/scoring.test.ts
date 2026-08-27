@@ -336,8 +336,15 @@ describe('scorePair — components and breakdown', () => {
   });
 
   test('bank<->ledger scores without an amount component and is flagged', () => {
-    const b = txn({ sourceSystem: 'bank', amountPaise: 970_000, txnDate: '2026-08-16',
-      counterpartyNorm: 'ACME', referenceIds: { invoice_no: 'INV/2026/00123' } });
+    // A structured invoice_no equal on BOTH sides is a strong-strong shared
+    // anchor (anchors.ts sharedStrongAnchor) — S8's identity-established
+    // short-circuit would claim this pair before it ever reached Tier 2, so a
+    // fixture shaped that way exercises a path the real pipeline never takes
+    // (issue #6). A strong<->weak anchor — one side structured, the other only
+    // via extracted_from_description — is the reachable case: it's the shape
+    // anchorAgreement() actually returns strong_weak for.
+    const b = txn({ sourceSystem: 'bank', amountPaise: 970_000, txnDate: '2026-08-14',
+      counterpartyNorm: 'ACME', referenceIds: { extracted_from_description: ['INV/2026/00123'] } });
     const l = txn({ sourceSystem: 'ledger', amountPaise: 1_000_000, netAmountPaise: 1_000_000,
       txnDate: '2026-08-14', counterpartyNorm: 'ACME',
       referenceIds: { invoice_no: 'INV/2026/00123' } });
@@ -347,6 +354,28 @@ describe('scorePair — components and breakdown', () => {
     assert.equal(r.breakdown.amount, 0);
     assert.ok(r.score < config.fuzzyAutoConfirmThreshold,
       'without a comparable amount, a bank<->ledger pair should not auto-confirm');
+  });
+
+  test('a bank<->ledger pair caps at anchor + date + counterparty, per schema.md §5.3.1/§5.4 (issue #6)', () => {
+    // Perfect agreement on everything scoreable: strong<->weak anchor, same day,
+    // identical counterparty. The amount component is scored 0 (not
+    // renormalized), so this is the ceiling for a bank<->ledger pair — and it
+    // lands EXACTLY on the review floor, not above it.
+    const w = config.scoreWeights;
+    const b = txn({ sourceSystem: 'bank', amountPaise: 970_000, txnDate: '2026-08-14',
+      counterpartyNorm: 'ACME', referenceIds: { extracted_from_description: ['INV/2026/00123'] } });
+    const l = txn({ sourceSystem: 'ledger', amountPaise: 1_000_000, netAmountPaise: 1_000_000,
+      txnDate: '2026-08-14', counterpartyNorm: 'ACME',
+      referenceIds: { invoice_no: 'INV/2026/00123' } });
+    const r = scorePair(b, l, config);
+    assert.ok(!r.discarded);
+    assert.equal(r.score, round4(w.anchorStrongWeak + w.date + w.counterparty));
+    assert.equal(r.score, config.fuzzyReviewThreshold, 'this is the review floor exactly, per schema.md §5.4');
+
+    // weak<->weak never even reaches the review floor.
+    const weakCeiling = round4(w.anchorWeakWeak + w.date + w.counterparty);
+    assert.ok(weakCeiling < config.fuzzyReviewThreshold,
+      'a weak<->weak bank<->ledger pair can never become a review candidate');
   });
 });
 

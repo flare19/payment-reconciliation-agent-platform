@@ -341,7 +341,7 @@ Which amount is compared to which is a modelling decision, and getting it wrong 
 |---|---|---|
 | gateway ↔ bank | `gateway.net_amount_paise` vs `bank.credit_amount` (or the inferred fee band above) | The bank credits net of gateway fees. |
 | gateway ↔ ledger | `gateway.amount_paise` vs **`ledger.net_amount_paise`** | Both are *what the customer was charged*. |
-| bank ↔ ledger | **Anchor only — amounts are not a matching basis.** The amount component is marked unavailable, not scored 0. | Bank is net of gateway fees; ledger is a sale amount including sale GST. No arithmetic relates them without the gateway row in between. |
+| bank ↔ ledger | **Anchor only — amounts are not a matching basis.** The amount component is scored 0 and flagged `amountUnavailable` — not renormalized out of the weighted sum (ADR-064). | Bank is net of gateway fees; ledger is a sale amount including sale GST. No arithmetic relates them without the gateway row in between. |
 
 **The gateway↔ledger correction.** §2.3 previously asserted that ledger `gross_amount` "should equal gateway `amount`" while also defining `net = gross − discount + tax`. Both cannot hold: whenever discount or sale GST is non-zero, the customer pays the *net*. Comparing gross would turn every discounted or taxed sale into an `AMOUNT_MISMATCH`, flooding the exception list with arithmetic artifacts and destroying the credibility of the category that most needs it. The generator is constrained accordingly — for a clean event `ledger.net_amount == gateway.amount` exactly, and `AMOUNT_TRUE_MISMATCH` is what deliberately breaks it.
 
@@ -354,7 +354,7 @@ Tier 2 produces a score in `[0, 1]`:
 | Component | Max weight | How it's earned |
 |---|---|---|
 | Reference anchor | **0.30** | strong↔weak agreement: `0.30`. Near-anchor at edit distance 1 with corroboration (ADR-031): `0.24`. weak↔weak agreement: `0.20`. No comparable anchor: `0.00`. Anchors present on both sides but *unequal*: **candidate discarded outright** — a contradicted anchor is disqualifying, not merely unhelpful. |
-| Amount | **0.35** | `0.35 × (1 − |delta| / tolerance_band)`, floored at 0. Exact-to-the-paisa earns full. Marked *unavailable* (not 0) for bank↔ledger per §5.3.1. |
+| Amount | **0.35** | `0.35 × (1 − |delta| / tolerance_band)`, floored at 0. Exact-to-the-paisa earns full. **Scored 0 and flagged `amountUnavailable`** (not renormalized) for bank↔ledger per §5.3.1 — this caps a bank↔ledger pair at anchor + date + counterparty: `0.65` at strong↔weak anchor strength (exactly the review floor — needs a perfect same-day match and trigram similarity of `1.0`), or `0.55` at weak↔weak (never reaches the review floor at all). See ADR-064. |
 | Date | **0.20** | `0.20 × (1 − days_off / window_span)`, floored at 0. Same business day earns full. |
 | Counterparty | **0.15** | `0.15 × trigram_similarity(counterparty_key_a, counterparty_key_b)`. Uses `counterparty_key` (post-alias) when available, else `counterparty_norm`. |
 

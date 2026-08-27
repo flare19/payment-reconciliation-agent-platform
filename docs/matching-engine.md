@@ -164,7 +164,7 @@ Which amount is compared to which is a modelling decision, and getting it wrong 
 
 **The gateway↔ledger correction.** `schema.md` §2.3 defines `ledger.net_amount = gross − discount + tax` and separately asserts `ledger.gross_amount` "should equal gateway `amount`". Both cannot hold: whenever `discount` or `tax_amount` is non-zero, gateway amount equals ledger **net**, not ledger gross — the customer pays the discounted price plus sale GST. Comparing gross would make every discounted or taxed sale an `AMOUNT_MISMATCH`, flooding the exception list with arithmetic artifacts and destroying the honesty of the category that matters most. The generator is correspondingly constrained: for a clean event, `ledger.net_amount == gateway.amount` exactly; `AMOUNT_TRUE_MISMATCH` is what deliberately breaks it.
 
-**The bank↔ledger correction.** §5.2 defines a `[-2,+4]` bank→ledger window, implying such pairs get formed. They may — but only on a shared anchor (an `invoice_no` or a `settlement_id` appearing in both), never on amount+date, and always at Tier 2 with the amount component scored **0 and marked unavailable** rather than scored against an incomparable quantity. Where no gateway record exists to bridge them, the honest outcome is usually two separate presence exceptions, not a speculative pair.
+**The bank↔ledger correction.** §5.2 defines a `[-2,+4]` bank→ledger window, implying such pairs get formed. They may — but only on a shared anchor (an `invoice_no` or a `settlement_id` appearing in both), never on amount+date, and always at Tier 2 with the amount component scored **0 and marked unavailable** rather than scored against an incomparable quantity, and **not renormalized** (ADR-064). That caps a bank↔ledger pair's score at anchor + date + counterparty — `0.65` at strong↔weak (exactly the review floor) or `0.55` at weak↔weak (never a candidate at all) — so anchor-only bank↔ledger pairs are reachable only at strong↔weak anchor strength with perfect date and counterparty corroboration. Where no gateway record exists to bridge them, the honest outcome is usually two separate presence exceptions, not a speculative pair.
 
 ### 4.4 Rule IDs
 
@@ -252,7 +252,7 @@ Revised weights:
 | Component | Weight | Earned |
 |---|---|---|
 | **Anchor** | **0.30** | strong↔weak agreement: `0.30`. weak↔weak agreement: `0.20`. Near-anchor (§7.2): `0.24`. No comparable anchor: `0.00`. **Contradiction: candidate discarded** (not scored 0). |
-| **Amount** | **0.35** | `0.35 × (1 − |delta| / band)`, floored at 0. Exact-to-the-paisa earns full. Marked *unavailable* and renormalized out for bank↔ledger (§4.3). |
+| **Amount** | **0.35** | `0.35 × (1 − |delta| / band)`, floored at 0. Exact-to-the-paisa earns full. **Scored 0 and marked *unavailable*, not renormalized**, for bank↔ledger (§4.3, ADR-064). |
 | **Date** | **0.20** | `0.20 × (1 − days_off / window_span)`, floored at 0. Same business day earns full. |
 | **Counterparty** | **0.15** | `0.15 × trigram_similarity(key_a, key_b)`, using post-alias `counterparty_key` where available. |
 
