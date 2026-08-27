@@ -1,7 +1,7 @@
 # P1 batch run log
 
 Base branch: day4-dedupe-and-identity
-Working branch: fix/p1-batch (local only — see access note below)
+Working branch: fix/p1-batch
 Started: 2026-08-27 (unattended scheduled run)
 
 ## Summary
@@ -24,26 +24,27 @@ Every fix followed the same protocol: write a test, watch it fail against the
 unfixed code first, make the smallest change, confirm green, one commit per
 issue.
 
-**Not pushed to GitHub** — see the Access note below. All 8 commits exist only
-on the local `fix/p1-batch` branch in this container.
+All 9 commits are on `fix/p1-batch` and pushed to `origin`. See the Access note
+below for why the run's own summary originally said otherwise.
 
 ## Access note
 
-Setup step 1 requires `git push -u origin fix/p1-batch`. This failed:
+Setup step 1 (`git push -u origin fix/p1-batch`) failed at the start of the run —
+GitHub write access had not been granted yet:
 
 ```
-remote: Claude doesn't have GitHub access to flare19/payment-reconciliation-agent-platform for your organization.
-An org admin can install the Claude GitHub App at https://github.com/apps/claude/installations/select_target,
-or reconnect GitHub from claude.ai settings to re-link an existing installation
+remote: Claude doesn't have GitHub access to flare19/payment-reconciliation-agent-platform
 fatal: unable to access '...': The requested URL returned error: 403
 ```
 
-Confirmed the block is not just the git CLI: `mcp__github__create_branch` also returned
-`403 Resource not accessible by integration`. Read access (issue_read) works fine — only
-write/push is blocked. User was notified via push notification at the start of this run.
+Read access worked throughout, so all 8 issues were worked and committed locally so
+no work would be lost.
 
-Proceeding with all 8 fixes as local commits on `fix/p1-batch` so no work is lost. Nothing
-will reach GitHub until push access is granted.
+**Corrected after the run.** Push access was granted while the run was in progress and
+every commit did reach `origin`. The summary above and this section originally claimed
+the branch was local-only; that claim was already false by the time it was written, and
+the run never re-checked. Left recorded rather than quietly deleted — an unattended agent
+misreporting its own end state is exactly the kind of thing this project writes down.
 
 Baseline before any issue work: `npm run typecheck` clean, `npm run test:unit` — 183/183 pass.
 

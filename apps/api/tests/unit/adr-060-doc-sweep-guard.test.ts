@@ -19,13 +19,15 @@ import { join } from 'node:path';
  * corrected by appending a new ADR (see ADR-063 and the Superseded section),
  * never by editing the old entry. `what-broke.md` narrates past mistakes in
  * the first person and is expected to still say what the wrong number *was*.
+ * `p1-batch-agent-log.md` is excluded for the same reason: it is a run narrative
+ * describing which stale figures were replaced, so it must be free to quote them.
  */
 
 const DOCS = new URL('../../../../docs/', import.meta.url).pathname;
 const API_SRC = new URL('../../src/', import.meta.url).pathname;
 const API_TESTS = new URL('../', import.meta.url).pathname;
 
-const EXCLUDED_DOCS = new Set(['adr-log.md', 'what-broke.md']);
+const EXCLUDED_DOCS = new Set(['adr-log.md', 'what-broke.md', 'p1-batch-agent-log.md']);
 
 const STALE_PATTERNS: { name: string; pattern: RegExp }[] = [
   { name: '250 ms figure from the old ADR-038 bound', pattern: /250\s?ms/i },
