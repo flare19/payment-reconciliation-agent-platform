@@ -9,8 +9,10 @@
  * snake_case in, camelCase out. This layer is the mapping boundary.
  */
 
-import type pg from 'pg';
-import { getPool, withTransaction } from '../db/pool.js';
+import {
+  ADVISORY_LOCK, advisoryXactLockHeldSql, getPool, takeAdvisoryXactLock, withTransaction,
+  type TxClient,
+} from '../db/pool.js';
 import {
   GENESIS_HASH, computeEntryHash, verifyChain,
   type ChainVerification, type HashableAuditEntry, type StoredAuditEntry,
@@ -18,8 +20,6 @@ import {
 
 /** What a caller supplies. `occurredAt` is optional here and filled in at append. */
 export type AuditEntryInput = Omit<HashableAuditEntry, 'occurredAt'> & { occurredAt?: Date };
-
-const CHAIN_LOCK_NAMESPACE = 8_241_067;
 
 /**
  * Append one entry, chained to the current head.
@@ -39,26 +39,45 @@ const CHAIN_LOCK_NAMESPACE = 8_241_067;
  * predecessor — a chain that verifies as broken, caused by the writer rather than
  * by tampering, which is the worst possible false positive for this mechanism.
  * It costs one lock acquisition per append and removes the assumption entirely.
+ *
+ * `client` is a `TxClient`, not a `PoolClient`: `pg_advisory_xact_lock` lives
+ * exactly as long as the transaction, so on a client in autocommit it is released
+ * by the statement that took it and the append runs unprotected. The type makes
+ * that unrepresentable and the `lock_held` check below catches the untyped caller
+ * (issue #16 — this is the second time an advisory lock in this repo has been
+ * taken somewhere it did not survive; see the note in `db/pool.ts`).
  */
 export async function appendAuditEntry(
-  input: AuditEntryInput, client?: pg.PoolClient,
+  input: AuditEntryInput, client?: TxClient,
 ): Promise<StoredAuditEntry> {
-  const run = async (c: pg.PoolClient): Promise<StoredAuditEntry> => {
-    await c.query('SELECT pg_advisory_xact_lock($1, $2)', [
-      CHAIN_LOCK_NAMESPACE,
-      // Chains are per run; entries with no run form their own chain, so they get
-      // their own lock key rather than colliding with run 0.
-      input.runId === null ? 0 : hashUuidToInt(input.runId),
-    ]);
+  const run = async (c: TxClient): Promise<StoredAuditEntry> => {
+    // Chains are per run; entries with no run form their own chain, so they get
+    // their own lock key rather than colliding with run 0.
+    const lockKey = input.runId === null ? 0 : hashUuidToInt(input.runId);
+    await takeAdvisoryXactLock(c, ADVISORY_LOCK.auditChain, lockKey);
 
-    const { rows } = await c.query<{ entry_hash: string }>(
-      `SELECT entry_hash FROM audit_log
-        WHERE run_id IS NOT DISTINCT FROM $1
-        ORDER BY sequence_no DESC
-        LIMIT 1`,
-      [input.runId],
+    // One statement, two answers: the chain head, and proof that the lock taken
+    // above is still held as we read it. Folding the check in here rather than
+    // issuing it separately costs no extra round trip on a path that runs
+    // thousands of times per run.
+    const { rows } = await c.query<{ lock_held: boolean; entry_hash: string | null }>(
+      `SELECT ${advisoryXactLockHeldSql(2, 3)} AS lock_held,
+              (SELECT entry_hash FROM audit_log
+                WHERE run_id IS NOT DISTINCT FROM $1
+                ORDER BY sequence_no DESC
+                LIMIT 1) AS entry_hash`,
+      [input.runId, ADVISORY_LOCK.auditChain, lockKey],
     );
-    const prevHash = rows[0]?.entry_hash ?? GENESIS_HASH;
+    if (!rows[0]!.lock_held) {
+      throw new Error(
+        'appendAuditEntry: the chain lock was not held when the head was read, which means ' +
+        'this client is not inside a transaction — pg_advisory_xact_lock was released by the ' +
+        'statement that took it. Wrap the call in withTransaction(), or pass the TxClient it ' +
+        'yields. Appending unprotected would let two writers claim the same predecessor and ' +
+        'make an untampered chain verify as broken.',
+      );
+    }
+    const prevHash = rows[0]!.entry_hash ?? GENESIS_HASH;
 
     const entry: HashableAuditEntry = { ...input, occurredAt: input.occurredAt ?? new Date() };
     const entryHash = computeEntryHash(entry, prevHash);

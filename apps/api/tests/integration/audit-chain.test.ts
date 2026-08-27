@@ -164,6 +164,47 @@ describe('audit hash chain (integration)', { skip: DB_URL === null ? 'no TEST_DA
     }
   });
 
+  test('A CALLER-SUPPLIED CLIENT OUTSIDE A TRANSACTION IS REFUSED', async () => {
+    // The lock is `pg_advisory_xact_lock`, so it lives exactly as long as the
+    // transaction does. Handed a client in autocommit, the lock is released by the
+    // statement that took it — before the head is even read — and the append runs
+    // completely unprotected. Refusing is the only safe answer: an audit write that
+    // silently drops its own concurrency guarantee is worse than one that fails.
+    const c = await getPool().connect();
+    try {
+      await assert.rejects(
+        () => appendAuditEntry(input({ reason: 'unprotected' }), c as never),
+        /transaction/i,
+        'an append on a non-transactional client must throw, not proceed unprotected',
+      );
+    } finally { c.release(); }
+  });
+
+  test('CONCURRENT APPENDS ON BARE POOLED CLIENTS CANNOT CORRUPT THE CHAIN', async () => {
+    // The reproduction from the units 9-10 audit (issue #16). Before the fix these
+    // twelve appends all succeeded, four of them claiming one predecessor and two
+    // another, and verifyRunChain then reported `chain_broken` on a log nobody had
+    // tampered with — the worst false positive available to a tamper-evidence
+    // mechanism, and produced by the writer itself.
+    const bareRun = '55555555-5555-5555-5555-555555555555';
+    await getPool().query(
+      `INSERT INTO runs (id,label,status,config_snapshot) VALUES ($1,'bare','pending','{}')
+       ON CONFLICT DO NOTHING`, [bareRun]);
+
+    const settled = await Promise.allSettled(Array.from({ length: 12 }, async (_, i) => {
+      const c = await getPool().connect();
+      try { await appendAuditEntry(input({ runId: bareRun, subjectId: bareRun, reason: `bare ${i}` }), c as never); }
+      finally { c.release(); }
+    }));
+
+    assert.equal(settled.filter((s) => s.status === 'rejected').length, 12,
+      'every unprotected append must be refused');
+    const { rows } = await getPool().query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM audit_log WHERE run_id = $1', [bareRun]);
+    assert.equal(rows[0]!.n, 0, 'a refused append must write nothing');
+    assert.equal((await verifyRunChain(bareRun)).valid, true);
+  });
+
   test('the append path itself cannot break the chain under concurrency', async () => {
     // schema.md §9.0 assumes a single writer. The advisory lock makes that
     // ENFORCED rather than assumed: without it two appends read the same head and
