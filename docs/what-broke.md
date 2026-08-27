@@ -69,3 +69,15 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
   **What changed as a result.** The build plan was re-slotted rather than shifted by one, because Day 3 turned out to hold three passes — design review, the Analyst, and five code units — which puts the engine's highest-risk internals about a day ahead. That buffer is already spent on the deploy that did not happen. The re-slot also moves the **first honest cold-run number from Day 12 to Day 10**: a measured accuracy figure with two days left to react to it is useful, and the same figure on the final day is only a report.
 
   The lesson is small and boring: a day counter is state, and state that nobody reconciles against reality drifts. It drifted for four days inside a project whose entire thesis is measuring things honestly.
+
+  **Also Day 4 (unit 6 — dedupe and the identity short-circuit): `dedupe()` returned the matching pool in INPUT ORDER.**
+
+  The duplicate *findings* were fully deterministic — same clusters, same elected primaries, on any input permutation. What was not deterministic was the collection handed to every stage downstream: `pool` came from a `filter()`, which preserves whatever order the caller happened to supply.
+
+  That is worse than it sounds. ADR-032 requires every decision-feeding collection to be canonically ordered, and S4 is the *first* stage — its output is the input to blocking, the tiers, scoring and assignment. Correctness would then have depended on each of those stages remembering to sort, and the one that forgot would not have failed: it would have produced a slightly different, still-plausible match set depending on how the ingestion happened to enumerate rows. Assignment already sorts, so the visible damage today would have been nil, which is exactly why it would have survived until some later stage did not sort and nobody could explain why two runs disagreed.
+
+  **Caught by** the dedupe determinism test asserting that a reversed input yields an identical result — it did not, and the diff was pool order alone. **Fixed by** returning the pool canonically sorted from S4 itself, so no downstream stage has to remember.
+
+  **What changed as a result:** the rule is now "the stage that produces a collection sorts it", not "the stage that consumes one sorts it". Pushing the obligation to the producer means there is one place to get it right instead of one place per consumer, and a new consumer added later inherits the guarantee rather than having to know about it.
+
+  Never shipped — caught before the commit. Recorded because "the tests caught it" is only reassuring if the near-misses are written down too; a log that contains only the failures that escaped would overstate how well the process is working.

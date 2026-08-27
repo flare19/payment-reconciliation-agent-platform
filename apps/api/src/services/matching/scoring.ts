@@ -18,8 +18,13 @@
  * ══════════════════════════════════════════════════════════════════════════════
  */
 
-import type { ScoreBreakdown, NormalizedTransaction, RunConfig, ReferenceIds } from '../../types/engine.js';
+import type { ScoreBreakdown, NormalizedTransaction, RunConfig } from '../../types/engine.js';
 import { STRONG_ANCHOR_KEYS } from '../../types/engine.js';
+// Anchor semantics live in one module so S4, S6, S7, S8 and S9 cannot disagree
+// about what counts as identity (see anchors.ts).
+import {
+  WEAK_ANCHOR_KEYS, isWellFormedAnchor as isWellFormed, structuredValue,
+} from './anchors.js';
 import {
   directionAgrees, evaluateAmount, evaluateDate,
   type AmountEvaluation, type DateEvaluation,
@@ -122,18 +127,7 @@ export type AnchorAgreement =
   | { kind: 'contradiction'; key: string; aValue: string; bValue: string }
   | { kind: 'none' };
 
-const WEAK_KEYS = new Set(['order_id', 'bank_ref_no']);
-
-/** A 12-digit RRN is a strong anchor; a malformed one is not (schema.md §3.2). */
-function isWellFormed(key: string, value: string): boolean {
-  if (key === 'rrn') return /^\d{12}$/.test(value);
-  return value.trim().length > 0;
-}
-
-function structuredValue(refs: ReferenceIds, key: string): string | undefined {
-  const v = (refs as Record<string, unknown>)[key];
-  return typeof v === 'string' ? v : undefined;
-}
+const WEAK_KEYS = new Set<string>(WEAK_ANCHOR_KEYS);
 
 /**
  * Compare two records' anchors.
