@@ -188,7 +188,7 @@ Architecture that doesn't commit to numbers isn't architecture. Full reasoning f
 | Fuzzy review band | `0.65 – 0.849` | ADR-010 |
 | Ambiguity guard | top two candidates both `≥ 0.65` and within `0.05` | ADR-010 |
 | Near-anchor tolerance | Damerau-Levenshtein `≤ 1` on anchors of length `≥ 12`, corroboration required | ADR-031 |
-| Subset-sum bounds (net batch) | pool `≤ 24`, subset size `≤ 8`, 250 ms budget per batch | ADR-038 |
+| Subset-sum bounds (net batch) | pool `≤ 24`, subset size `≤ 8`, 1,000,000-node budget (deterministic); 2 s wall safety valve | ADR-038, ADR-060 |
 | Designed-unresolvable share | 7 % of events (~21) → published ceiling ≈ 93 % | validation-strategy §4 |
 | LLM model | `claude-sonnet-5`, `temperature: 0` | ADR-019 |
 | LLM batching | ≤ 10 signatures per request, hard cap 8 calls per run | ADR-018 |
@@ -216,7 +216,11 @@ Architecture that doesn't commit to numbers isn't architecture. Full reasoning f
 
 **7.3 `docs/what-broke.md` is updated every day.** It is a required submission artifact and cannot be honestly reconstructed on Day 13. An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
-**7.4 Deploy on Day 4, not Day 13.** A live URL early is a strong signal to a panel and removes the single most common last-week failure mode. It also means every subsequent day's work is verified in the environment it will be judged in. See [docs/deployment.md](docs/deployment.md).
+**7.4 Deploy once the project runs end-to-end locally — Day 11 (API) and Day 12 (web).** *Superseded ADR-026's deploy-early rule; see ADR-061.*
+
+The original instruction here was to deploy on Day 3. It was reversed because deploying a half-built project means **being correct in two places at once instead of one**: a cloud deploy adds a build environment, injected variables and a managed database, all of which must be re-verified after every dependency change, refactor and migration still to come. The cost is paid repeatedly; the benefit accrues once.
+
+The risk this trades away is real and stays visible in §10: a first deploy on Day 11 has two days of slack rather than a week. It is acceptable only because the deploy surface is deliberately tiny (two managed platforms, no containers we author), the one-time setup is already written down in [docs/deployment.md](docs/deployment.md) §5.1, and the Render fallback is pre-decided. **The deploy is a scheduled task with a date — it does not slide to Day 13.**
 
 **7.5 Never tune against `HOLDOUT_SEED`.** Develop against `DEV_SEED`. Seed-shopping until a good number appears is the exact failure the validation strategy exists to prevent (ADR-027).
 
@@ -234,20 +238,20 @@ The build is **13 working days**, Aug 23 → Sep 5. There is no Day for Aug 25 �
 | 2 | Aug 24 | Six design docs plus `CLAUDE.md`. **Done.** |
 | — | Aug 25 | No session. |
 | 3 | Aug 26 | **Three passes.** Pre-build design review (`ARCHITECTURE.md`, `matching-engine.md`, `ui-spec.md`, `testing-strategy.md`; ADR-028…047) · the Analyst (`agent-design.md`; ADR-048…057) · first five code units: scaffold, migrations 001–010, parsing primitives, the Tier 2 scorer, assignment. **Done.** |
-| 4 | Aug 27 | **Deploy to Railway + Vercel — carried from Day 3 and now the first task** (§7.4). Dedupe S4, identity short-circuit S8, batch decomposition S10. |
+| 4 | Aug 27 | Dedupe S4, identity short-circuit S8, batch decomposition S10 + split settlements. Classification S12. |
 | 5 | Aug 28 | Generator (`tools/generate`): economic events → projections → three CSVs + answer key + manifest hashes. Unresolvability assertions. |
 | 6 | Aug 29 | Ingestion: three parsers wired to the Day 3 primitives, exclusion rules, rejected-row handling. |
 | 7 | Aug 30 | Blocking S5, Tier 1 S6, Tier 1.5 alias S7, group assembly S11. |
 | 8 | Aug 31 | Classification S12 — precedence, severity, evidence — plus the audit hash chain and the repository layer. |
 | 9 | Sep 1 | Routes and run orchestration. **First end-to-end run.** |
 | 10 | Sep 2 | Scorer (`tools/score`), score-report endpoint, metrics. **First honest cold-run number.** Scale benchmark. |
-| 11 | Sep 3 | Explain layer S13 + signature cache + templates; Analyst loop A1–A4 + grounding gate. Shared Anthropic client and cost caps across both. |
-| 12 | Sep 4 | Frontend: dashboard, exception list, drill-down, review queue, alias screen, audit view, Analyst panel, Q&A box. |
+| 11 | Sep 3 | **Deploy the API to Railway** (ADR-061) — the backend is locally complete and scored by now. Explain layer S13 + signature cache; Analyst loop A1–A4 + grounding gate. |
+| 12 | Sep 4 | Frontend, **and deploy the web app to Vercel**: dashboard, exception list, drill-down, review queue, alias screen, audit view, Analyst panel, Q&A box. |
 | 13 | Sep 5 | Holdout run, accuracy report, README, pitch video, build-challenges write-up, **submit**. |
 
 **Two notes, stated rather than discovered later.**
 
-Day 3 absorbed both the design review and five code units, which puts the engine's highest-risk internals — the scorer, assignment, the parsing primitives — roughly a day ahead of where a linear plan would have them. That is the buffer, and it is already spent on the one thing that slipped: **nothing is deployed**, which §7.4 wanted on Day 4 at the latest.
+Day 3 absorbed both the design review and five code units, which puts the engine's highest-risk internals — the scorer, assignment, the parsing primitives — roughly a day ahead of where a linear plan would have them. That buffer now sits in front of the deploy rather than behind it: **deploying is deliberately deferred to Days 11–12** (ADR-061) so the codebase only has to be correct in one place while it is still moving.
 
 The first honest accuracy number lands on **Day 10, not Day 12**. That is deliberate: a measured number with two days left to react to it is useful, and the same number on the final day is only a report.
 
@@ -270,6 +274,7 @@ The accuracy report generated by `tools/score` (validation-strategy §8) is the 
 | Risk | Mitigation |
 |---|---|
 | **Frontend compressed into Day 12 (Sep 4).** The largest schedule risk. | The API contract is binding from Day 4, so no design work happens on a build day. If Day 13 overruns, the exception list and metrics panel ship and the alias-management screen degrades to a read-only table — decided in advance, in ui-spec §8. |
+| **First deploy lands on Day 11, not Day 3** (ADR-061). A platform problem then has two days of slack, not a week. | Accepted deliberately: deploying early means keeping two environments correct through every refactor still to come. Mitigated by a tiny deploy surface (two managed platforms, no containers we author), a one-time setup already written down in deployment.md §5.1, and a pre-decided Render fallback at a 45-minute budget. The slot is a dated task, not a spare-time task. |
 | **Pitch video on submission day (Sep 5).** | The holdout run and accuracy report are a single command and can be produced any evening from Day 10; only the video and README genuinely need Sep 5. A rehearsal-quality video recorded on Day 12 is the fallback and is better than none. |
 | **The Analyst hallucinates a resolution for a designed-unresolvable exception.** | Treated as a build blocker, not a metric (ADR-053). Three structural defences: a read-only tool registry, the A3 citation-grounding gate (ADR-050), and budget exhaustion returning an honest verdict rather than a best guess (ADR-054). |
 | **The Analyst cannot be finished in time.** | It is a strict addition — nothing in the engine depends on it. Degradation order is pre-decided (agent-design §11): investigation on the two highest-value categories ships first, the Q&A agent is cut first. If the whole phase is cut, the engine stands alone and the submission is honest about what it is. |

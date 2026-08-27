@@ -1,7 +1,7 @@
 # Deployment
 
 Payment Reconciliation Engine · Razorpay AI Buildathon Track 4
-Status: **Locked.** Deployed early on purpose, not on Day 13. Revised by the Day 3 design review (ADR-046).
+Status: **Locked.** Revised by the Day 3 design review (ADR-046) and by **ADR-061** (Day 4), which defers the first deploy until the project runs end-to-end locally — Day 11 for the API, Day 12 for the web app. Everything below is unchanged execution detail; only the *timing* moved.
 Companion docs: [adr-log.md](./adr-log.md) (ADR-005, ADR-026, ADR-046) · [api-contract.md](./api-contract.md)
 
 **No Kubernetes. No container orchestration. No Dockerfiles authored by us.** Per ADR-005, K8s is parked as a separate future learning project — it earns zero points against this rubric. This is a managed-platform deploy: two dashboards, two `git push`es.
@@ -151,7 +151,7 @@ The rule, stated plainly: **`ANTHROPIC_API_KEY` exists in exactly two places —
 
 ## 5. Deploy steps
 
-### 5.1 One-time setup (target: Day 4, ~40 minutes)
+### 5.1 One-time setup (target: Day 11 for the API, Day 12 for the web — ADR-061, ~40 minutes)
 
 **Railway — API + database**
 1. New project → **Deploy from GitHub repo**, select this repo.

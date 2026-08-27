@@ -47,7 +47,18 @@ export const ENGINE_DEFAULTS: Omit<RunConfig, 'referenceDate' | 'aliasCountAtSta
   candidateCap: 200,          // ADR-033
   batchPoolCap: 24,           // ADR-038
   batchMaxSubsetSize: 8,
-  batchSubsetBudgetMs: 250,
+  // ADR-060: the deterministic primary bound. A wall-clock bound would make
+  // exhaustiveness a property of the machine rather than of the data.
+  //
+  // Sized from measurement, not taste: a full 24-candidate pool with no solution
+  // and zero tolerance — the worst case the caps allow — visits ~200k nodes in
+  // ~5 ms. 1M nodes is therefore ~25 ms locally and stays inside the safety valve
+  // even on a machine 80x slower. A realistic batch settles in ~1.4k nodes.
+  batchNodeBudget: 1_000_000,
+  // Safety valve only. The node budget already guarantees termination, so this
+  // exists solely for a pathological case where individual nodes are expensive.
+  // If it ever fires, that is a bug report, not a tuning opportunity.
+  batchSubsetBudgetMs: 2_000,
 
   nearAnchorMinLength: 12,    // ADR-031
   nearAnchorMaxDistance: 1,

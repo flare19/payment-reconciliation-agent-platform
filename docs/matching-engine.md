@@ -323,7 +323,9 @@ A bank `SETTLEMENT` credit may be the net of many gateway payments minus fees, w
 
 1. Build the candidate pool: unmatched gateway records, `direction = credit`, business date within `[C.date − 4, C.date]`, same `counterparty_key` where both have one. Sort canonically; **cap the pool at 24 records** (the 24 nearest by date, then by amount descending).
 2. For each candidate, compute its expected net contribution using the §4.3 fee rule — the inferred fee band where gateway net is NULL, giving each candidate a `[min, max]` interval rather than a point.
-3. Search for a subset whose summed interval contains `C.credit_amount ± tolerance`. Meet-in-the-middle over subset sums, **subset size capped at 8**, with a **250 ms wall budget** per batch.
+3. Search for a subset whose summed interval overlaps `C.credit_amount ± tolerance`. **Depth-first with prefix pruning** over candidates sorted by descending contribution, **subset size capped at 8**, bounded by a **deterministic node budget** (default 200,000 visited nodes) — see ADR-060. A 250 ms wall budget is retained as a safety valve only and should never fire; if it does, it reports itself as a distinct bound.
+
+   > **Why a node budget and not a time budget (ADR-060).** A wall-clock bound makes the same dataset report `searchExhausted` on a fast machine and `searchBoundExceeded` on a slow one — two *different claims about the data*, decided by hardware. That is ADR-039's date problem reappearing in another stage. A node budget is a pure function of the inputs, so exhaustiveness is a property of the dataset.
 4. Outcomes:
 
 | Result | Outcome |
@@ -331,9 +333,9 @@ A bank `SETTLEMENT` credit may be the net of many gateway payments minus fees, w
 | Exactly one subset found | `many_to_one` match, `tier = fuzzy`, `rule_id = BATCH_DECOMPOSED_V1`, confidence `0.80`, status `pending_review`. A batch decomposition is a strong inference, not a certainty — it always asks a human. |
 | Two or more distinct subsets found | `AMBIGUOUS_MATCH` on the bank record, with each subset recorded in `evidence.candidateSubsets`. Arithmetic cannot choose between them. |
 | No subset found within bounds | `UNSPLITTABLE_BATCH`, `evidence.searchExhausted: true` — the engine searched the whole bounded space and there is genuinely no answer. |
-| Bounds exceeded (pool cap, size cap or time budget hit) | `UNSPLITTABLE_BATCH`, `evidence.searchBoundExceeded: true` with the bound that bound. |
+| **Truncated** — the pool cap discarded eligible candidates, or the node budget / time valve cut the search short | `UNSPLITTABLE_BATCH`, `evidence.searchBoundExceeded: true` naming which bound stopped it. The subset-size cap is **not** a truncation: it is part of the declared question, is named in the reason string, and is reported as a qualifier (ADR-060). |
 
-**The last two rows are different claims and the exception list says which.** "I proved no combination works" and "I gave up after 250 ms" are both honest, and conflating them is not. `evidence` carries the pool size, the subsets examined and the bound that stopped the search, and the UI renders that distinction rather than flattening both to "unsplittable".
+**The last two rows are different claims and the exception list says which.** "I proved no combination works" and "I ran out of search budget" are both honest, and conflating them is not. `evidence` carries the pool size, the subsets examined and the bound that stopped the search, and the UI renders that distinction rather than flattening both to "unsplittable".
 
 ### 8.1 Split settlements — the mirror case (ADR-036 companion)
 

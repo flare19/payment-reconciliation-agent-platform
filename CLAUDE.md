@@ -231,8 +231,7 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 ### Working agreement for these units
 One logical unit → show the diff → wait for explicit approval → commit that unit alone → next. **Do not merge these branches** — Tejas reviews and merges.
 
-### Day 4 (today): deploy first, then units 6–7
-- **Deploy is the first task**, carried from Day 3 (ARCHITECTURE §7.4). Every day it slips raises the odds of finding a platform problem late.
+### Day 4 (today): units 6–8
 - **Unit 6 — S4 dedupe + S8 identity short-circuit.** The two fixes from the Day 3 review, and the highest-risk remaining logic:
   - **S4 dedupe** requires *anchor evidence* (ADR-034). The Day 2 rule "same amount+date+counterparty in one source" collides head-on with the generator's `IDENTITY_DESTROYED` class, which deliberately plants 3+ anchorless same-amount/day/merchant rows. `SUSPECTED_DUPLICATE` needs a cluster of exactly 2; a crowd is ambiguity, not duplication.
   - **S8 identity short-circuit** (ADR-029) is why `AMOUNT_MISMATCH` and `TIMING_DRIFT` are reachable at all. Strong anchors agreeing means identity is *established*, so the pair is resolved deterministically on value and time and **never scored**.
@@ -241,7 +240,7 @@ One logical unit → show the diff → wait for explicit approval → commit tha
 Then: 8 classification/precedence/severity · 9 audit hash chain · 10 the Analyst's grounding gate.
 
 ### Carried debt, stated rather than buried
-- **Nothing is deployed.** Day 4's first task.
+- **Nothing is deployed, deliberately** (ADR-061). Deploying a half-built project means keeping two environments correct while dependencies, refactors and migrations are still moving. Scheduled: Day 11 (API), Day 12 (web). It is a dated task, not a spare-time task.
 - `tools/generate` and `tools/score` are still stubs. The engine cannot be scored against anything until the generator exists (Day 5).
 - No routes are mounted yet; `createApp` serves 404s by design.
 

@@ -102,6 +102,9 @@ export interface RunConfig {
   candidateCap: number;
   batchPoolCap: number;
   batchMaxSubsetSize: number;
+  /** ADR-060: the PRIMARY, deterministic bound. */
+  batchNodeBudget: number;
+  /** Safety valve only — expected never to fire. Non-deterministic by nature. */
   batchSubsetBudgetMs: number;
 
   nearAnchorMinLength: number;
