@@ -332,6 +332,40 @@ describe('classify — settlementDue uses the correct window per source pair (is
   });
 });
 
+describe('classify — MISSING_IN_LEDGER is reachable for bank records (issue #7)', () => {
+  test('a bank row with no ledger counterpart gets MISSING_IN_LEDGER as a secondary flag alongside MISSING_IN_GATEWAY', () => {
+    const b = txn('b1', 'bank', 1, { refs: {}, date: '2026-08-14' });
+    const out = classify(input({ pool: [b] }));
+    const e = out.find((x) => x.transactionId === 'b1')!;
+    // MISSING_IN_GATEWAY outranks MISSING_IN_LEDGER in the precedence order
+    // (schema.md §8.2), so it's the primary — but the ledger absence must not
+    // be silently dropped just because it isn't the headline.
+    assert.equal(e.category, 'MISSING_IN_GATEWAY');
+    assert.ok(e.secondaryFlags.includes('MISSING_IN_LEDGER'),
+      'half the category definition (schema.md §8.1: "gateway AND/OR bank") was unreachable before this fix');
+  });
+
+  test('a bank row whose gateway leg is matched, but has no ledger counterpart, gets MISSING_IN_LEDGER as primary, using the bank<->ledger window', () => {
+    const g = txn('g1', 'gateway', 1, { refs: {}, date: '2026-08-14' });
+    const b = txn('b1', 'bank', 1, { refs: {}, date: '2026-08-16' });
+    const out = classify(input({
+      pool: [g, b], matchedPairs: [{ aId: 'g1', bId: 'b1' }],
+    }));
+    const e = out.find((x) => x.transactionId === 'b1')!;
+    assert.equal(e.category, 'MISSING_IN_LEDGER');
+    assert.deepEqual(e.evidence.windowUsed.dateWindow, config.dateWindowBankLedgerDays,
+      'the ledger leg must use the bank<->ledger window (ADR-009 [-2,+4]), not a borrowed gateway-facing one');
+  });
+
+  test('the comment no longer cites ADR-037 for a prohibition it does not make', async () => {
+    // ADR-037 says bank<->ledger amounts aren't a comparable quantity, not
+    // that a bank<->ledger presence relationship can never be reported.
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../../src/services/classification/classify.ts', import.meta.url), 'utf8');
+    assert.doesNotMatch(src, /no arithmetic\s*\n?\s*\/\/ relates them without the gateway row in between \(ADR-037\)/);
+  });
+});
+
 describe('classify — a presence exception reports real candidates when S5/S9 supply them (issue #8)', () => {
   test('candidatesConsidered/candidates/candidateCapHit/displacedByMatchId come from scoredCandidates, not a hardcoded 0/[]/false/null', () => {
     const g = txn('g1', 'gateway', 1, { refs: {}, date: '2026-08-14' });

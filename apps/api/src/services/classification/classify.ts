@@ -26,7 +26,7 @@ import type { DuplicateFinding } from '../matching/dedupe.js';
 import type { IdentityVerdict } from '../matching/identity-resolution.js';
 import type { AmbiguityFinding } from '../matching/assignment.js';
 import type { BatchOutcome } from '../matching/batch-decomposition.js';
-import { dateWindowFor } from '../matching/tolerance.js';
+import { dateWindowFor, pairKind } from '../matching/tolerance.js';
 import { dayDelta } from '../ingestion/dates.js';
 import { applyPrecedence } from './precedence.js';
 import { computeSeverity } from './severity.js';
@@ -326,10 +326,16 @@ function addSource(map: Map<string, Set<SourceSystem>>, id: string, source: Sour
 function missingTargetsFor(record: NormalizedTransaction): SourceSystem[] {
   switch (record.sourceSystem) {
     case 'gateway': return ['bank', 'ledger'];
-    // A bank or ledger row without a gateway counterpart is MISSING_IN_GATEWAY.
-    // Neither is expected to reconcile directly against the other: no arithmetic
-    // relates them without the gateway row in between (ADR-037).
-    case 'bank':    return ['gateway'];
+    // A bank row without a ledger counterpart is MISSING_IN_LEDGER
+    // (schema.md §8.1 category 4: "gateway AND/OR bank"), on an anchor alone
+    // (ADR-037, ADR-064) — ADR-037 forbids SCORING a bank<->ledger pair on
+    // amount (no arithmetic relates a fee-net bank credit to a sale-GST ledger
+    // amount without the gateway row in between); it says nothing about
+    // whether the pair can be reported present or absent (issue #7).
+    case 'bank':    return ['gateway', 'ledger'];
+    // A ledger row without a bank counterpart is not a defined category
+    // (schema.md §8.1 has no MISSING_IN_BANK-from-ledger case) — only a
+    // gateway record's missing bank leg is MISSING_IN_BANK.
     case 'ledger':  return ['gateway'];
   }
 }
@@ -365,29 +371,19 @@ function candidateEvidenceOf(c: ScoredCandidate): ExceptionEvidence['candidates'
  * put a normal in-progress payment in front of a controller as a problem.
  *
  * `record` is always the one MISSING a counterpart here (`missingTargetsFor`
- * calls this once per candidate `target`). Its own source system, not
- * `target`, decides which ADR-009 window applies — `target` is always
- * 'gateway' for a bank or ledger record, so branching on it alone cannot tell
- * those two apart (issue #5).
+ * calls this once per candidate `target`). `pairKind` gives the right ADR-009
+ * window for any (record, target) combination regardless of which side is
+ * asking — EXCEPT bank asking for gateway, which ADR-009 does not define in
+ * that direction at all (issue #5, ADR-065).
  */
 function settlementDue(
   record: NormalizedTransaction, target: SourceSystem, config: RunConfig,
 ): { overdue: boolean; daysOverdue: number; window: readonly [number, number]; windowLabel: string } {
   const elapsed = dayDelta(record.txnDate, config.referenceDate);
 
-  const window =
-    record.sourceSystem === 'gateway'
-      ? dateWindowFor(target === 'bank' ? 'gateway_bank' : 'gateway_ledger', record.method, config)
-      // A ledger record's missing gateway counterpart: ADR-009's gateway<->ledger
-      // window applies symmetrically, regardless of which side is asking.
-      : record.sourceSystem === 'ledger'
-        ? dateWindowFor('gateway_ledger', null, config)
-        // A bank record's missing gateway counterpart: no ADR-009 window is
-        // defined in this direction (settlement flows FORWARD from the gateway
-        // capture, so there is no "gateway settling into bank" window to
-        // invert). This is its own stated fallback rule, not a reuse of
-        // dateWindowCardDays (ADR-065).
-        : config.dateWindowGatewayLookbackDays;
+  const window = record.sourceSystem === 'bank' && target === 'gateway'
+    ? config.dateWindowGatewayLookbackDays
+    : dateWindowFor(pairKind(record.sourceSystem, target)!, record.method, config);
 
   return {
     overdue: elapsed > window[1],
