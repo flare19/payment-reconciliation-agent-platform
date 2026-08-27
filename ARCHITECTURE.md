@@ -238,22 +238,24 @@ The build is **13 working days**, Aug 23 → Sep 5. There is no Day for Aug 25 �
 | 2 | Aug 24 | Six design docs plus `CLAUDE.md`. **Done.** |
 | — | Aug 25 | No session. |
 | 3 | Aug 26 | **Three passes.** Pre-build design review (`ARCHITECTURE.md`, `matching-engine.md`, `ui-spec.md`, `testing-strategy.md`; ADR-028…047) · the Analyst (`agent-design.md`; ADR-048…057) · first five code units: scaffold, migrations 001–010, parsing primitives, the Tier 2 scorer, assignment. **Done.** |
-| 4 | Aug 27 | Dedupe S4, identity short-circuit S8, batch decomposition S10 + split settlements. Classification S12. |
+| 4 | Aug 27 | **Ten reviewed code units.** Dedupe S4 · identity short-circuit S8 · batch decomposition S10 + split settlements · classification S12 (precedence, severity, evidence) · audit hash chain + verification · the Analyst's grounding gate A3. Plus an independent audit pass and its fixes. **Done.** |
 | 5 | Aug 28 | Generator (`tools/generate`): economic events → projections → three CSVs + answer key + manifest hashes. Unresolvability assertions. |
-| 6 | Aug 29 | Ingestion: three parsers wired to the Day 3 primitives, exclusion rules, rejected-row handling. |
-| 7 | Aug 30 | Blocking S5, Tier 1 S6, Tier 1.5 alias S7, group assembly S11. |
-| 8 | Aug 31 | Classification S12 — precedence, severity, evidence — plus the audit hash chain and the repository layer. |
-| 9 | Sep 1 | Routes and run orchestration. **First end-to-end run.** |
-| 10 | Sep 2 | Scorer (`tools/score`), score-report endpoint, metrics. **First honest cold-run number.** Scale benchmark. |
-| 11 | Sep 3 | **Deploy the API to Railway** (ADR-061) — the backend is locally complete and scored by now. Explain layer S13 + signature cache; Analyst loop A1–A4 + grounding gate. |
-| 12 | Sep 4 | Frontend, **and deploy the web app to Vercel**: dashboard, exception list, drill-down, review queue, alias screen, audit view, Analyst panel, Q&A box. |
+| 6 | Aug 29 | Ingestion: three parsers wired to the Day 3 primitives, exclusion rules, rejected rows. Blocking S5 and Tier 1 S6. |
+| 7 | Aug 30 | Tier 1.5 alias S7, group assembly S11, and the repository layer. |
+| 8 | Aug 31 | Routes and run orchestration. **First end-to-end run.** |
+| 9 | Sep 1 | Scorer (`tools/score`), score-report endpoint, metrics. **First honest cold-run number.** |
+| 10 | Sep 2 | Explain layer S13 + signature cache + templates. Agent tool registry and the investigation loop A1–A4. |
+| 11 | Sep 3 | **Deploy the API to Railway** (ADR-061). Q&A loop, scale benchmark. |
+| 12 | Sep 4 | Frontend, **and deploy the web app to Vercel**. |
 | 13 | Sep 5 | Holdout run, accuracy report, README, pitch video, build-challenges write-up, **submit**. |
 
 **Two notes, stated rather than discovered later.**
 
-Day 3 absorbed both the design review and five code units, which puts the engine's highest-risk internals — the scorer, assignment, the parsing primitives — roughly a day ahead of where a linear plan would have them. That buffer now sits in front of the deploy rather than behind it: **deploying is deliberately deferred to Days 11–12** (ADR-061) so the codebase only has to be correct in one place while it is still moving.
+Days 3 and 4 between them landed the whole of the engine's decision-making core — parsing, scoring, assignment, dedupe, identity, batch decomposition, classification, the audit chain and the grounding gate — which is roughly two days ahead of a linear plan. **Every one of those is the part where a casual implementation is silently wrong**, and they are done first on purpose: the work that remains is wiring, and wiring fails loudly.
 
-The first honest accuracy number lands on **Day 10, not Day 12**. That is deliberate: a measured number with two days left to react to it is useful, and the same number on the final day is only a report.
+The first honest accuracy number now lands on **Day 9, not Day 12**. That is the point of the ordering: a measured number with four days left to react to it is useful, and the same number on the final day is only a report.
+
+**What is NOT done and is the real remaining risk:** nothing is wired end to end. There is no generator, so nothing has been scored against ground truth, so every accuracy claim in this repo is still a claim about code rather than a measurement. Day 9 is when that changes, and it is the day to watch.
 
 ## 9. Submission artifacts
 

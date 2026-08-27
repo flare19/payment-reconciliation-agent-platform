@@ -232,17 +232,36 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 ### Working agreement for these units
 One logical unit → show the diff → wait for explicit approval → commit that unit alone → next. **Do not merge these branches** — Tejas reviews and merges.
 
-### Day 4 (today): units 6–8
-- **Unit 6 — S4 dedupe + S8 identity short-circuit.** The two fixes from the Day 3 review, and the highest-risk remaining logic:
-  - **S4 dedupe** requires *anchor evidence* (ADR-034). The Day 2 rule "same amount+date+counterparty in one source" collides head-on with the generator's `IDENTITY_DESTROYED` class, which deliberately plants 3+ anchorless same-amount/day/merchant rows. `SUSPECTED_DUPLICATE` needs a cluster of exactly 2; a crowd is ambiguity, not duplication.
-  - **S8 identity short-circuit** (ADR-029) is why `AMOUNT_MISMATCH` and `TIMING_DRIFT` are reachable at all. Strong anchors agreeing means identity is *established*, so the pair is resolved deterministically on value and time and **never scored**.
-- **Unit 7 — S10 batch decomposition**, with `searchExhausted` and `searchBoundExceeded` as genuinely distinct claims (ADR-038).
+### Day 4 (2026-08-27) — complete. Ten code units, all reviewed and committed individually.
 
-Then: 8 classification/precedence/severity · 9 audit hash chain · 10 the Analyst's grounding gate.
+| Unit | Commit | What |
+|---|---|---|
+| 6 | `c986847` | S4 dedupe (anchor evidence required) + S8 identity short-circuit |
+| 7 | `312806d` | S10 bounded batch decomposition + split settlements |
+| 8 | `020d25d` | S12 classification: precedence, computed severity, evidence |
+| — | 10 commits | **Independent audit pass** and its fixes (ADR-063…065) |
+| 9 | `9710362` | Audit hash chain: canonical JSON, chaining, verification |
+| 10 | `33a7b9d` | The Analyst's grounding gate (A3) |
+
+**270 tests passing.** Typecheck and build clean. Branch `day4-dedupe-and-identity`, 22 commits, **unmerged — Tejas reviews and merges.**
+
+Four locked ADRs were amended during implementation, each with a superseding entry rather than a quiet edit: **ADR-060** (deterministic node budget, not a wall clock — a time bound made exhaustiveness a property of the machine), **ADR-061** (deploy deferred until the project runs locally), **ADR-062** (`AMOUNT_MISMATCH` above the presence class — precedence is per record, but the categories describe legs), plus the build-day renumbering.
+
+### Next: Day 5 (2026-08-28) — the generator
+
+**Start with a self-contained audit of units 9–10** (the audit chain and the grounding gate), the same way units 1–8 were audited. Then `tools/generate`.
+
+The generator is the gate on everything downstream: **until it exists, nothing has been scored against ground truth, so every accuracy claim in this repo is a claim about code rather than a measurement.** Read `validation-strategy.md` §1–§4 first. Two constraints the engine already depends on:
+
+- `DUPLICATE_ROW` must emit its copy carrying the **same strong anchor** (ADR-034), because dedupe requires anchor evidence and `IDENTITY_DESTROYED` deliberately plants anchorless look-alikes.
+- For every non-`AMOUNT_TRUE_MISMATCH` event, `ledger.net_amount` must equal `gateway.amount` **exactly** (ADR-037).
+
+Unresolvability is **proved during generation**, not labelled: assert ≥3 indistinguishable candidates, run a real subset-sum check, assert no event references the orphan row.
 
 ### Carried debt, stated rather than buried
 - **Nothing is deployed, deliberately** (ADR-061). Deploying a half-built project means keeping two environments correct while dependencies, refactors and migrations are still moving. Scheduled: Day 11 (API), Day 12 (web). It is a dated task, not a spare-time task.
-- `tools/generate` and `tools/score` are still stubs. The engine cannot be scored against anything until the generator exists (Day 5).
-- No routes are mounted yet; `createApp` serves 404s by design.
+- `tools/generate` and `tools/score` are still stubs. **Nothing has been measured yet** — the engine's accuracy is currently an untested claim. Day 5 (generator) and Day 9 (scorer) are when that changes.
+- **Nothing is wired end to end.** The stages exist and are individually tested; no run orchestrator calls them in sequence, no routes are mounted, `createApp` serves 404s by design.
+- The repository layer is one file deep: only `repositories/audit.ts` exists. The rest are stubs.
 
 Update this section as the build progresses so the next session knows where it is.
