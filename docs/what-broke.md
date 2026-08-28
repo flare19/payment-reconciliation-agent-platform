@@ -256,3 +256,31 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
   **A near miss worth recording, since leaving it out would flatter the process.** U3's test suite reported a determinism failure across two pipeline runs. Determinism is ADR-032's core guarantee, so this looked like the most serious possible finding. It was `shape(groups)` where `shape` expected the whole run result — my own test bug, caught only because I checked the engine independently before believing the test. Had I reported it first, the next hour would have gone into a hunt for a bug that did not exist.
 
   **Also Day 7, filed rather than fixed:** [#38](https://github.com/flare19/payment-reconciliation-agent-platform/issues/38), a P1. `anchorAgreement` compares weak anchor keys like-for-like, and `bank_ref_no` exists only on bank rows — so a bank row whose `bank_ref_no` is byte-identical to a gateway `rrn` scores **zero** anchor and falls below the review floor on amount, date and counterparty alone. 128 of 301 bank rows carry such a value; ~24 true gateway↔bank pairs are currently unreachable. It lives in `scoring.ts`, which was out of U3's scope and is the single guard-tested scorer, so it was filed with a deadline (before AUDIT-2 on Day 8), measured evidence, and acceptance criteria written so that a fix which merely loosens matching cannot pass.
+
+- **2026-08-28 (Day 8)** — **The engine ran end to end and was persisted for the first time, and all 28 endpoints went up. Then a commit message closed a P1 issue by saying the opposite of what it meant.**
+
+  **What landed.** U6: the run orchestrator, S0–S12 against a real Postgres — 920 transactions, 284 matches, 555 exceptions, 930 audit entries, chain valid and anchored, 983 ms. U7: the 28 endpoints of the binding contract, every one exercised over real HTTP.
+
+  **THE ONE THAT MATTERS, because it is a new failure class.** Commit `f2a1245` carried the line *"Known shortfall, filed not fixed: #38"*. GitHub's closing-keyword parser matches `fix(e[sd])?\s*:?\s*#\d+` and does not read the surrounding sentence, so **`filed not fixed: #38` parsed as `fixed: #38`** and auto-closed a live P1 the moment the branch reached `main`. The sentence said, in English, the exact opposite of what the machine did with it.
+
+  It was caught only because the next session's plan called for reading the open-issue list before writing an audit prompt. Nothing in the test suite, the typechecker or the review could have caught it — **the artifact that was wrong was prose, and the reader that acted on it was a regex.**
+
+  The same phrasing was sitting in the U6 commit for #39, unpushed. It would have closed that one too on the next push. Corrected before merging; both issues are open.
+
+  **Recovered by** reopening #38 with a comment explaining the mechanism, so a future reader does not find a closed P1 with no fix and conclude it was handled. **Changed as a result — a rule:** never write `fix` / `fixed` / `closes` / `resolves` anywhere near an issue number in a commit message unless the commit does it. To reference without closing: `see #38`, `per #38`, `tracked in #38`. And a pre-merge grep, because this is exactly the class of thing that is invisible until it has already happened:
+
+  ```
+  git log --format=%B main..HEAD | grep -inE "(close[sd]?|fixe[sd]|fix|resolve[sd]?)[ :]*#[0-9]+"
+  ```
+
+  **Why this is worth a full entry rather than a line.** Every previous failure in this document was a defect in code or in a test, found by running something. This one was a defect in *documentation of intent*, found by nobody — it was going to be discovered as "why is the P1 we planned Day 8 around already closed?". The project's whole thesis is that honest reporting is a feature; a commit message that reports the opposite of what happened, to a reader that acts on it automatically, is that thesis failing in the least dramatic possible way.
+
+  **Two design calls in U6 worth recording,** both flagged in the plan as judgment rather than transcription:
+
+  *Transaction boundaries.* The obvious design — one transaction per run — is wrong for a non-obvious reason: `GET /api/runs/:runId` is the poll target while a run is in flight, and status lives on the `runs` row, so an uncommitted status is invisible. One transaction would leave a run at `pending` for its whole duration and then jump to `completed`, making the progress bar decorative. The run is therefore a sequence of phase transactions. The cost is stated rather than hidden: a crash mid-run keeps the phases that already committed, which is what ADR-046's reaper exists for and is the honest outcome — the alternative is a run that silently looks like it never happened.
+
+  *Audit-write points.* The log is a trail of DECISIONS. Ingestion is a transcription — `transactions` already holds every row with `raw_payload` intact — so it is one entry per source, not per row. `MATCH_CANDIDATE_REJECTED` is absent entirely: §9.1 floors it at 0.40 because logging every pairwise rejection is ~90k rows at 300 records. A trail nobody can read is not a trail.
+
+  **A smaller thing fixed mid-build:** S8 re-derives every pair S6 already claimed and reports `outcome: 'match'` "for completeness". Logging all of them put a second entry beside every `MATCH_CONFIRMED_EXACT` and claimed the identity stage contributed 212 findings when it contributed **9** — the amount/timing verdicts Tier 1 declined, which is the only thing S8 is for.
+
+  **Filed rather than fixed:** [#39](https://github.com/flare19/payment-reconciliation-agent-platform/issues/39), P2 — audit append costs one round trip per entry and is **~37% of a run** at 0.395 ms/entry, projecting to ~310k entries and **~122 s of pure audit writing** at ADR-045's 100k benchmark. A throughput curve dominated by a bookkeeping write says nothing about the matching engine, which is what the benchmark exists to characterise. Due before U16.

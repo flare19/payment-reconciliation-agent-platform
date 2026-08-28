@@ -1,3 +1,38 @@
-// Thin: parse, validate, delegate, serialize (CLAUDE.md §4.3).
-// Contract: docs/api-contract.md.
-export {};
+/**
+ * Endpoint 1 — the deploy smoke check.
+ *
+ * Reports what is CONFIGURED, not what is desirable. `llmConfigured: false` is a
+ * legitimate operating state (ADR-017: a run completes with the Anthropic API
+ * unavailable, every explanation falls back to a template), so this reports it
+ * as a fact rather than as a failure. A health check that goes red for a
+ * deliberate configuration teaches its reader to ignore it.
+ */
+
+import { Router } from 'express';
+import type { Env } from '../config/env.js';
+import { getPool } from '../db/pool.js';
+import { handler } from './helpers.js';
+
+export function healthRouter(env: Env, version: string): Router {
+  const r = Router();
+
+  r.get('/health', handler(async (_req, res) => {
+    let dbConnected = false;
+    try {
+      await getPool().query('SELECT 1');
+      dbConnected = true;
+    } catch {
+      // Swallowed on purpose: the endpoint's job is to REPORT reachability, and
+      // a health check that 500s tells a load balancer nothing it can act on.
+      dbConnected = false;
+    }
+    res.status(dbConnected ? 200 : 503).json({
+      status: dbConnected ? 'ok' : 'degraded',
+      dbConnected,
+      llmConfigured: env.anthropicApiKey !== null && env.llmExplainEnabled,
+      version,
+    });
+  }));
+
+  return r;
+}

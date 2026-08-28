@@ -242,7 +242,7 @@ The build is **13 working days**, Aug 23 → Sep 5. There is no Day for Aug 25 �
 | 5 | Aug 28 | Generator (`tools/generate`): economic events → projections → three CSVs + answer key + manifest hashes. Unresolvability assertions. **Done.** |
 | 6 | Aug 28 | Ingestion S1–S3: three parsers wired to the Day 3 primitives, exclusion rules, rejected rows. Blocking S5, Tier 1 S6, **and Tier 1.5 S7** (moved up from Day 7 — it re-runs S6's predicate, so it belongs with it). Isolated audit AUDIT-1 and its two P1 fixes. **Done — landed Aug 28 alongside Day 5, so the calendar now runs one day ahead of the plan.** |
 | 7 | Aug 28 | Tier 2 driver S9, group assembly S11, classification integration S12, and the repository layer (8 tables + migration 012). **Done — also Aug 28; the calendar runs two days ahead of the plan.** |
-| 8 | Aug 31 | Routes and run orchestration. **First end-to-end run.** |
+| 8 | Aug 28 | Routes and run orchestration. **First end-to-end persisted run — done, Aug 28.** AUDIT-2 outstanding. |
 | 9 | Sep 1 | Scorer (`tools/score`), score-report endpoint, metrics. **First honest cold-run number.** |
 | 10 | Sep 2 | Explain layer S13 + signature cache + templates. Agent tool registry and the investigation loop A1–A4. |
 | 11 | Sep 3 | **Deploy the API to Railway** (ADR-061). Q&A loop, scale benchmark. |

@@ -204,7 +204,7 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 
 ## 10. Current state
 
-**As of 2026-08-28 (Day 7): every engine stage S1–S12 exists and runs in sequence against the holdout, and the repository layer is complete. 284 match groups, 555 classified exceptions, ZERO false positives at every tier. What is still missing is the orchestrator that persists any of it (Day 8) and the scorer that measures it (Day 9) — so this is still a claim about code, not a measurement.**
+**As of 2026-08-28 (Day 8): the engine runs end to end, persists everything, and serves all 28 endpoints over HTTP. A full holdout run takes 983 ms and produces 920 transactions, 284 matches, 555 exceptions and a 930-entry audit chain that verifies and is anchored. What is still missing is `tools/score` — so this remains a claim about code rather than a measurement. That changes on Day 9.**
 
 > **Day numbering.** The build is 13 *working* days, Aug 23 → Sep 5. **Aug 25 is not a numbered day** — no session happened, and numbering it inflated every subsequent day by one. Corrected on Day 4; the full table is ARCHITECTURE §8.
 
@@ -219,7 +219,8 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 - **Day 4 (Aug 27)** — ten reviewed code units plus an independent audit pass.
 - **Day 5 (Aug 28)** — the generator, in six reviewed units, plus the committed holdout dataset.
 - **Day 6 (Aug 28)** — ingestion and the first two tiers, then AUDIT-1 and its two P1 fixes.
-- **Day 7 (Aug 28)** — *today.* Tier 2 + group assembly, classification integration, the repository layer.
+- **Day 7 (Aug 28)** — Tier 2 + group assembly, classification integration, the repository layer.
+- **Day 8 (Aug 28)** — *today.* The run orchestrator and the 28 routes. **AUDIT-2 still outstanding.**
 
 ### What exists in code
 
@@ -324,6 +325,37 @@ S12  555 exceptions · one primary per record · 328 carry candidate evidence
 
 **Read `docs/what-broke.md`'s Day 7 entry before starting Day 8.** It names the pattern that now dominates: three modules, each correct against its spec, each wrong the first time something actually called it. A spec cannot be executed by reading it.
 
+### Day 8 (2026-08-28) — units complete, **AUDIT-2 outstanding.**
+
+| Unit | Commit | What |
+|---|---|---|
+| U6 | `3af578f` | Run orchestrator S0–S14. **First end-to-end persisted run.** |
+| U7 | `d836a58` | All 28 endpoints of `api-contract.md`, exercised over real HTTP |
+
+**477 tests in `apps/api` (386 unit + 91 integration), 202 at root.** Typecheck and build clean.
+
+**A full holdout run, persisted:**
+
+```
+920 transactions · 284 matches (598 members) · 555 exceptions
+930 audit entries · chain valid AND anchored · 983 ms
+reference date 2026-08-21 · no record in two matches
+reconcilable 874 = 920 ingested − 37 excluded − 0 rejected − 9 duplicates
+```
+
+**Three things deliberately unwired, named rather than hidden** (`UNWIRED_STAGES` in `services/run/orchestrator.ts`):
+- **S10 batch decomposition** — built and tested, but wiring needs a decision U6 should not make alone: which unmatched bank credits enter the pool, and how a decomposition's members interact with S11's role-collision rule. Until then `UNSPLITTABLE_BATCH` is never raised and those 12 legs sit in the presence categories.
+- **S13 explain** (U11) and **S14 metrics** (U8) — status transitions and call sites exist; neither fabricates a value. `runs.metrics` stays `{}`, and endpoint 4's `headline` is `null` rather than zeroed.
+- **`POST /api/runs` variant A** (multipart upload) returns `400 MISSING_REQUIRED_FILE`. Variant B (seeded dataset) is the demo path.
+
+**⚠️ A COMMIT-MESSAGE RULE, learned the expensive way.** Commit `f2a1245` said *"filed not fixed: #38"*. GitHub parses `fix(e[sd])?\s*:?\s*#\d+` and does not read the sentence, so it **auto-closed a live P1** on merge. Never write `fix`/`fixed`/`closes`/`resolves` near an issue number unless the commit does it — use `see #38`, `per #38`, `tracked in #38`. Grep before merging:
+
+```
+git log --format=%B main..HEAD | grep -inE "(close[sd]?|fixe[sd]|fix|resolve[sd]?)[ :]*#[0-9]+"
+```
+
+**Read `docs/what-broke.md`'s Day 8 entry before starting Day 9.** It records that incident in full — the first failure in this project that was a defect in *prose* acted on by a machine, invisible to every test.
+
 ---
 
 ## THE EXECUTION PLAN — Days 6 to 13
@@ -363,8 +395,8 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 
 | # | Unit | Model | Why |
 |---|---|---|---|
-| **U6** | Run orchestrator S0–S14 | **Opus / high** | No single doc specifies it — assembled from `matching-engine.md` §1, `api-contract.md` §5, `schema.md` §4, ADR-046. Transaction boundaries and audit-write points are judgment. First real consumer of the `TxClient` contract. |
-| **U7** | Routes — 28 endpoints | **Sonnet / medium** | `api-contract.md` is binding and now shape-complete (the five missing DTOs were filled on Day 5). Endpoint 22 returns nine fields, not §22's five — see issue #28. |
+| **U6** | Run orchestrator S0–S14 | Opus / high | ✅ `3af578f`. Phase-per-transaction (the poll target needs committed status); audit records decisions, not transcription. |
+| **U7** | Routes — 28 endpoints | Opus / high | ✅ `d836a58`. All 28 over real HTTP; 24 integration tests green first run. |
 | **AUDIT-2** | Isolated audit of U3–U7 | **Opus / max** | **The last checkpoint before a number exists.** After this, wrong output becomes a wrong published figure. |
 
 ### Day 9 (Sep 1) — **the first honest number**
