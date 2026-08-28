@@ -239,9 +239,9 @@ The build is **13 working days**, Aug 23 → Sep 5. There is no Day for Aug 25 �
 | — | Aug 25 | No session. |
 | 3 | Aug 26 | **Three passes.** Pre-build design review (`ARCHITECTURE.md`, `matching-engine.md`, `ui-spec.md`, `testing-strategy.md`; ADR-028…047) · the Analyst (`agent-design.md`; ADR-048…057) · first five code units: scaffold, migrations 001–010, parsing primitives, the Tier 2 scorer, assignment. **Done.** |
 | 4 | Aug 27 | **Ten reviewed code units.** Dedupe S4 · identity short-circuit S8 · batch decomposition S10 + split settlements · classification S12 (precedence, severity, evidence) · audit hash chain + verification · the Analyst's grounding gate A3. Plus an independent audit pass and its fixes. **Done.** |
-| 5 | Aug 28 | Generator (`tools/generate`): economic events → projections → three CSVs + answer key + manifest hashes. Unresolvability assertions. |
-| 6 | Aug 29 | Ingestion: three parsers wired to the Day 3 primitives, exclusion rules, rejected rows. Blocking S5 and Tier 1 S6. |
-| 7 | Aug 30 | Tier 1.5 alias S7, group assembly S11, and the repository layer. |
+| 5 | Aug 28 | Generator (`tools/generate`): economic events → projections → three CSVs + answer key + manifest hashes. Unresolvability assertions. **Done.** |
+| 6 | Aug 28 | Ingestion S1–S3: three parsers wired to the Day 3 primitives, exclusion rules, rejected rows. Blocking S5, Tier 1 S6, **and Tier 1.5 S7** (moved up from Day 7 — it re-runs S6's predicate, so it belongs with it). Isolated audit AUDIT-1 and its two P1 fixes. **Done — landed Aug 28 alongside Day 5, so the calendar now runs one day ahead of the plan.** |
+| 7 | Aug 30 | Tier 2 driver S9, group assembly S11, classification integration S12, and the repository layer. |
 | 8 | Aug 31 | Routes and run orchestration. **First end-to-end run.** |
 | 9 | Sep 1 | Scorer (`tools/score`), score-report endpoint, metrics. **First honest cold-run number.** |
 | 10 | Sep 2 | Explain layer S13 + signature cache + templates. Agent tool registry and the investigation loop A1–A4. |
@@ -255,7 +255,7 @@ Days 3 and 4 between them landed the whole of the engine's decision-making core 
 
 The first honest accuracy number now lands on **Day 9, not Day 12**. That is the point of the ordering: a measured number with four days left to react to it is useful, and the same number on the final day is only a report.
 
-**What is NOT done and is the real remaining risk:** nothing is wired end to end. There is no generator, so nothing has been scored against ground truth, so every accuracy claim in this repo is still a claim about code rather than a measurement. Day 9 is when that changes, and it is the day to watch.
+**What is NOT done and is the real remaining risk:** nothing is wired end to end. The generator and the holdout dataset now exist (Day 5) and the engine reads them as far as Tier 1.5 (Day 6), but `tools/score` is still a stub, so nothing has been scored against ground truth and every accuracy claim in this repo is still a claim about code rather than a measurement. Day 9 is when that changes, and it is the day to watch.
 
 ## 9. Submission artifacts
 
