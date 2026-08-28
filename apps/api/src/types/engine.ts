@@ -4,8 +4,9 @@
  */
 
 import type {
-  AnchorStrength, BusinessDate, Cardinality, DateWindow, Direction, ExceptionCategory,
-  MatchStatus, MatchTier, MemberRole, PaymentMethod, Paise, Severity, SourceSystem, StatusNorm,
+  AliasScope, AliasType, AnchorStrength, BusinessDate, Cardinality, DateWindow, Direction,
+  ExceptionCategory, MatchStatus, MatchTier, MemberRole, PaymentMethod, Paise, Severity,
+  SourceSystem, StatusNorm,
 } from './domain.js';
 
 /** Keys are OMITTED when absent — never present-with-null (schema.md §3.1). */
@@ -240,6 +241,91 @@ export interface ProposedMatch {
   dateDeltaDays: number;
   aliasIds: string[];
   scoreBreakdown: ScoreBreakdown | null;
+}
+
+/**
+ * An active `learned_aliases` row, resolved for the engine (schema.md §6).
+ *
+ * `eligibleForAliasTier` is COMPUTED by the loader, never stored (matching-engine
+ * §5): an alias with `conflict_count > 0 AND confirmation_count < 2` is barred
+ * from Tier 1.5's exact re-run and may only contribute the resolved
+ * `counterparty_key` to Tier 2 (schema.md §6.3). The engine consumes the boolean
+ * and does no conflict-count bookkeeping of its own.
+ */
+export interface ActiveAlias {
+  id: string;
+  aliasType: AliasType;
+  scopeSource: AliasScope;
+  /** §3.3-normalised lookup key. */
+  normalizedValue: string;
+  /** The value it resolves to — already normalised, and never itself re-resolved (one hop, §6.3). */
+  canonicalValue: string;
+  eligibleForAliasTier: boolean;
+}
+
+/**
+ * The four candidate-generation indexes, built once per run at S5
+ * (matching-engine.md §3). Every id list is sorted by `compareCanonical`, and
+ * only reconcilable rows are indexed.
+ */
+export interface BlockIndexes {
+  /** `"<anchorKey>::<anchorValue>"` → ids. Structured strong anchors only. Serves S6, S7, S8. */
+  byStrongAnchor: Map<string, string[]>;
+  /** First 6 chars of each structured strong anchor value → ids. Serves Tier 2 near-anchor (ADR-031). */
+  byAnchorPrefix: Map<string, string[]>;
+  /** `"<txnDate>::<amountBucket>"` (bucket = `floor(amountPaise / 100000)`) → ids. Serves Tier 2. */
+  byDateAmount: Map<string, string[]>;
+  /** `counterpartyKey ?? counterpartyNorm` → ids. Serves Tier 2; rebuild after S7 if aliases are active. */
+  byCounterparty: Map<string, string[]>;
+  /** id → transaction, for resolving the id lists above. */
+  byId: Map<string, NormalizedTransaction>;
+}
+
+/**
+ * The Tier 1 predicate's verdict for one ordered pair (matching-engine.md §4.1).
+ * `null` from `tier1Match` means "not an exact match" — no reason enumeration,
+ * because the pair simply proceeds to the next stage.
+ */
+export interface Tier1Match {
+  /** Names the anchor that carried it (matching-engine.md §4.4). */
+  ruleId: string;
+  anchorKey: string;
+  anchorValue: string;
+  amountDeltaPaise: Paise;
+  dateDeltaDays: number;
+  basis: ComparisonBasis;
+  window: DateWindow;
+  reason: string;
+}
+
+/** A confirmed exact / alias-resolved pair from S6 or S7, before S11 groups it. */
+export interface Tier1PairMatch extends Tier1Match {
+  aId: string;
+  bId: string;
+  aRole: MemberRole;
+  bRole: MemberRole;
+  tier: 'exact' | 'alias';
+  /** 1.0000 for exact; a fixed 0.9500 for alias (schema.md §7). */
+  confidence: number;
+  /** Aliases that contributed to an alias-resolved match; empty for exact. */
+  aliasIds: string[];
+}
+
+/** S7 output: the pool with `counterpartyKey` populated, plus any alias-resolved matches. */
+export interface Tier15Result {
+  /** Same rows, each with `counterpartyKey` set (`counterpartyNorm` when no alias applied). */
+  pool: NormalizedTransaction[];
+  matches: Tier1PairMatch[];
+  /**
+   * One entry per record where an alias actually resolved the counterparty key
+   * (`appliedAliasId` is always non-null here) — the `ALIAS_APPLIED` audit rows.
+   * Records with no alias applied are absent; their key is still on `pool`.
+   */
+  counterpartyResolutions: {
+    transactionId: string;
+    counterpartyKey: string | null;
+    appliedAliasId: string;
+  }[];
 }
 
 /** The honest record of what the engine tried. Mandatory on every exception. */
