@@ -97,7 +97,7 @@ export function resolveIdentity(
     return { kind: 'not_established' };
   }
 
-  if (!directionAgrees(a.direction, b.direction)) {
+  if (!directionAgrees(a, b)) {
     return {
       kind: 'direction_conflict',
       anchorKey: shared.key,

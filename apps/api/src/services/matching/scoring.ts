@@ -243,7 +243,7 @@ export function scorePair(
     };
   }
 
-  if (!directionAgrees(a.direction, b.direction)) {
+  if (!directionAgrees(a, b)) {
     return {
       discarded: true,
       reason: `direction mismatch (${a.direction} vs ${b.direction}); a credit never matches a debit`,

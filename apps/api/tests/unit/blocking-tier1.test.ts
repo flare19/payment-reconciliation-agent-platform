@@ -9,6 +9,7 @@ import {
   buildBlockIndexes, strongAnchorPairs, amountBucket, rebuildCounterpartyIndex,
 } from '../../src/services/matching/blocking.js';
 import { tier1Match, runTier1 } from '../../src/services/matching/tier1-exact.js';
+import { directionAgrees } from '../../src/services/matching/tolerance.js';
 import { runTier15 } from '../../src/services/matching/tier1_5-alias.js';
 import { ingestSources } from '../../src/services/ingestion/index.js';
 import { dedupe } from '../../src/services/matching/dedupe.js';
@@ -150,8 +151,26 @@ describe('tier1Match (S6)', () => {
     assert.equal(tier1Match(gwWithRrn, bank, config), null);
   });
 
-  test('direction is a hard gate — a refund (debit) never matches a credit', () => {
-    assert.equal(tier1Match(gw({ direction: 'debit' }), led({ direction: 'credit' }), config), null);
+  test('direction gates only where BOTH sides state one (ADR-071)', () => {
+    // The gateway states direction via `status` and the bank via which amount
+    // column is populated. The ledger has no direction column at all (schema.md
+    // §2.3) — its 'credit' is a modelling constant this codebase assigns, so
+    // gating a gateway↔ledger pair on it compares a fact against an assumption.
+    assert.equal(directionAgrees(txn('g', 'gateway', 1, { direction: 'debit' }),
+                                 txn('b', 'bank', 1, { direction: 'credit' })), false);
+    assert.equal(directionAgrees(txn('g', 'gateway', 1, { direction: 'debit' }),
+                                 txn('l', 'ledger', 1, { direction: 'credit' })), true);
+  });
+
+  test('a refunded gateway row matches its ledger sale row (issue #30)', () => {
+    // REFUND_REVERSAL: the gateway records the reversal as a debit, the ledger
+    // records the original sale as a credit, and both legs are one economic
+    // event. Under the old gate this pair failed at S6, S7, S8 AND S9, costing
+    // all nine holdout refund events their ledger leg and manufacturing nine
+    // presence exceptions that the answer key says should not exist.
+    const m = tier1Match(gw({ direction: 'debit' }), led({ direction: 'credit' }), config);
+    assert.ok(m, 'a refund must still reach its ledger entry');
+    assert.equal(m!.ruleId, 'EXACT_GATEWAY_REF_V1');
   });
 
   test('currency mismatch → null (checked even though v1 is always INR)', () => {

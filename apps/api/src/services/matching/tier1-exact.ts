@@ -76,7 +76,7 @@ export function tier1Match(
   const shared = sharedStrongAnchor(a.referenceIds, b.referenceIds);
   if (shared === null) return null;
 
-  if (!directionAgrees(a.direction, b.direction)) return null;
+  if (!directionAgrees(a, b)) return null;
   if (a.currency !== b.currency) return null;
 
   const amount = evaluateAmount(a, b, config);
