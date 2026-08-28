@@ -119,7 +119,9 @@ Flattened pairwise expectations, because precision/recall is defined over pairs:
 
 ### 2.4 `manifest`
 
-Seed, generator version, generation timestamp, counts per source, scenario distribution actually realized (not just intended), and a **content hash of each emitted source file**. The scorer refuses to run if a file's hash doesn't match the key's — which makes "we scored against the wrong dataset" structurally impossible rather than a thing you notice too late.
+Seed, generator version, counts per source, scenario distribution actually realized (not just intended), the realized unresolvable count and the **theoretical maximum match rate computed from it**, and a **content hash of each emitted source file**.
+
+**No generation timestamp** (ADR-068). It was listed here originally and it contradicts §1: *"Same seed → byte-identical files and key"* cannot hold if the key embeds a clock read, and the manifest's own content hash would change on every regeneration, so the artifact could never be compared against itself. `seed` and `generatorVersion` identify it completely and reproducibly; git records when it was written. The scorer refuses to run if a file's hash doesn't match the key's — which makes "we scored against the wrong dataset" structurally impossible rather than a thing you notice too late.
 
 The same hashes are recorded independently by the engine in `runs.input_file_hashes` (`schema.md` §4), and `POST /api/runs/:runId/score-report` rejects a report whose key hash disagrees with them (`422 TRUTH_KEY_MISMATCH`). The check therefore holds from both ends: the scorer will not read the wrong files, and the API will not store a measurement of the wrong run.
 
