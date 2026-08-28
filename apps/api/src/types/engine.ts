@@ -76,6 +76,42 @@ export interface RejectedRow {
   error: string;
 }
 
+/** S1–S3 output for one source file. */
+export interface ParsedSourceResult {
+  transactions: NormalizedTransaction[];
+  rejectedRows: RejectedRow[];
+}
+
+/**
+ * S1–S3 output for the whole run — the input S4 (dedupe) consumes.
+ *
+ * `transactions` are in canonical order already: gateway file-order, then bank,
+ * then ledger, each numbered 1..N by physical position — which is exactly
+ * `compareCanonical` order, so no stage downstream has to re-sort to be
+ * deterministic about ingestion output.
+ */
+export interface IngestionResult {
+  transactions: NormalizedTransaction[];
+  rejectedRows: RejectedRow[];
+  /**
+   * MAX(txnDate) across every ingested transaction — EXCLUDED rows included
+   * (ADR-039: "before exclusion"), rejected rows excluded because they have no
+   * parseable date. Computed here because S1 is the first stage that has a
+   * business date for every surviving row. `null` only when nothing parsed.
+   */
+  referenceDate: BusinessDate | null;
+  counts: {
+    /** Transactions produced per source. Rejected rows are NOT counted here. */
+    gateway: number;
+    bank: number;
+    ledger: number;
+    /** Transactions with `statusNorm !== 'reconcilable'` (ADR-036, schema §2.1/§2.3). */
+    excluded: number;
+    /** Rows that could not be parsed at all (ADR-046) — not transactions, not exceptions. */
+    rejected: number;
+  };
+}
+
 /**
  * Resolved run configuration. Written verbatim to `runs.config_snapshot`.
  * A run's output is a pure function of (input files, this object, active aliases).
