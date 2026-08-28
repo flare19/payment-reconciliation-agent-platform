@@ -1,5 +1,5 @@
 /**
- * Synthetic data generator (Day 6). Contract: docs/validation-strategy.md §1–§4.
+ * Synthetic data generator (Day 5). Contract: docs/validation-strategy.md §1–§4.
  *
  * TRUTH FIRST — this is the whole design. The generator does not create messy
  * files and then work out what should match. It creates economic events, projects

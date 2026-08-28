@@ -9,7 +9,7 @@
     "generate": "tsx tools/generate/index.ts",
     "score": "tsx tools/score/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test --experimental-strip-types tools/**/*.test.ts"
+    "test": "node --test --import tsx tools/**/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
