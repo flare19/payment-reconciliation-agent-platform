@@ -76,7 +76,7 @@ Per ARCHITECTURE §7, this is a lightweight table — **not** an OpenAPI/Swagger
 | 21 | `/api/runs/:runId/matches` | POST | `{ createdBy, reason, members[], aliasProposals?[] }` | `201` `{ match, auditEntryIds[] }` | **Manual match** — a human asserting records are the same. (ADR-043) |
 | 22 | `/api/runs/:runId/audit/verify` | GET | — | `{ valid, entriesChecked, firstDivergenceSequenceNo }` | Recompute the audit hash chain. (ADR-042) |
 | 23 | `/api/runs/:runId/score-report` | POST | `ScoreReport` (from `tools/score`) | `201` `{ scoreReportId }` | Offline scorer posts a measurement. (ADR-041) |
-| 24 | `/api/runs/:runId/population` | GET | `?kind=excluded\|rejected\|duplicates` | `{ items[], pagination }` | Rows outside the reconcilable denominator, with the reason for each. |
+| 24 | `/api/runs/:runId/population` | GET | `?kind=excluded\|rejected\|duplicates` | `{ items: PopulationItem[], counts, pagination }` | Rows outside the reconcilable denominator, with the reason for each. |
 | 25 | `/api/runs/:runId/investigations` | POST | `{ maxInvestigations?, categories?[] }` | `202` `{ phaseId, status }` | Start Phase A on a completed run. (ADR-048) |
 | 26 | `/api/runs/:runId/investigations` | GET | `?verdict&category&page&pageSize` | `{ investigations: InvestigationSummary[], agentMetrics, pagination }` | Analyst results for a run. |
 | 27 | `/api/investigations/:investigationId` | GET | — | `InvestigationDetail` (reasoning chain, tool trace, citations, proposal) | Drill-down into one investigation. |
@@ -270,7 +270,7 @@ Returns an answer with clickable citations and the tool calls that produced it. 
   "progress": { "stage": "completed", "pct": 100 },
   "referenceDate": "2026-08-20",
   "recordCounts": { "gateway": 312, "bank": 240, "ledger": 298,
-                    "excluded": 27, "rejectedRows": 0, "nonPrimaryDuplicates": 9, "reconcilable": 823 },
+                    "excluded": 27, "rejectedRows": 1, "nonPrimaryDuplicates": 9, "reconcilable": 813 },
   "inputFileHashes": { "gateway": "sha256:…", "bank": "sha256:…", "ledger": "sha256:…" },
   "headline": { "matchRatePct": 82.4, "falsePositiveMatches": 5, "coldStartMatchRatePct": 74.1,
                 "exceptionCount": 65, "pendingReviewCount": 11 },
@@ -381,6 +381,34 @@ The pairing is enforced here, at the contract level, rather than left to UI disc
 
 `searchExhausted` and `searchBoundExceeded` are mutually exclusive and only set on `UNSPLITTABLE_BATCH`. They are **different claims** and the UI must render them differently (ADR-038): "the engine searched every combination and none works" is a proof, while "the engine hit its node budget" is a limit. Collapsing both into the word *unsplittable* would overstate the first and hide the second.
 
+### `MatchSummary` (endpoint 8)
+
+```json
+{
+  "matchId": "…", "tier": "alias", "cardinality": "one_to_one",
+  "status": "auto_confirmed", "confidence": 0.9500,
+  "ruleId": "EXACT_PAYMENT_ID_V1", "ruleVersion": "1.0.0",
+  "countsTowardEngineMatchRate": true,
+  "headlineAmountPaise": 123450, "headlineAmountDisplay": "₹1,234.50",
+  "headlineAmountSource": "gateway",
+  "members": [
+    { "transactionId": "…", "role": "gateway", "externalId": "pay_QK29fT10aXbZ81",
+      "amountPaise": 123450, "amountDisplay": "₹1,234.50", "txnDate": "2026-08-14",
+      "counterpartyRaw": "AMZN" },
+    { "transactionId": "…", "role": "bank", "externalId": "SBIN0R52…",
+      "amountPaise": 119812, "amountDisplay": "₹1,198.12", "txnDate": "2026-08-16",
+      "counterpartyRaw": "AMAZON RETAIL IN" }
+  ],
+  "matchedAt": "2026-08-24T09:00:03.118Z"
+}
+```
+
+`tier` has **five** values, not four: `exact | alias | fuzzy | batch | manual`. `manual` is the one that carries weight — a human asserting two records are the same (ADR-043) is not the engine matching them.
+
+`countsTowardEngineMatchRate` is **server-computed** (`tier !== "manual" && status !== "human_rejected"`), not a stored column, and the frontend must not re-derive it — the same rule as `eligibleForAliasTier` below, for the same reason. This screen is where a viewer forms an impression of how much the engine did, and a browse list that silently counts human fixes as engine matches would overstate exactly the number the whole project exists to state honestly.
+
+`headlineAmount*` exists because a browse table needs one sortable amount per row, and a match may hold three legs with three different amounts. Its derivation is fixed and reported rather than left implicit: **the gateway leg if one exists, else the bank leg, else the ledger leg**, with `headlineAmountSource` naming which was used. For `one_to_many` the non-headline side keeps its per-member amounts and is not summed here — a summed column would look authoritative while hiding whether the legs actually reconcile, which is the drill-down's job.
+
 ### `ReviewItem` (endpoint 9)
 
 ```json
@@ -402,6 +430,36 @@ The pairing is enforced here, at the contract level, rather than left to UI disc
 ```
 
 `aliasSuggestions` is produced **deterministically** — it is simply the differing field pair the reviewer is already looking at, pre-filled into the form. It is not an LLM inference (see `schema.md` §12). `wouldAlsoResolve` counts other records in the same run whose normalized values would be covered by this alias — it tells the reviewer the leverage of the correction they're about to make, and it is the number that makes the alias-learning feature legible in a 5-minute demo.
+
+### `TransactionDetail` (endpoint 12)
+
+```json
+{
+  "transactionId": "…", "runId": "…",
+  "sourceSystem": "gateway", "sourceFile": "gateway_export.csv", "sourceRowNumber": 87,
+  "externalId": "pay_QK29fT10aXbZ81",
+  "referenceIds": { "paymentId": "pay_QK29fT10aXbZ81", "orderId": "ord_88121", "rrn": null, "utr": null },
+  "anchorStrength": "strong",
+  "amountPaise": 123450, "amountDisplay": "₹1,234.50",
+  "feePaise": 2911, "taxPaise": 524, "netAmountPaise": 120015,
+  "currency": "INR", "direction": "credit",
+  "txnDate": "2026-08-14", "txnTimestamp": "2026-08-14T18:42:11.000Z", "postingDate": null,
+  "counterpartyRaw": "AMZN", "counterpartyNorm": "AMZN", "counterpartyKey": "AMAZON RETAIL",
+  "method": "card", "statusRaw": "captured", "statusNorm": "reconcilable",
+  "txnType": null, "descriptionRaw": "AMZN*RETAIL 8812",
+  "duplicateOfTransactionId": null, "duplicateKind": null,
+  "ingestWarnings": [],
+  "membership": { "matchId": "…", "role": "gateway", "matchStatus": "auto_confirmed" },
+  "exceptionId": null,
+  "rawPayload": { "…": "the verbatim source row, unmodified" }
+}
+```
+
+`rawPayload` is the point of this endpoint, not a debugging extra. Ingestion is lossless and opinion-free (ADR-007) precisely so a panelist can be shown the raw row next to what the parser made of it; an inspector that shows only normalized fields asks the viewer to trust the parser, which is the one thing this screen exists to avoid.
+
+`membership` and `exceptionId` are the two navigation links, and on a **completed** run exactly one of them is non-null for any row whose `statusNorm` is `reconcilable` and whose `duplicateOfTransactionId` is null. Both null on a completed run means a reconcilable record was neither matched nor classified — a bug, and one worth surfacing rather than rendering as an empty panel.
+
+`counterpartyKey` is null until Tier 1.5 runs, so it is null for every row on a run that never reached S7.
 
 ### `AuditEntry` (endpoints 13, 14, 18)
 
@@ -438,6 +496,116 @@ Sorted by `sequenceNo` ascending — chronological, and deterministic even for e
 ```
 
 `eligibleForAliasTier` is a **server-computed** boolean (`conflictCount === 0 || confirmationCount >= 2`), not a stored column. The frontend must not re-derive that rule — one place owns it, and that place is the server.
+
+### Endpoint 19 · CSV export
+
+Not JSON. `text/csv; charset=utf-8`, with
+
+```
+Content-Disposition: attachment; filename="recon-<runId>-<scope>-<referenceDate>.csv"
+```
+
+**`scope=exceptions`** — one row per exception:
+
+```
+run_id, reference_date, exception_id, category, secondary_flags, severity, status,
+source_system, source_row_number, external_id, amount_paise, amount_inr, txn_date,
+counterparty_raw, candidates_considered, explanation, explanation_source, suggested_action
+```
+
+**`scope=matches`** — **one row per member**, not per match, with `match_id` repeated across a match's rows. A single row per match would need an array column, which is unusable in the spreadsheet this file exists to be opened in:
+
+```
+run_id, reference_date, match_id, tier, cardinality, status, confidence, rule_id,
+counts_toward_engine_match_rate, member_source_system, member_source_row_number,
+member_external_id, member_amount_paise, member_amount_inr, member_txn_date, member_role
+```
+
+Four rules this format is carrying:
+
+- **`run_id` and `reference_date` are on every row.** A CSV leaves the application and loses all of its context; a number in a spreadsheet with no run identity is the kind of artifact that gets quoted back at you attached to the wrong run.
+- **`amount_paise` is authoritative and `amount_inr` is derived at serialization** for human reading (ADR-006). Both are emitted from the same value in one place, so they cannot drift; the integer is the one to re-import.
+- **`explanation_source` travels next to `explanation`,** so a template fallback is never mistaken for model-written prose (`schema.md` §10.1).
+- **No ground-truth columns, ever.** This is engine output. Precision, recall and false-positive counts live in `score_reports` and reach the client through endpoint 5's `measured` object (ADR-041). An export that mixed them would put a measured number in a file with no record of what it was measured against.
+
+### `PopulationItem` (endpoint 24)
+
+The honest-denominator surface. Every row removed from the reconcilable population, with the reason it was removed.
+
+```json
+{
+  "items": [
+    { "kind": "excluded",
+      "sourceSystem": "gateway", "sourceRowNumber": 141, "transactionId": "…",
+      "externalId": "pay_QK7712xxA", "amountPaise": 45000, "amountDisplay": "₹450.00",
+      "txnDate": "2026-08-13", "statusRaw": "failed", "statusNorm": "excluded_failed",
+      "reason": "Gateway status 'failed' — never settled, so there is nothing to reconcile it against.",
+      "primaryTransactionId": null, "duplicateKind": null, "rawLine": null, "parseError": null },
+
+    { "kind": "duplicate",
+      "sourceSystem": "gateway", "sourceRowNumber": 214, "transactionId": "…",
+      "externalId": "pay_QK29fT10aXbZ81", "amountPaise": 123450, "amountDisplay": "₹1,234.50",
+      "txnDate": "2026-08-14", "statusRaw": "captured", "statusNorm": "reconcilable",
+      "reason": "Same strong anchor pay_QK29fT10aXbZ81 as row 87; retry artifact (ADR-034).",
+      "primaryTransactionId": "…", "duplicateKind": "exact", "rawLine": null, "parseError": null },
+
+    { "kind": "rejected",
+      "sourceSystem": "bank", "sourceRowNumber": 58, "transactionId": null,
+      "externalId": null, "amountPaise": null, "amountDisplay": null,
+      "txnDate": null, "statusRaw": null, "statusNorm": null,
+      "reason": "Unparseable: amount column held '12,34,5O.00' — letter O in a numeric field.",
+      "primaryTransactionId": null, "duplicateKind": null,
+      "rawLine": "58,SBIN0R52…,12,34,5O.00,2026-08-16,…", "parseError": "AMOUNT_UNPARSEABLE" }
+  ],
+  "counts": { "excluded": 27, "rejected": 1, "duplicates": 9, "reconcilable": 813, "totalRows": 850 },
+  "pagination": { "page": 1, "pageSize": 50, "total": 37 }
+}
+```
+
+**The three kinds are not variations of one thing, and the shape says so.** `excluded` rows parsed cleanly and were removed by status. `duplicate` rows are real, parsed records that lost the primary election in S4. `rejected` rows **never became transactions at all** — they live in `runs.rejected_rows` (`schema.md` §4), not in `transactions`, so `transactionId` is `null` and there are no normalized fields to report. They carry `rawLine` and `parseError` instead. A client that assumes `transactionId` is always present will break on the first malformed row in the dataset.
+
+**`primaryTransactionId` on a duplicate is the link that makes the removal honest.** "This row was taken out of the denominator" is only a complete statement with "…because that row represents it" attached, and the UI should make it clickable.
+
+**`reason` is always populated and always human-readable.** A code alone (`excluded_failed`) tells a panelist nothing; this endpoint exists specifically to answer "what did you take out?" in a form that does not require reading the schema.
+
+**`counts` must reconcile: `excluded + rejected + duplicates + reconcilable === totalRows`** — ADR-040's denominator definition restated as an identity the client can check. The arithmetic is the feature. A denominator that cannot be added up is a denominator nobody should trust, and if the identity ever fails, a row is unaccounted for and the match rate is wrong. The frontend renders the sum; the server should assert it before responding.
+
+### `InvestigationSummary` and `agentMetrics` (endpoint 26)
+
+```json
+{
+  "investigations": [
+    { "investigationId": "…", "exceptionId": "…", "category": "UNSPLITTABLE_BATCH",
+      "severity": "high", "status": "concluded",
+      "verdict": "RESOLUTION_PROPOSED", "confidence": "high",
+      "proposedActionType": "MANUAL_MATCH",
+      "summary": "Six gateway payments net to this credit once the pool is widened past the engine's cap.",
+      "groundingPassed": true, "groundingFailure": null, "budgetExhausted": false,
+      "steps": 5, "toolCalls": 7, "costUsd": 0.0312,
+      "humanDisposition": null, "resultingMatchId": null,
+      "startedAt": "…", "finishedAt": "…" }
+  ],
+  "agentMetrics": {
+    "investigationsRun": 20,
+    "verdictDistribution": { "RESOLUTION_PROPOSED": 7, "CONFIRMED_UNRESOLVABLE": 9,
+                             "NEEDS_EXTERNAL_DATA": 2, "INSUFFICIENT_EVIDENCE": 2 },
+    "meanSteps": 4.8, "meanToolCalls": 6.4,
+    "groundingFailures": 2, "budgetExhaustions": 1,
+    "tokensIn": 128400, "tokensOut": 9120, "costUsdTotal": 0.61,
+    "promptCacheHitRatePct": 94.0,
+    "model": "claude-sonnet-5", "promptVersion": "agent-v1"
+  },
+  "pagination": { "page": 1, "pageSize": 25, "total": 20 }
+}
+```
+
+**`agentMetrics` is OPERATIONAL ONLY, and the omission is the design.** Everything in it is computed from `agent_investigations` with no ground truth involved (`agent-design.md` §7). The Analyst's ground-truth metrics — false-despair recovered, proposal precision, **hallucinated resolutions (must be 0)** and unresolvable agreement (ADR-053) — are deliberately **not here**. They are produced offline by `tools/score`, stored in `score_reports`, and reach the client through endpoint 5's `measured` object.
+
+This is endpoint 5's `engine` / `measured` split applied to the agent, for exactly the reason ADR-041 gives: one object is the agent's account of itself, the other is a measurement of it. Returning `proposalPrecision` from this endpoint would be a ground-truth number arriving out of the engine's own table, which is the specific failure ADR-041 exists to prevent — and it would be a far easier mistake to make here than on endpoint 5, because both kinds of number are about the same subject.
+
+**`groundingFailures` is reported, never suppressed.** A rising count means the prompt or the tools need work (`agent-design.md` §7); hiding it would remove the only signal that the gate is doing something.
+
+`proposedActionType` is a bare type here, not the full action — the list is a triage surface, and the members a `MANUAL_MATCH` proposes are what endpoint 27 is for. `summary` is the model's own one-line conclusion and is the only model-authored prose in this response.
 
 ---
 

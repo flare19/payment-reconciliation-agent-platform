@@ -271,7 +271,8 @@ CREATE TABLE runs (
   started_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
   finished_at       TIMESTAMPTZ,                -- NULL until terminal state
   reference_date    DATE,                       -- ADR-039: MAX(txn_date) over the dataset. NULL until ingestion completes.
-  record_counts     JSONB NOT NULL DEFAULT '{}'::jsonb,   -- {gateway: 312, bank: 240, ledger: 298, excluded: 27, reconcilable: 823}
+  record_counts     JSONB NOT NULL DEFAULT '{}'::jsonb,   -- {gateway: 312, bank: 240, ledger: 298, excluded: 27, rejected: 1,
+                                                        --  nonPrimaryDuplicates: 9, reconcilable: 813}
   rejected_row_count INT NOT NULL DEFAULT 0,     -- ADR-046: rows that could not be parsed. NOT exceptions.
   rejected_rows     JSONB NOT NULL DEFAULT '[]'::jsonb,   -- [{source, rowNumber, rawLine, error}]
   input_file_hashes JSONB NOT NULL DEFAULT '{}'::jsonb,   -- {gateway: 'sha256:…', bank: '…', ledger: '…'}
@@ -918,8 +919,8 @@ Metrics are therefore two separate things in two separate tables, and the separa
 {
   "match_rate": {
     "match_rate_pct": 82.4,
-    "matched_records": 678,
-    "reconcilable_records": 823,
+    "matched_records": 670,
+    "reconcilable_records": 813,
     "denominator_note": "ingested − excluded − rejected_rows − non_primary_duplicates (ADR-040)",
     "pending_review_excluded": 11
   },
@@ -938,7 +939,7 @@ Metrics are therefore two separate things in two separate tables, and the separa
     "candidate_cap_hits": 3,
     "batch_search_exhausted": 5, "batch_search_bound_exceeded": 2
   },
-  "population": { "ingested": 850, "excluded": 27, "rejected_rows": 0, "non_primary_duplicates": 9, "reconcilable": 823 },
+  "population": { "ingested": 850, "excluded": 27, "rejected_rows": 1, "non_primary_duplicates": 9, "reconcilable": 813 },
   "throughput": {
     "records_per_sec_engine": 412.0,
     "records_per_sec_wall_clock": 96.5,

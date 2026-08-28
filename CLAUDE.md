@@ -127,6 +127,7 @@ Rationale for each is in [docs/adr-log.md](docs/adr-log.md). Don't re-litigate t
 11. **The agent's tool registry contains no mutating tool, ever.** Phase A proposes; humans dispose through endpoints 16/20/21. If you find yourself adding a write tool, the design has gone wrong. (ADR-049, ADR-051)
 12. **The agent never does arithmetic.** It calls `score_pair` / `rerun_subset_search`, which run the engine's own locked code. A number in a reasoning chain that the engine didn't compute is a bug. (ADR-049)
 13. **Nothing in Phase A may appear in S0–S14.** The engine must run identically with `AGENT_ENABLED=false`. (ADR-048)
+14. **Anything that takes a database client takes `TxClient`, not `pg.PoolClient`.** `withTransaction` is its only producer. A transaction-scoped advisory lock taken on a client that is not inside a transaction is released by the statement that takes it, and protects nothing — silently. This repo has shipped that class of bug twice: the migration runner (session lock on a `Pool`) and the audit chain (transaction lock on a bare client). Read the ADVISORY LOCKS note at the top of `db/pool.ts` before adding a third lock. (ADR-066)
 
 ---
 
