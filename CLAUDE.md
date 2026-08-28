@@ -204,7 +204,7 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 
 ## 10. Current state
 
-**As of 2026-08-27 (Day 4): architecture LOCKED. Five code units landed on Day 3, on branch `day5-scaffold-and-core` (named before the day count was corrected — the branch holds Day 3's work). Not yet merged.**
+**As of 2026-08-28 (Day 5): the generator is built and the holdout dataset is committed. The project has something to measure against for the first time — but has not measured anything yet. That is Day 9.**
 
 > **Day numbering.** The build is 13 *working* days, Aug 23 → Sep 5. **Aug 25 is not a numbered day** — no session happened, and numbering it inflated every subsequent day by one. Corrected on Day 4; the full table is ARCHITECTURE §8.
 
@@ -248,21 +248,116 @@ One logical unit → show the diff → wait for explicit approval → commit tha
 
 Four locked ADRs were amended during implementation, each with a superseding entry rather than a quiet edit: **ADR-060** (deterministic node budget, not a wall clock — a time bound made exhaustiveness a property of the machine), **ADR-061** (deploy deferred until the project runs locally), **ADR-062** (`AMOUNT_MISMATCH` above the presence class — precedence is per record, but the categories describe legs), plus the build-day renumbering.
 
-### Next: Day 5 (2026-08-28) — the generator
+### Day 5 (2026-08-28) — complete. The generator, in six reviewed units.
 
-**Start with a self-contained audit of units 9–10** (the audit chain and the grounding gate), the same way units 1–8 were audited. Then `tools/generate`.
+| Unit | Commit | What |
+|---|---|---|
+| G1 | `2f5472b` | Deterministic substrate: seeded `sfc32`, scrambled per seed, named sub-streams (ADR-067) |
+| G2 | `898eceb` | Economic event model + §3 scenario distribution, largest-remainder allocation |
+| G3 | `4063523` | Projection contract + 13 invariants, **written before the projection they police** |
+| G4 | `054bb64` | §4 unresolvability proofs + planting, running the ENGINE's own normalizer/tolerance/subset search |
+| G5 | `8aef802` | Answer key + manifest (ADR-068: no timestamp, publishes the computed ceiling) |
+| G6 | `ff5fffb` | Projection, CSV emission, orchestrator behind `npm run generate` |
+| — | `c169e61` | **The holdout dataset and its answer key** — the first measurable artifact |
 
-The generator is the gate on everything downstream: **until it exists, nothing has been scored against ground truth, so every accuracy claim in this repo is a claim about code rather than a measurement.** Read `validation-strategy.md` §1–§4 first. Two constraints the engine already depends on:
+**202 tests at root, 308 in `apps/api`.** Typecheck and build clean in both. ADR-067…070.
 
-- `DUPLICATE_ROW` must emit its copy carrying the **same strong anchor** (ADR-034), because dedupe requires anchor evidence and `IDENTITY_DESTROYED` deliberately plants anchorless look-alikes.
-- For every non-`AMOUNT_TRUE_MISMATCH` event, `ledger.net_amount` must equal `gateway.amount` **exactly** (ADR-037).
+**The dataset:** 300 events → 920 records (323 gateway / 301 bank / 296 ledger), 21 designed-unresolvable split 9/6/6, **ceiling 93.0% computed from realized data**, 881 expected pairs, 11 alias entries (all cold). Committed at `data/fixtures/holdout/` + `data/truth/holdout_seed_90210.json`. Dev datasets are gitignored — regenerate with `npm run generate -- dev`.
 
-Unresolvability is **proved during generation**, not labelled: assert ≥3 indistinguishable candidates, run a real subset-sum check, assert no event references the orphan row.
+**Read `docs/what-broke.md`'s Day 5 entry before delegating anything.** It records the `captured_at` bug that three layers of verification walked past, the fourth instance of a test that could not fail, and a precise account of why the G6 delegation cost far more than the work was worth.
+
+---
+
+## THE EXECUTION PLAN — Days 6 to 13
+
+**Read this before starting anything. The order is dependency-driven, not preference.**
+Each unit is one commit, reviewed before the next starts (the working agreement since Day 3).
+`AUDIT-n` are **isolated sessions** — fresh context, audit-only, file findings as GitHub issues, fix nothing in the same session.
+
+### Model routing for this phase (ARCHITECTURE §3, plus the Day 5 corollary)
+
+| Profile | When |
+|---|---|
+| **Sonnet / medium** | Mechanical against a complete spec, with existing tests or guards to check against |
+| **Sonnet / high** | Mechanical, but carrying one invariant that fails SILENTLY if got wrong |
+| **Opus / high** | Judgment, spec ambiguity, or anything whose error corrupts a measured number |
+| **Opus / max** | Audits only. An audit must catch what the builder missed, which is the builder's blind spot by definition |
+
+> **The Day 5 corollary: the cheap model is only cheap if the session stays short.** Cost is turns × context. Every delegation prompt must carry: read by grep and section, never whole files; write and typecheck ONE module at a time; commit each module as it passes; no exploratory sweeps beyond the unit's stated acceptance criteria.
+
+### Day 6 (Aug 29) — ingestion and the first tiers
+
+| # | Unit | Model | Why |
+|---|---|---|---|
+| **U1** | Ingestion parsers S1–S3: three parsers, exclusion rules, rejected-row capture | **Sonnet / high** | Fully specified (`schema.md` §2.1–2.3), primitives built and tested — but `source_row_number` is the answer key's join key, and an off-by-one silently corrupts EVERY measurement. Fixtures now exist to test against. |
+| **U2** | Blocking S5 + Tier 1 S6 + Tier 1.5 S7 | **Sonnet / high** | Four block indexes named in `matching-engine.md` §3; the Tier 1.5 duplication guard already exists and will fail if the predicate is copied rather than re-run |
+| **AUDIT-1** | Isolated audit of U1+U2 | **Opus / max** | The parser is the widest blast radius in the project: everything downstream reads what it produced. Catch it here or measure the wrong thing on Day 9. |
+
+### Day 7 (Aug 30) — the rest of the matching core, plus persistence
+
+| # | Unit | Model | Why |
+|---|---|---|---|
+| **U3** | Tier 2 driver S9 + group assembly S11 | **Sonnet / medium** | Scorer and assignment exist and are guard-tested; this is candidate generation plus wiring. **Note: S9's driver is missing from ARCHITECTURE §8's day table — it is real work, do not skip it.** |
+| **U4** | Classification integration S12 | **Sonnet / medium** | `classify.ts` is built and tested; this constructs `ClassificationInput` from pipeline output |
+| **U5** | Repositories — 8 stubs | **Sonnet / medium** | `repositories/audit.ts` is a complete worked example. Prompt MUST carry: all SQL here, `TxClient` not `PoolClient` (rule 14), explicit `ORDER BY` on every decision-feeding query (ADR-032) |
+
+### Day 8 (Aug 31) — wiring. **First end-to-end run.**
+
+| # | Unit | Model | Why |
+|---|---|---|---|
+| **U6** | Run orchestrator S0–S14 | **Opus / high** | No single doc specifies it — assembled from `matching-engine.md` §1, `api-contract.md` §5, `schema.md` §4, ADR-046. Transaction boundaries and audit-write points are judgment. First real consumer of the `TxClient` contract. |
+| **U7** | Routes — 28 endpoints | **Sonnet / medium** | `api-contract.md` is binding and now shape-complete (the five missing DTOs were filled on Day 5). Endpoint 22 returns nine fields, not §22's five — see issue #28. |
+| **AUDIT-2** | Isolated audit of U3–U7 | **Opus / max** | **The last checkpoint before a number exists.** After this, wrong output becomes a wrong published figure. |
+
+### Day 9 (Sep 1) — **the first honest number**
+
+| # | Unit | Model | Why |
+|---|---|---|---|
+| **U8** | `metrics/run-metrics.ts` S14 | **Opus / high** | ADR-040's denominator is prose; three defensible readings give three different headline match rates. The worked examples were corrected on Day 5 — implement from ADR-040 itself, not from an example. |
+| **U9** | `tools/score` | **Opus / high** | The purest case: no test can catch a scorer that is wrong in the direction you hoped. §5.1.1's `pending_review` handling and the group→pair mapping are both judgment. |
+| **U10** | **First scored cold run** against `data/truth/holdout_seed_90210.json` | **Opus / high** | Report cold AND warm with the false-positive count beside them (ADR-020). Whatever the number is, it goes in `what-broke.md` unedited. |
+
+### Day 10 (Sep 2) — explain layer and the Analyst
+
+| # | Unit | Model | Why |
+|---|---|---|---|
+| **U11** | Explain layer S13: signature, cache, LLM client, templates | **Sonnet / medium** | `schema.md` §10 is the most complete spec in the repo. Run must complete with the API unavailable (`explanation_source = 'template'`). |
+| **U12** | Agent tool registry | **Opus / high** | `score_pair`/`rerun_subset_search` must call locked engine code (ADR-049) — the first `services/agent` → `services/matching` import, which is legal and required. `agent-design.md` §4 still says "meet-in-the-middle"; ADR-060 replaced that with depth-first. Fix the doc. |
+| **U13** | Investigation loop A2 + triage A1 | **Opus / high** (loop), **Sonnet / medium** (triage) | The loop decides whether the grounding gate's per-investigation property holds; #21's `investigationId` plumbing is already in place and must be honoured. Triage's `ORDER BY` is stated exactly. |
+| **AUDIT-3** | Isolated audit of U11–U13 | **Opus / max** | Hallucination is a build blocker (ADR-053), not a metric |
+
+### Day 11 (Sep 3) — deploy and scale
+
+| # | Unit | Model |
+|---|---|---|
+| **U14** | Deploy API to Railway (ADR-061) | **Opus / high** — first environment, `deployment.md` §5 |
+| **U15** | Q&A loop | **Sonnet / medium** — same loop, smaller budget, one tool removed |
+| **U16** | Scale benchmark 1k/10k/100k (ADR-045) | **Sonnet / medium** — generator is already parameterized by event count |
+
+### Day 12 (Sep 4) — frontend
+
+| # | Unit | Model | Why |
+|---|---|---|---|
+| **U17** | Design direction + dashboard | **Opus / high** | CLAUDE.md §8's own routing rule: Opus for the creative pass |
+| **U18** | Remaining screens | **Sonnet / medium** | `ui-spec.md` §1–9 + the endpoint-to-screen map. §8's degradation order is pre-agreed — cut from the bottom and SAY what was cut. |
+| **U19** | Deploy web to Vercel | **Sonnet / medium** | |
+
+### Day 13 (Sep 5) — submission
+
+| # | Unit | Model |
+|---|---|---|
+| **AUDIT-4** | Final pre-submission audit, whole repo | **Opus / max** |
+| **U20** | Holdout run, accuracy report, README, pitch video, build-challenges write-up | **Opus / high** |
+
+### Open P2/P3 issues (#20, #22–#29)
+Not scheduled. Sweep them at AUDIT-2 and fold any that touch the measurement into Day 9.
 
 ### Carried debt, stated rather than buried
-- **Nothing is deployed, deliberately** (ADR-061). Deploying a half-built project means keeping two environments correct while dependencies, refactors and migrations are still moving. Scheduled: Day 11 (API), Day 12 (web). It is a dated task, not a spare-time task.
-- `tools/generate` and `tools/score` are still stubs. **Nothing has been measured yet** — the engine's accuracy is currently an untested claim. Day 5 (generator) and Day 9 (scorer) are when that changes.
-- **Nothing is wired end to end.** The stages exist and are individually tested; no run orchestrator calls them in sequence, no routes are mounted, `createApp` serves 404s by design.
-- The repository layer is one file deep: only `repositories/audit.ts` exists. The rest are stubs.
+- **Nothing is deployed, deliberately** (ADR-061). Day 11 (API), Day 12 (web). A dated task, not a spare-time task.
+- **`tools/score` is still a stub, so nothing has been MEASURED.** The dataset to measure against now exists; the measurement is Day 9. Until then every accuracy claim here is still a claim about code.
+- **Nothing is wired end to end.** Stages exist and are individually tested; no orchestrator calls them in sequence, no routes are mounted, `createApp` serves 404s by design.
+- The repository layer is one file deep: only `repositories/audit.ts` exists.
+- `proofs.ts`'s `matcherView` is a VIEW, not a parser. When U1 lands, the §4 proofs should be re-run through the real parsers.
+- `testing-strategy.md` §2 plans a 60-event DEV_SEED golden snapshot. **60 events is too few** — §3's 2.8% `IDENTITY_DESTROYED` share rounds below the 3-member cluster floor and the generator correctly refuses. Use ≥100 events or raise that weight for the snapshot config.
 
 Update this section as the build progresses so the next session knows where it is.

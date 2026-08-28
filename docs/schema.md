@@ -115,7 +115,7 @@ Models an internal accounting export. Structured, but written by humans and by a
 | `discount` | string, rupees, often `0.00` | Subtracted before tax. A source of legitimate amount divergence. |
 | `tax_amount` | string, rupees | GST on the sale (distinct from GST on the gateway fee — a classic confusion this dataset should contain). |
 | `net_amount` | string, rupees | `gross - discount + tax` — **what the customer was actually charged, and therefore the field that equals gateway `amount`** (ADR-037). Note: ledger net ≠ gateway *net*. Gateway net is after gateway fees; ledger net is before them. Compare ledger net to gateway **gross**, never to gateway net. |
-| `entry_date` | `MM/DD/YYYY` | **US-format, third distinct date format.** Ambiguity between `03/04` and `04/03` is real and deliberate; generator only emits days ≥ 13 in ~30% of rows so the parser cannot cheat by inference. Parser must be told the format, not guess it. |
+| `entry_date` | `MM/DD/YYYY` | **US-format, third distinct date format.** Ambiguity between `03/04` and `04/03` is real and deliberate: a day ≤ 12 could equally be a month, so an inferring parser has to guess. **~40 % of ledger rows are ambiguous** and the generator asserts it stays above 35 % (ADR-070 — the original "~30 % unambiguous" target was arithmetically unreachable). Parser must be told the format, not guess it. |
 | `account_code` | `4000`–`4999` | Revenue account. Not used for matching. |
 | `posted_by` | string | Carried for audit only. |
 | `memo` | free text | Carried for audit only. |
