@@ -76,6 +76,30 @@ describe('single-implementation guarantees', () => {
       `Similarity belongs in ${SCORING} only (ADR-049).`);
   });
 
+  test('the GENERATOR computes nothing the engine already computes', async () => {
+    // §4's proofs must run the ENGINE'S normalizer, tolerance and subset search.
+    // Unresolvability that only holds because the generator's own search is weak
+    // is not unresolvability — it is a property of the generator, and the answer
+    // key would be asserting it about the dataset. Same failure as ADR-049's, one
+    // layer down: the thing that checks must not be the thing that decides.
+    const TOOLS = new URL('../../../../tools/', import.meta.url).pathname;
+    const forbidden = [
+      { pattern: /function\s+\w*[Nn]ormali[sz]e\w*\s*\(/, what: 'its own normalizer' },
+      { pattern: /function\s+\w*(?:[Ss]imilarity|[Tt]rigram|[Ll]evenshtein)\w*\s*\(/, what: 'its own similarity' },
+      { pattern: /function\s+\w*[Ss]ubset[Ss]um\w*\s*\(|function\s+\w*[Ss]earchSubsets\w*\s*\(/, what: 'its own subset search' },
+      { pattern: /function\s+\w*[Tt]oleranceBand\w*\s*\(/, what: 'its own tolerance band' },
+    ];
+    const offenders: string[] = [];
+    for (const file of await walk(TOOLS)) {
+      const code = stripComments(await readFile(file, 'utf8'));
+      for (const { pattern, what } of forbidden) {
+        if (pattern.test(code)) offenders.push(`${file.replace(TOOLS, '')}: ${what}`);
+      }
+    }
+    assert.deepEqual(offenders, [],
+      'The generator must import these from apps/api/src, never reimplement them.');
+  });
+
   test('the agent services directory contains no scoring arithmetic', async () => {
     // ADR-049 in its sharpest form: the agent chooses which questions to ask,
     // deterministic code computes every answer.
