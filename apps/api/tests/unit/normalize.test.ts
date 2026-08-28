@@ -91,9 +91,17 @@ describe('normalizeBankDescription', () => {
     assert.equal(normalizeBankDescription('NEFT-FOO BAR-9876543210-BATCH01'), 'FOO BAR');
   });
 
-  test('a description that is only scaffolding does not become empty', () => {
+  test('a description that is only scaffolding yields a rail word or null, never ""', () => {
+    // A lone rail word is kept: it is at least a word, and the empty string would
+    // collide with every other empty one and turn a missing name into a false
+    // match on a component that is meant to be evidence.
     assert.equal(normalizeBankDescription('NEFT'), 'NEFT');
-    assert.equal(normalizeBankDescription('BATCH12'), 'BATCH12');
+    // A description that is nothing but reference tokens carries no counterparty,
+    // and `null` says so honestly (issue #31). Keeping 'BATCH12' would invent a
+    // name that matches nothing and buckets alone in byCounterparty; `null` is
+    // skipped by the index and scores 0 in trigramSimilarity.
+    assert.equal(normalizeBankDescription('BATCH12'), null);
+    assert.equal(normalizeBankDescription('SETL-234567890123-BATCH12'), null);
   });
 
   test('truncated descriptions degrade rather than throw', () => {

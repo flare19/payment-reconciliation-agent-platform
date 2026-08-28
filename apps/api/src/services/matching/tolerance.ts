@@ -7,7 +7,7 @@
  */
 
 import type {
-  BusinessDate, DateWindow, Direction, PaymentMethod, Paise, SourceSystem,
+  BusinessDate, DateWindow, PaymentMethod, Paise, SourceSystem,
 } from '../../types/domain.js';
 import type { ComparisonBasis, NormalizedTransaction, RunConfig } from '../../types/engine.js';
 import { dayDelta } from '../ingestion/dates.js';
@@ -228,9 +228,43 @@ export function evaluateDate(
   return { deltaDays: delta, window, within: delta >= window[0] && delta <= window[1] };
 }
 
-/** Direction is a HARD GATE at every tier, never a scored component (ADR-035). */
-export function directionAgrees(a: Direction, b: Direction): boolean {
-  return a === b;
+/**
+ * Sources that STATE a direction as a fact of the row.
+ *
+ * The gateway states it (`status` — `captured` is a credit, `refunded` a debit,
+ * schema.md §2.1) and the bank states it (which of `credit_amount` /
+ * `debit_amount` carries a value, §2.2). **The merchant ledger has no direction
+ * column at all** (§2.3): every ledger row is a posted sale entry, and the
+ * `'credit'` its parser assigns is a modelling constant, not something the source
+ * asserted.
+ */
+const DIRECTION_BEARING_SOURCES: ReadonlySet<SourceSystem> = new Set(['gateway', 'bank']);
+
+/** Does this source assert a direction, or does the parser supply one? */
+export function directionIsStated(source: SourceSystem): boolean {
+  return DIRECTION_BEARING_SOURCES.has(source);
+}
+
+/**
+ * Direction is a HARD GATE at every tier, never a scored component (ADR-035) —
+ * but only between two records that BOTH state a direction (ADR-071).
+ *
+ * ADR-035's argument is a gateway↔bank argument: matching a ₹5,000 capture to a
+ * ₹5,000 chargeback debit would be a wrong book with a perfect-looking anchor.
+ * Applied to a ledger pair it compares a gateway fact against a value this
+ * codebase invented, and the comparison always fails for a refund — the ledger
+ * records the original sale as a credit while the gateway records the reversal as
+ * a debit, and both legs belong to one economic event.
+ *
+ * On the holdout that cost all nine `REFUND_REVERSAL` events their ledger leg at
+ * every tier, turning nine clean 3-way matches into 2-way matches plus nine
+ * orphaned ledger rows that would have been reported as exceptions nobody could
+ * action (issue #30). Where one side does not state a direction there is nothing
+ * to disagree with, so the gate abstains rather than inventing a conflict.
+ */
+export function directionAgrees(a: NormalizedTransaction, b: NormalizedTransaction): boolean {
+  if (!directionIsStated(a.sourceSystem) || !directionIsStated(b.sourceSystem)) return true;
+  return a.direction === b.direction;
 }
 
 export function isOverdue(

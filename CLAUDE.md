@@ -204,7 +204,7 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 
 ## 10. Current state
 
-**As of 2026-08-28 (Day 5): the generator is built and the holdout dataset is committed. The project has something to measure against for the first time — but has not measured anything yet. That is Day 9.**
+**As of 2026-08-28 (Day 7): every engine stage S1–S12 exists and runs in sequence against the holdout, and the repository layer is complete. 284 match groups, 555 classified exceptions, ZERO false positives at every tier. What is still missing is the orchestrator that persists any of it (Day 8) and the scorer that measures it (Day 9) — so this is still a claim about code, not a measurement.**
 
 > **Day numbering.** The build is 13 *working* days, Aug 23 → Sep 5. **Aug 25 is not a numbered day** — no session happened, and numbering it inflated every subsequent day by one. Corrected on Day 4; the full table is ARCHITECTURE §8.
 
@@ -216,7 +216,10 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
   1. Pre-build design review. `ARCHITECTURE.md` written (it had been cited 23 times by docs that existed before it did), plus `matching-engine.md`, `ui-spec.md`, `testing-strategy.md`. ADR-028…047. Three structural flaws fixed **before any code existed**: Tier 1's date window contradicted §5.2; `AMOUNT_MISMATCH` and `TIMING_DRIFT` were structurally unreachable; nothing at Tier 2 could ever auto-confirm.
   2. **The Analyst** (Phase A) — the agentic layer downstream of S14, closing a gap against the track's "build an agent" requirement without weakening ADR-017. ADR-048…057 plus `agent-design.md`.
   3. First code, in five reviewed units.
-- **Day 4 (Aug 27)** — *today.*
+- **Day 4 (Aug 27)** — ten reviewed code units plus an independent audit pass.
+- **Day 5 (Aug 28)** — the generator, in six reviewed units, plus the committed holdout dataset.
+- **Day 6 (Aug 28)** — ingestion and the first two tiers, then AUDIT-1 and its two P1 fixes.
+- **Day 7 (Aug 28)** — *today.* Tier 2 + group assembly, classification integration, the repository layer.
 
 ### What exists in code
 
@@ -266,6 +269,61 @@ Four locked ADRs were amended during implementation, each with a superseding ent
 
 **Read `docs/what-broke.md`'s Day 5 entry before delegating anything.** It records the `captured_at` bug that three layers of verification walked past, the fourth instance of a test that could not fail, and a precise account of why the G6 delegation cost far more than the work was worth.
 
+### Day 6 (2026-08-28) — complete. Ingestion and the first two tiers, then an isolated audit.
+
+| Unit | Commit | What |
+|---|---|---|
+| U1 | `8b5453a` | Ingestion S1–S3: three parsers, exclusion, rejected-row capture, `ingestSources` |
+| U2 | `4287887` | Blocking S5 (four indexes) + Tier 1 S6 + Tier 1.5 S7 re-running S6's predicate |
+| — | AUDIT-1 | **Isolated Opus audit, audit-only.** Eight issues filed (#30–#37), two P1 |
+| P1 | `146eeda` | **Fix #30** — direction gate scoped to sources that state a direction (ADR-071) |
+| P1 | `eb5995d` | **Fix #31** — bank `counterparty_norm` no longer keeps RRN / `setl_` tokens |
+
+**339 tests in `apps/api`, 202 at root.** Typecheck and build clean.
+
+**Where the engine stands against the holdout:** Tier 1 produces **203 matches, all gateway↔ledger on `EXACT_GATEWAY_REF_V1`, with ZERO false positives** against the answer key. Every `source_row_number` joins the key exactly; zero rejected rows. Tier 1.5 cold-runs to 0 alias matches by design.
+
+**Two structural facts to carry forward, both settled by AUDIT-1:**
+- **Tier 1 only ever produces gateway↔ledger matches.** Bank rows carry no *structured* strong anchor (their rrn/settlement_id live in the free-text description = weak, §3.1), so `sharedStrongAnchor` is always null for gateway↔bank. **All gateway↔bank correlation is U3's job at Tier 2**, where a gateway structured anchor matching a bank description-extracted token scores `strong_weak`. This is faithful to §4.1, not a gap.
+- **`direction_conflict` (S8) has no consumer.** Post-ADR-071 it is reachable only on a gateway↔bank pair carrying a shared structured strong anchor, which real bank rows never have. Left as defensive code; wiring or removing it is an open question, not a bug.
+
+**Six issues remain open below P1** (#32–#37). **#34 blocks U9 and must be decided before Day 9** — the `viaTier` reconciliation rule is a judgment call about how the headline number is computed, and `tools/score` is still `export {}`. **#33 (a recall test that hides misses) and #32 (`anchor_strength` ignores `invoice_no`) should land before Day 9** too.
+
+**Read `docs/what-broke.md`'s Day 6 entry before starting Day 7.** It records both P1s, why 338 passing tests caught neither, and the fifth instance of the "test whose name claims more than its assertion" pattern.
+
+### Day 7 (2026-08-28) — complete. Tier 2, groups, classification integration, repositories.
+
+| Unit | Commit | What |
+|---|---|---|
+| U3 | `f2a1245` | S9 Tier 2 driver (candidate generation → `scorePair` → `assign`) + S11 group assembly, all five §10 rules |
+| U4 | `addd0c0` | S12 integration: `collect.ts` builds `ClassificationInput` from stage output |
+| U5 | `89aedc5` | The repository layer — eight tables — **plus migration 012** |
+
+**441 tests in `apps/api` (386 unit + 55 integration), 202 at root.** Typecheck clean; migrations run from an empty database.
+
+**Where the engine stands against the holdout, S1 → S12:**
+
+```
+S9   6,388 pairs scored · 111 accepted (71 auto / 40 pending) · 0 cap hits · 90ms
+     ZERO false positives · median 24 candidates/record
+S11  284 groups (203 exact, 81 fuzzy) · 254 two-way, 30 three-way
+     no record in two groups · exactly one anchor each
+S12  555 exceptions · one primary per record · 328 carry candidate evidence
+     MISSING_IN_GATEWAY 242 · MISSING_IN_BANK 203 · MISSING_IN_LEDGER 63
+     AMBIGUOUS_MATCH 20 · AMOUNT_MISMATCH 18 · DUPLICATE_RECORD 9
+```
+
+**Those counts will move twice, and the tests say so.** S10 is not wired yet (batch decomposition is U6's job), so 12 `UNSPLITTABLE_BATCH` legs currently land in presence categories; and **#38** will recover ~24 gateway↔bank pairs. Both are expected movement, pinned exactly rather than floored, so any OTHER movement fails a test.
+
+**Three facts to carry into Day 8:**
+- **`matchedPairs` for S12 derives from S11's GROUPS, never from the tier outputs.** S11 can refuse a pair a tier proposed; reading the tiers would reinstate exactly what it declined.
+- **Migration 012 exists** because `ux_alias_active` + `alias_superseded_has_target` + the `superseded_by` FK formed a cycle that made §6.3's alias policy impossible to execute in any statement order. Only the FK is deferred.
+- **`candidatesConsidered` ≠ `candidates.length`** by design (§11): the first is everything scored, the second is the ≥0.40 logged subset.
+
+**#38 is a P1 due before AUDIT-2 on Day 8** — a bank `bank_ref_no` equal to a gateway `rrn` scores zero anchor, costing ~24 true pairs. Filed with evidence and acceptance criteria; deliberately not fixed inside U3.
+
+**Read `docs/what-broke.md`'s Day 7 entry before starting Day 8.** It names the pattern that now dominates: three modules, each correct against its spec, each wrong the first time something actually called it. A spec cannot be executed by reading it.
+
 ---
 
 ## THE EXECUTION PLAN — Days 6 to 13
@@ -285,21 +343,21 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 
 > **The Day 5 corollary: the cheap model is only cheap if the session stays short.** Cost is turns × context. Every delegation prompt must carry: read by grep and section, never whole files; write and typecheck ONE module at a time; commit each module as it passes; no exploratory sweeps beyond the unit's stated acceptance criteria.
 
-### Day 6 (Aug 29) — ingestion and the first tiers
+### Day 6 (Aug 28) — ingestion and the first tiers — **COMPLETE**
 
-| # | Unit | Model | Why |
+| # | Unit | Model | Outcome |
 |---|---|---|---|
-| **U1** | Ingestion parsers S1–S3: three parsers, exclusion rules, rejected-row capture | **Sonnet / high** | Fully specified (`schema.md` §2.1–2.3), primitives built and tested — but `source_row_number` is the answer key's join key, and an off-by-one silently corrupts EVERY measurement. Fixtures now exist to test against. |
-| **U2** | Blocking S5 + Tier 1 S6 + Tier 1.5 S7 | **Sonnet / high** | Four block indexes named in `matching-engine.md` §3; the Tier 1.5 duplication guard already exists and will fail if the predicate is copied rather than re-run |
-| **AUDIT-1** | Isolated audit of U1+U2 | **Opus / max** | The parser is the widest blast radius in the project: everything downstream reads what it produced. Catch it here or measure the wrong thing on Day 9. |
+| **U1** | Ingestion parsers S1–S3 | Sonnet / high | ✅ `8b5453a`. Every `source_row_number` joins the answer key; zero rejected rows on the holdout. |
+| **U2** | Blocking S5 + Tier 1 S6 + Tier 1.5 S7 | Sonnet / high | ✅ `4287887`. Tier 1.5 re-runs S6's predicate live; the guard held. |
+| **AUDIT-1** | Isolated audit of U1+U2 | Opus / max | ✅ Eight issues (#30–#37). **Two P1s, both silent, both fixed** (`146eeda`, `eb5995d`). Five of the six author-flagged judgment calls were correct; both P1s were in what the author had not thought to question. |
 
-### Day 7 (Aug 30) — the rest of the matching core, plus persistence
+### Day 7 (Aug 28) — the rest of the matching core, plus persistence — **COMPLETE**
 
-| # | Unit | Model | Why |
+| # | Unit | Model | Outcome |
 |---|---|---|---|
-| **U3** | Tier 2 driver S9 + group assembly S11 | **Sonnet / medium** | Scorer and assignment exist and are guard-tested; this is candidate generation plus wiring. **Note: S9's driver is missing from ARCHITECTURE §8's day table — it is real work, do not skip it.** |
-| **U4** | Classification integration S12 | **Sonnet / medium** | `classify.ts` is built and tested; this constructs `ClassificationInput` from pipeline output |
-| **U5** | Repositories — 8 stubs | **Sonnet / medium** | `repositories/audit.ts` is a complete worked example. Prompt MUST carry: all SQL here, `TxClient` not `PoolClient` (rule 14), explicit `ORDER BY` on every decision-feeding query (ADR-032) |
+| **U3** | Tier 2 driver S9 + group assembly S11 | Opus / high | ✅ `f2a1245`. Zero false positives; #38 filed for a scorer gap it exposed. |
+| **U4** | Classification integration S12 | Opus / high | ✅ `addd0c0`. Found `candidatesConsidered` reporting a filtered length, and §10 rule 3 inert. |
+| **U5** | Repositories — 8 stubs | Opus / high | ✅ `89aedc5`. Found a constraint cycle that made §6.3 unexecutable; migration 012. |
 
 ### Day 8 (Aug 31) — wiring. **First end-to-end run.**
 
@@ -355,9 +413,9 @@ Not scheduled. Sweep them at AUDIT-2 and fold any that touch the measurement int
 ### Carried debt, stated rather than buried
 - **Nothing is deployed, deliberately** (ADR-061). Day 11 (API), Day 12 (web). A dated task, not a spare-time task.
 - **`tools/score` is still a stub, so nothing has been MEASURED.** The dataset to measure against now exists; the measurement is Day 9. Until then every accuracy claim here is still a claim about code.
-- **Nothing is wired end to end.** Stages exist and are individually tested; no orchestrator calls them in sequence, no routes are mounted, `createApp` serves 404s by design.
-- The repository layer is one file deep: only `repositories/audit.ts` exists.
-- `proofs.ts`'s `matcherView` is a VIEW, not a parser. When U1 lands, the §4 proofs should be re-run through the real parsers.
+- **Nothing is PERSISTED end to end.** Every stage S1–S12 exists and they run in sequence against the holdout in-memory (see the Day 7 block), but no orchestrator writes any of it to the database, no routes are mounted, and `createApp` serves 404s by design. That is U6 and U7.
+- The repository layer is complete (U5), and exercised against a real Postgres — but only by its own integration test, not yet by the engine.
+- `proofs.ts`'s `matcherView` is a VIEW, not a parser. U1 has landed, so the §4 proofs can now be re-run through the real parsers — not yet done.
 - `testing-strategy.md` §2 plans a 60-event DEV_SEED golden snapshot. **60 events is too few** — §3's 2.8% `IDENTITY_DESTROYED` share rounds below the 3-member cluster floor and the generator correctly refuses. Use ≥100 events or raise that weight for the snapshot config.
 
 Update this section as the build progresses so the next session knows where it is.

@@ -255,6 +255,9 @@ Deterministic, applied in order, **no fuzzy logic here** (fuzzy belongs in Tier 
 3. Strip punctuation `. , ' " - / & ( )` → space, re-collapse.
 4. Strip trailing legal suffixes: `PVT`, `PRIVATE`, `LTD`, `LIMITED`, `LLP`, `INC`, `CORP`, `CO`, `INDIA`, `IN`.
 5. Strip known payment-rail prefixes from bank descriptions: `NEFT`, `IMPS`, `UPI`, `SETL`, `SETTLEMENT`, `BATCH\d+`, `MPS`.
+6. Strip **reference-shaped tokens wherever they appear** in a bank description, not only at its tail: digit runs of 6+ (`RRN`, `bank_ref_no`), `setl_`/`pay_`/`order_` ids, and any remaining `BATCH\d+`. Then re-apply rule 4 — a legal suffix that was not final before those tokens were removed is final now (`ZOMATO LIMITED 818624673100 setl_…` must reach `ZOMATO`, or the bank leg never meets the gateway's `ZOMATO`). A description that is nothing but reference tokens normalizes to `NULL`: it carries no counterparty, and saying so is more honest than inventing a name that buckets alone.
+
+   > Rule 6 was implicit until 2026-08-28. §2.2's worked example happens to put the RRN last (`…-AMZN RETAIL-234567890123-BATCH12`), so a tail-anchored strip satisfied it; the emitted data puts a `setl_…` token after the RRN, which halted that strip and left the reference embedded in **248 of 301** bank rows. `counterparty_norm` became row-unique, which silently disabled the `byCounterparty` block index, diluted Tier 2's counterparty component and made bank-side alias learning impossible (issue #31).
 
 `Amazon Retail India Pvt Ltd` → `AMAZON RETAIL`. `AMZN` → `AMZN`. These still don't match — that gap is exactly what `learned_aliases` closes.
 
