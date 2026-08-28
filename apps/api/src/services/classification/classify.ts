@@ -25,6 +25,7 @@ import type {
 import type { DuplicateFinding } from '../matching/dedupe.js';
 import type { IdentityVerdict } from '../matching/identity-resolution.js';
 import type { AmbiguityFinding } from '../matching/assignment.js';
+import type { RefusedPair } from '../matching/group-assembly.js';
 import type { BatchOutcome } from '../matching/batch-decomposition.js';
 import { dateWindowFor, pairKind } from '../matching/tolerance.js';
 import { dayDelta } from '../ingestion/dates.js';
@@ -41,7 +42,23 @@ import { emptyEvidence } from './evidence.js';
  * (matching-engine.md §11, schema.md §8, issue #8).
  */
 export interface RecordCandidateEvidence {
+  /**
+   * The LOGGED subset — candidates scoring at or above S9's near-miss floor
+   * (schema.md §9.1). Not every candidate the engine scored.
+   */
   candidates: ScoredCandidate[];
+  /**
+   * How many candidates were actually scored for this record, including every
+   * one discarded below the logging floor.
+   *
+   * matching-engine.md §11 requires `candidatesConsidered` to be "a true count
+   * rather than the length of the logged list", and the two differ by exactly
+   * the below-floor rejections. Reporting `candidates.length` would tell a
+   * reviewer the engine tried three counterparts when it tried ninety —
+   * understating the search inside the very exception they are being asked to
+   * trust. Optional so a caller with no floor can omit it.
+   */
+  consideredCount?: number;
   capHit: boolean;
   displacedByMatchId?: string | null;
 }
@@ -53,6 +70,15 @@ export interface ClassificationInput {
   duplicates: DuplicateFinding[];
   identity: { pair: [NormalizedTransaction, NormalizedTransaction]; verdict: IdentityVerdict }[];
   ambiguities: AmbiguityFinding[];
+  /**
+   * S11's role collisions (matching-engine.md §10 rule 3). A separate input from
+   * `ambiguities` because the two are different findings with different reasons:
+   * S9's guard says "two candidates scored too close to call", while a refusal
+   * says "this record's slot was taken by stronger evidence". Collapsing them
+   * would put S9's wording on an S11 finding and tell a reviewer a score was
+   * tied when nothing was scored.
+   */
+  groupRefusals?: RefusedPair[];
   batches: { credit: NormalizedTransaction; outcome: BatchOutcome }[];
   /** Confirmed pairs from S6/S7/S9 — used to decide which legs are genuinely absent. */
   matchedPairs: { aId: string; bId: string }[];
@@ -259,7 +285,7 @@ export function classify(input: ClassificationInput): ClassifiedException[] {
         related: [],
         evidence: {
           anchorStrength: record.anchorStrength,
-          candidatesConsidered: scored?.candidates.length ?? 0,
+          candidatesConsidered: scored?.consideredCount ?? scored?.candidates.length ?? 0,
           candidates: (scored?.candidates ?? []).map(candidateEvidenceOf),
           candidateCapHit: scored?.capHit ?? false,
           displacedByMatchId: scored?.displacedByMatchId ?? null,
@@ -267,6 +293,31 @@ export function classify(input: ClassificationInput): ClassifiedException[] {
         },
       });
     }
+  }
+
+  // -- 4b. Group role collisions (S11, matching-engine.md §10 rule 3) --------
+  // The pair lost its slot to stronger evidence and the engine refused to choose
+  // between them. Naming the displacer is the whole value of the finding.
+  for (const r of input.groupRefusals ?? []) {
+    const loser = r.pair.a.sourceSystem === r.conflictingRole ? r.pair.a : r.pair.b;
+    add(loser.id, {
+      category: 'AMBIGUOUS_MATCH',
+      amountAtRiskPaise: loser.amountPaise,
+      reason: r.reason,
+      ruleId: 'CLASSIFY_GROUP_ROLE_CONFLICT_V1',
+      related: r.displacedByTransactionIds,
+      bestCandidateScore: r.pair.confidence,
+      evidence: {
+        anchorStrength: loser.anchorStrength,
+        candidatesConsidered: r.displacedByTransactionIds.length,
+        candidates: r.displacedByTransactionIds.map((id) => ({
+          transactionId: id,
+          sourceSystem: r.conflictingRole,
+          score: r.pair.confidence,
+          rejectedBecause: r.reason,
+        })),
+      },
+    });
   }
 
   // -- Assemble -------------------------------------------------------------

@@ -37,7 +37,9 @@
  */
 
 import { compareCanonical, type SourceSystem } from '../../types/domain.js';
-import type { BlockIndexes, NormalizedTransaction, RunConfig } from '../../types/engine.js';
+import type {
+  BlockIndexes, NormalizedTransaction, RunConfig, ScoredCandidate,
+} from '../../types/engine.js';
 import { addDays, dayDelta } from '../ingestion/dates.js';
 import { strongAnchors } from './anchors.js';
 import { AMOUNT_BUCKET_PAISE, ANCHOR_PREFIX_LEN, amountBucket } from './blocking.js';
@@ -48,11 +50,32 @@ import { amountToleranceBand, dateWindowFor, pairKind } from './tolerance.js';
 const SEP = '::';
 const ALL_SOURCES: readonly SourceSystem[] = ['gateway', 'bank', 'ledger'];
 
-/** Per-record candidate-generation bookkeeping, surfaced in `exceptions.evidence`. */
+/**
+ * The score at or above which a rejected candidate is worth keeping (schema.md
+ * §9.1). Logging every pairwise rejection would be ~90,000 rows at 300 records
+ * and would drown the audit trail; the floor keeps the near misses — the ones a
+ * reviewer might argue with — and discards the obvious non-candidates.
+ */
+export const NEAR_MISS_FLOOR = 0.4;
+
+/** Per-record candidate bookkeeping, surfaced in `exceptions.evidence`. */
 export interface CandidateStats {
   transactionId: string;
   /** Distinct counterparts the blocking indexes offered, BEFORE the ADR-033 cap. */
   generated: number;
+  /**
+   * How many candidates were actually SCORED for this record.
+   *
+   * This is `evidence.candidatesConsidered`, and matching-engine.md §11 is
+   * explicit that it must be "a true count rather than the length of the logged
+   * list" — the two differ by every candidate discarded below `NEAR_MISS_FLOOR`.
+   * Reporting the list length instead would tell a reviewer the engine tried
+   * three counterparts when it tried ninety, which understates the search in
+   * exactly the exception the reviewer is being asked to trust.
+   */
+  consideredCount: number;
+  /** The `>= NEAR_MISS_FLOOR` subset, kept for `evidence.candidates`. */
+  nearMisses: ScoredCandidate[];
   /** True when the cap discarded eligible candidates. Never silent (§3). */
   candidateCapHit: boolean;
 }
@@ -221,20 +244,37 @@ export function runTier2(
     .filter((t) => t.statusNorm === 'reconcilable' && !claimedIds.has(t.id))
     .sort(compareCanonical);
 
-  const candidateStats: CandidateStats[] = [];
   const candidates: CandidatePair[] = [];
   const scored = new Set<string>();
   let pairsDiscarded = 0;
 
+  // Per-record evidence. A pair is SCORED once (canonically oriented) but is
+  // evidence for BOTH of its records, so every result is filed under each end.
+  const considered = new Map<string, number>();
+  const nearMisses = new Map<string, ScoredCandidate[]>();
+  const capHit = new Map<string, boolean>();
+  const generatedCount = new Map<string, number>();
+
+  const fileEvidence = (
+    owner: NormalizedTransaction, other: NormalizedTransaction,
+    score: number, breakdown: CandidatePair['breakdown'], ruleId: string,
+    rejectedBecause: string | null,
+  ): void => {
+    considered.set(owner.id, (considered.get(owner.id) ?? 0) + 1);
+    if (score < NEAR_MISS_FLOOR) return;
+    const list = nearMisses.get(owner.id) ?? [];
+    list.push({
+      transactionId: other.id, sourceSystem: other.sourceSystem,
+      score, breakdown, ruleId, rejectedBecause,
+    });
+    nearMisses.set(owner.id, list);
+  };
+
   for (const r of pool) {
     const generated = generateCandidates(r, blocks, config).filter((c) => !claimedIds.has(c.id));
     const capped = generated.slice(0, config.candidateCap);
-
-    candidateStats.push({
-      transactionId: r.id,
-      generated: generated.length,
-      candidateCapHit: generated.length > config.candidateCap,
-    });
+    generatedCount.set(r.id, generated.length);
+    capHit.set(r.id, generated.length > config.candidateCap);
 
     for (const c of capped) {
       const key = pairKeyOf(r.id, c.id);
@@ -245,7 +285,19 @@ export function runTier2(
       // the two records the outer loop reached first.
       const [a, b] = compareCanonical(r, c) <= 0 ? [r, c] : [c, r];
       const result = scorePair(a, b, config);
-      if (result.discarded) { pairsDiscarded += 1; continue; }
+      if (result.discarded) {
+        pairsDiscarded += 1;
+        // A hard-gate rejection is still something the engine TRIED, and its
+        // reason ("direction mismatch", "anchors contradict") is often the most
+        // useful line in the exception. Counted, and logged at score 0 so the
+        // near-miss floor keeps it out of the list without hiding the attempt.
+        fileEvidence(a, b, 0, ZERO_BREAKDOWN, result.ruleId, result.reason);
+        fileEvidence(b, a, 0, ZERO_BREAKDOWN, result.ruleId, result.reason);
+        continue;
+      }
+
+      fileEvidence(a, b, result.score, result.breakdown, result.ruleId, null);
+      fileEvidence(b, a, result.score, result.breakdown, result.ruleId, null);
 
       candidates.push({
         a, b, score: result.score, breakdown: result.breakdown, ruleId: result.ruleId,
@@ -254,17 +306,65 @@ export function runTier2(
     }
   }
 
-  return {
-    ...assign(candidates, config),
-    candidateStats,
-    pairsScored: scored.size,
-    pairsDiscarded,
-  };
+  const assignment = assign(candidates, config);
+
+  // A displaced pair is the single most useful thing a presence exception can
+  // say ("your counterpart went to a stronger claim"), so the reason is written
+  // onto the near-miss entry rather than left in a list nobody joins.
+  for (const d of assignment.displaced) {
+    annotate(nearMisses, d.a.id, d.b.id, d.rejectedBecause);
+    annotate(nearMisses, d.b.id, d.a.id, d.rejectedBecause);
+  }
+
+  // An ACCEPTED pair is not a rejected candidate, and must not appear in either
+  // member's rejected list. `evidence.candidates` feeds a UI whose whole job is
+  // "here is what the engine tried and turned down"; leaving a 1.0000 match in
+  // it would render as "scored 1.0000, below the review threshold" — a sentence
+  // that is false twice over, on the record's own successful match. It stays in
+  // `consideredCount`, which is a count of what was SCORED, not of what failed.
+  for (const p of assignment.accepted) {
+    drop(nearMisses, p.a.id, p.b.id);
+    drop(nearMisses, p.b.id, p.a.id);
+  }
+
+  const candidateStats: CandidateStats[] = pool.map((r) => ({
+    transactionId: r.id,
+    generated: generatedCount.get(r.id) ?? 0,
+    consideredCount: considered.get(r.id) ?? 0,
+    nearMisses: (nearMisses.get(r.id) ?? []).sort(compareScoredCandidates),
+    candidateCapHit: capHit.get(r.id) ?? false,
+  }));
+
+  return { ...assignment, candidateStats, pairsScored: scored.size, pairsDiscarded };
 }
 
 /** Order-independent key for an unordered pair of transaction ids. */
 export function pairKeyOf(x: string, y: string): string {
   return x < y ? `${x}|${y}` : `${y}|${x}`;
+}
+
+/** A discarded pair has no components; the reason carries the information. */
+const ZERO_BREAKDOWN = {
+  anchor: 0, amount: 0, date: 0, counterparty: 0, total: 0, amountUnavailable: false,
+} as const;
+
+function drop(m: Map<string, ScoredCandidate[]>, owner: string, other: string): void {
+  const list = m.get(owner);
+  if (list === undefined) return;
+  m.set(owner, list.filter((c) => c.transactionId !== other));
+}
+
+function annotate(
+  m: Map<string, ScoredCandidate[]>, owner: string, other: string, reason: string,
+): void {
+  const entry = m.get(owner)?.find((c) => c.transactionId === other);
+  if (entry !== undefined) entry.rejectedBecause = reason;
+}
+
+/** Strongest first, then by counterpart id — a total order, so evidence is stable. */
+function compareScoredCandidates(p: ScoredCandidate, q: ScoredCandidate): number {
+  if (p.score !== q.score) return q.score - p.score;
+  return p.transactionId < q.transactionId ? -1 : p.transactionId > q.transactionId ? 1 : 0;
 }
 
 /** Re-exported so a caller does not have to reach into blocking.ts for it. */
