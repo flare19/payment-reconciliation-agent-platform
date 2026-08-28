@@ -46,7 +46,7 @@ Vertical order, top to bottom. This ordering is the argument the project is maki
 ```
   MATCH RATE          FALSE POSITIVES     COLD START          CEILING
   82.4%               5                   74.1%               93.0%
-  678 / 823 records   measured vs key     no learned aliases  21 events unresolvable
+  670 / 813 records   measured vs key     no learned aliases  21 events unresolvable
                                                               by design
 ```
 
