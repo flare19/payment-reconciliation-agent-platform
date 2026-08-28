@@ -1,6 +1,34 @@
+import { readFileSync } from 'node:fs';
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import type { Env } from './config/env.js';
 import type { ErrorCode } from './types/dto.js';
+import type { RunSources } from './services/run/orchestrator.js';
+import { healthRouter } from './routes/health.js';
+import { runsRouter } from './routes/runs.js';
+import { auditRouter } from './routes/audit.js';
+import { exceptionsRouter } from './routes/exceptions.js';
+import { matchesRouter, manualMatchRouter } from './routes/matches.js';
+import { transactionsRouter } from './routes/transactions.js';
+import { aliasesRouter } from './routes/aliases.js';
+import { investigationsRouter } from './routes/investigations.js';
+
+const VERSION = '1.0.0';
+
+/**
+ * The committed holdout dataset, read from disk on demand.
+ *
+ * Read per run rather than cached at boot so the file hashes recorded on the
+ * run always describe the bytes that run actually read. A cached copy would
+ * make `input_file_hashes` a claim about start-up rather than about the run.
+ */
+function defaultSeedDataset(): RunSources {
+  const dir = new URL('../../../data/fixtures/holdout/', import.meta.url).pathname;
+  return {
+    gateway: readFileSync(dir + 'gateway_export.csv', 'utf8'),
+    bank: readFileSync(dir + 'bank_settlement.csv', 'utf8'),
+    ledger: readFileSync(dir + 'merchant_ledger.csv', 'utf8'),
+  };
+}
 
 /**
  * Express app factory. Kept separate from `index.ts` so tests can build an app
@@ -22,7 +50,9 @@ export class ApiError extends Error {
   }
 }
 
-export function createApp(env: Env): Express {
+export function createApp(
+  env: Env, readSeedDataset: () => RunSources = defaultSeedDataset,
+): Express {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' }));
@@ -40,14 +70,26 @@ export function createApp(env: Env): Express {
     next();
   });
 
-  // TODO(day5+): mount routers here as they land. See docs/api-contract.md §1
-  // for the binding endpoint table (28 endpoints).
-  //   app.use('/api', healthRouter);
-  //   app.use('/api/runs', runsRouter);
-  //   ...
+  // api-contract.md §1's binding endpoint table. Mount order matters in one
+  // place: the agent router owns `/api/runs/:runId/investigations` and
+  // `/api/runs/:runId/ask`, so it is mounted at `/api` BEFORE the runs router
+  // claims `/api/runs/:runId/...`.
+  app.use('/api', healthRouter(env, VERSION));                  // 1
+  app.use('/api', investigationsRouter(env));                   // 25–28
+  app.use('/api/runs', manualMatchRouter());                    // 21
+  app.use('/api/runs', auditRouter());                          // 14
+  app.use('/api/runs', runsRouter(env, readSeedDataset));       // 2–6, 8, 9, 19, 22, 23, 24
+  app.use('/api/exceptions', exceptionsRouter());               // 7, 20
+  app.use('/api/matches', matchesRouter());                     // 10, 11
+  app.use('/api/transactions', transactionsRouter());           // 12, 13
+  app.use('/api/aliases', aliasesRouter());                     // 15–18
 
+  // A 404 for an unknown PATH is not a missing run. `RUN_NOT_FOUND` here would
+  // send a client hunting for a run id that was never in the URL.
   app.use((_req: Request, res: Response) => {
-    res.status(404).json({ error: { code: 'RUN_NOT_FOUND', message: 'Route not found' } });
+    res.status(404).json({
+      error: { code: 'INVALID_REQUEST', message: 'No such endpoint.', details: {} },
+    });
   });
 
   // Uniform error envelope — never a bare string, never an HTML error page

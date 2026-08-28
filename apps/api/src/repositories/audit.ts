@@ -155,6 +155,68 @@ export async function readChain(runId: string | null): Promise<StoredAuditEntry[
   return rows.map(toStored);
 }
 
+/** Every column a `StoredAuditEntry` needs, so the read paths cannot drift. */
+const ENTRY_COLUMNS = `
+  sequence_no, run_id, event_type, subject_type, subject_id, transaction_id,
+  actor_type, actor_id, tier, rule_id, rule_version, decision, confidence,
+  before_state, after_state, reason, details, prev_hash, entry_hash, occurred_at`;
+
+/**
+ * One record's trail (endpoint 13), newest LAST.
+ *
+ * `ORDER BY sequence_no` ascending, always: the trail is read chronologically,
+ * and `sequence_no` is deterministic even for entries written inside the same
+ * millisecond — which `occurred_at` is not, and several hundred of these are
+ * written per run inside one transaction.
+ *
+ * `transaction_id` is denormalized onto `audit_log` precisely so this query does
+ * not have to join or scan `details`.
+ */
+export async function readTransactionTrail(
+  transactionId: string, limit: number, offset: number,
+): Promise<{ entries: StoredAuditEntry[]; total: number }> {
+  const pool = getPool();
+  const [page, count] = await Promise.all([
+    pool.query(
+      `SELECT ${ENTRY_COLUMNS} FROM audit_log
+        WHERE transaction_id = $1
+        ORDER BY sequence_no
+        LIMIT $2 OFFSET $3`,
+      [transactionId, limit, offset]),
+    pool.query<{ count: number }>(
+      `SELECT count(*)::int AS count FROM audit_log WHERE transaction_id = $1`, [transactionId]),
+  ]);
+  return { entries: page.rows.map(toStored), total: count.rows[0]!.count };
+}
+
+/** A whole run's trail (endpoint 14), optionally filtered by event or actor. */
+export async function readRunTrail(
+  runId: string,
+  filter: { eventType?: string; actorType?: string },
+  limit: number, offset: number,
+): Promise<{ entries: StoredAuditEntry[]; total: number }> {
+  const where = ['run_id = $1'];
+  const params: unknown[] = [runId];
+  if (filter.eventType !== undefined) {
+    params.push(filter.eventType); where.push(`event_type = $${params.length}`);
+  }
+  if (filter.actorType !== undefined) {
+    params.push(filter.actorType); where.push(`actor_type = $${params.length}`);
+  }
+  const predicate = where.join(' AND ');
+
+  const pool = getPool();
+  const [page, count] = await Promise.all([
+    pool.query(
+      `SELECT ${ENTRY_COLUMNS} FROM audit_log WHERE ${predicate}
+        ORDER BY sequence_no LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]),
+    pool.query<{ count: number }>(
+      `SELECT count(*)::int AS count FROM audit_log WHERE ${predicate}`, params),
+  ]);
+  return { entries: page.rows.map(toStored), total: count.rows[0]!.count };
+}
+
 /**
  * The chain's anchor, or null if it has never been written to.
  *
