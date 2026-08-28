@@ -43,7 +43,7 @@ const emit = (row: ProjectedRow): EmittedRow => ({ row, sourceRowNumber: (seq +=
 const input = (over: Partial<AnswerKeyInput> = {}): AnswerKeyInput => {
   seq = 0;
   return {
-    seed: 90_210,
+    seed: 1_337,  // DEV_SEED (ADR-027)
     events: [evt('evt_000000', 'CLEAN_3WAY')],
     realizedDistribution: Object.fromEntries(SCENARIOS.map((s) => [s, 0])) as never,
     emitted: [emit(gw()), emit(bk()), emit(lg())],
@@ -87,7 +87,7 @@ describe('determinism — the key is comparable to itself', () => {
       assert.doesNotMatch(field, /time|date|at$/i, `manifest.${field} looks like a clock read`);
     }
     assert.equal(manifest['generatorVersion'], GENERATOR_VERSION);
-    assert.equal(manifest['seed'], 90_210);
+    assert.equal(manifest['seed'], 1_337);
   });
 
   test('file hashes are of the emitted bytes', () => {

@@ -28,7 +28,7 @@ Three phases:
 
 An *economic event* is a real thing that happened: "customer paid ₹1,234.50 to Amazon Retail on 14 Aug 2026 by card." It is the ground truth. Each gets a stable `event_id` and a full set of canonical attributes.
 
-Roughly 300 events for a run of 200–500 records (one event fans out into 1–3 source rows).
+Roughly 300 events for a run of ~850–950 records (one event fans out into 1–3 source rows, and §3's own scenario mix is 3-way-dominant, so the realized total sits close to 3× the event count minus what the presence-scenarios subtract; ADR-069). The HOLDOUT_SEED run this generator ships (data/fixtures/holdout/) lands at 920.
 
 ### Phase 2 — Project each event into source rows
 

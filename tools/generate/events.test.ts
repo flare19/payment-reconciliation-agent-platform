@@ -8,7 +8,18 @@ import { amountToleranceBand } from '../../apps/api/src/services/matching/tolera
 import { ENGINE_DEFAULTS } from '../../apps/api/src/config/defaults.js';
 import { dayDelta } from '../../apps/api/src/services/ingestion/dates.js';
 
-const SEED = 90_210;
+/**
+ * SEEDS: develop against DEV_SEED (ADR-027, CLAUDE.md §9.3, validation-strategy §7).
+ *
+ * HOLDOUT_SEED (90210) is for the reported numbers and is to be looked at ONCE,
+ * when reporting. A test suite pinned to it looks at it on every run, and every
+ * fix made to turn one of those tests green is a change made by inspecting
+ * holdout output — which is exactly the tuning ADR-027 forbids, arriving through
+ * the test suite instead of through the engine. Property sweeps use arbitrary
+ * non-reserved seeds; the single holdout smoke test lives in index.test.ts and
+ * asserts only that the shipped seed generates, never what it contains.
+ */
+const SEED = 1_337;  // DEV_SEED
 const plan = (over: Partial<typeof DEFAULT_EVENT_PLAN> = {}) =>
   planEvents(new Rng(SEED), { ...DEFAULT_EVENT_PLAN, ...over });
 
