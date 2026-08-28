@@ -25,6 +25,7 @@
 
 import { compareCanonical, type SourceSystem } from '../../types/domain.js';
 import type { NormalizedTransaction, RunConfig, ScoreBreakdown } from '../../types/engine.js';
+import type { AmountEvaluation, DateEvaluation } from './tolerance.js';
 
 /** A scored, non-discarded candidate pair. Produced by blocking + `scorePair`. */
 export interface CandidatePair {
@@ -33,6 +34,14 @@ export interface CandidatePair {
   score: number;
   breakdown: ScoreBreakdown;
   ruleId: string;
+  /**
+   * The evaluations `scorePair` already computed, carried through rather than
+   * recomputed. S11 writes `matches.amount_delta_paise` / `date_delta_days` from
+   * these; without them a fuzzy group reports a delta of 0, which is not a
+   * missing number but a WRONG one — it says the amounts agreed exactly.
+   */
+  amount: AmountEvaluation;
+  date: DateEvaluation;
 }
 
 export interface AssignedPair extends CandidatePair {

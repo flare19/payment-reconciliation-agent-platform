@@ -28,7 +28,14 @@ const breakdown: ScoreBreakdown = {
 };
 
 function pair(a: NormalizedTransaction, b: NormalizedTransaction, score: number): CandidatePair {
-  return { a, b, score, breakdown: { ...breakdown, total: score }, ruleId: 'FUZZY_WEAK_ANCHOR_V1' };
+  return {
+    a, b, score, breakdown: { ...breakdown, total: score }, ruleId: 'FUZZY_WEAK_ANCHOR_V1',
+    amount: {
+      deltaPaise: 0, tolerancePaise: 100, within: true,
+      basis: 'gateway_net_vs_bank_credit', unavailable: false, inferred: false,
+    },
+    date: { deltaDays: 0, window: [-1, 3], within: true },
+  };
 }
 
 describe('global assignment beats per-record greedy', () => {
