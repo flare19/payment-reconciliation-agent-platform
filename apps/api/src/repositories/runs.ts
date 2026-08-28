@@ -20,12 +20,22 @@ import { getPool, type TxClient } from '../db/pool.js';
 import type { BusinessDate, RunStatus } from '../types/domain.js';
 import type { RejectedRow, RunConfig } from '../types/engine.js';
 
+/**
+ * schema.md §4's documented shape. `nonPrimaryDuplicates` and `reconcilable` are
+ * not decoration: ADR-040 defines the match-rate denominator as
+ * `ingested − excluded − rejected_rows − non_primary_duplicates`, so the run row
+ * has to carry every term of it. A denominator whose components are not recorded
+ * is a denominator nobody can check.
+ */
 export interface RunRecordCounts {
+  [k: string]: number;
   gateway: number;
   bank: number;
   ledger: number;
   excluded: number;
   rejected: number;
+  nonPrimaryDuplicates: number;
+  reconcilable: number;
 }
 
 export interface Run {
