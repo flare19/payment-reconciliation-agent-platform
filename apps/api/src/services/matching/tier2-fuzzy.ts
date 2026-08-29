@@ -29,11 +29,30 @@
  * than applied silently (§3: "a bounded search that silently truncates is a
  * dishonest search").
  *
- * Tier 2's domain (§6.3): pairs where identity is NOT established. Anything S6,
- * S7 or S8 already spoke for is excluded before scoring — S8 in particular
- * returns verdicts for pairs that share a strong anchor, and re-scoring those
- * would let a similarity score second-guess an identity the engine already
- * settled deterministically.
+ * Tier 2's domain (§6.3): "Tier 2 now only ever sees PAIRS where identity is not
+ * established." Every pair S6, S7 or S8 already spoke for is excluded before
+ * scoring — S8 in particular returns verdicts for pairs that share a strong
+ * anchor, and re-scoring those would let a similarity score second-guess an
+ * identity the engine already settled deterministically.
+ *
+ * ── PAIRS, NOT RECORDS. This distinction cost 314 true pairs (issue #40) ──
+ * The exclusion is pair-shaped, and it must stay pair-shaped. Excluding whole
+ * RECORDS that S6/S7 matched looks like the same rule and is not: Tier 1 only
+ * ever produces gateway<->ledger matches (bank rows carry no structured strong
+ * anchor, §3.1), so dropping matched records from the pool deletes every
+ * gateway that matched exactly BEFORE its bank leg can be scored. That makes
+ * §10 rule 2 — "gateway<->bank plus gateway<->ledger on the same gateway record
+ * produces one 3-way group" — impossible to satisfy, and the missing bank legs
+ * resurface as MISSING_IN_BANK exceptions reporting `candidatesConsidered: 0`.
+ *
+ * The signature below takes PAIRS for exactly this reason: a caller holding a
+ * `Set<transactionId>` cannot typecheck against it.
+ *
+ * One record may therefore legitimately appear in an exact pair AND a Tier 2
+ * pair. Nothing here needs to prevent a record acquiring two counterparts in the
+ * SAME role — `assign` enforces that per (record, target source) slot within
+ * Tier 2, and S11's `roleConflict` enforces it across tiers, refusing the weaker
+ * claim rather than resolving it (§10 rule 3).
  */
 
 import { compareCanonical, type SourceSystem } from '../../types/domain.js';
@@ -227,21 +246,31 @@ export function generateCandidates(
 /**
  * S9 driver.
  *
- * `claimedIds` are records S6/S7 already matched and `settledPairKeys` are pairs
- * S8 returned a verdict for. Both are excluded rather than re-scored: a
- * similarity score must never be in a position to overturn a deterministic
+ * `resolvedPairs` are the pairs S6/S7 matched and `settledPairKeys` are pairs S8
+ * returned a verdict for. Both are excluded from SCORING rather than re-scored:
+ * a similarity score must never be in a position to overturn a deterministic
  * identity verdict (§6.3).
+ *
+ * Neither excludes a RECORD. See the note in this file's header — that mistake
+ * is issue #40 and it is the difference between 344 and 658 true pairs.
  */
 export function runTier2(
   blocks: BlockIndexes,
   config: RunConfig,
-  claimedIds: ReadonlySet<string> = new Set(),
+  resolvedPairs: readonly { aId: string; bId: string }[] = [],
   settledPairKeys: ReadonlySet<string> = new Set(),
 ): Tier2Result {
+  // S6/S7's verdicts and S8's, in one pair-keyed set. Folding them together here
+  // rather than at each call site means every caller gets the same exclusion and
+  // none of them has to know the key format.
+  const alreadyDecided = new Set<string>(settledPairKeys);
+  for (const p of resolvedPairs) alreadyDecided.add(pairKeyOf(p.aId, p.bId));
+
   // Canonical order in, canonical order out — nothing here may depend on Map
-  // iteration order (ADR-032 rule 2).
+  // iteration order (ADR-032 rule 2). Every reconcilable record enters, including
+  // those S6/S7 matched: they still need their third leg (§10 rule 2).
   const pool = [...blocks.byId.values()]
-    .filter((t) => t.statusNorm === 'reconcilable' && !claimedIds.has(t.id))
+    .filter((t) => t.statusNorm === 'reconcilable')
     .sort(compareCanonical);
 
   const candidates: CandidatePair[] = [];
@@ -271,14 +300,14 @@ export function runTier2(
   };
 
   for (const r of pool) {
-    const generated = generateCandidates(r, blocks, config).filter((c) => !claimedIds.has(c.id));
+    const generated = generateCandidates(r, blocks, config);
     const capped = generated.slice(0, config.candidateCap);
     generatedCount.set(r.id, generated.length);
     capHit.set(r.id, generated.length > config.candidateCap);
 
     for (const c of capped) {
       const key = pairKeyOf(r.id, c.id);
-      if (scored.has(key) || settledPairKeys.has(key)) continue;
+      if (scored.has(key) || alreadyDecided.has(key)) continue;
       scored.add(key);
 
       // Orient canonically so `scorePair`'s output does not depend on which of

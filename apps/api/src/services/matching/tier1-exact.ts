@@ -30,7 +30,15 @@
  * correlation happens at Tier 2, where the description-extracted anchor scores as
  * a weak reference. The answer key optimistically labels those pairs `exact`
  * (`viaTier` is "the weakest tier that should suffice"); the scorer's
- * tier-attribution reconciles the difference (validation-strategy §2.2).
+ * tier-attribution reconciles the difference (validation-strategy §5.1.2).
+ *
+ * That is ONE of three reconciliation cases, not the whole of the gap — the
+ * sentence above used to read as if it were exhaustive (issue #34). The others:
+ * a gateway<->ledger AMOUNT_TRUE_MISMATCH pair carries a byte-identical
+ * payment_id and is labelled `exact` + `shouldMatch: true`, yet Tier 1 CORRECTLY
+ * refuses it on amount and S8 resolves it to an AMOUNT_MISMATCH exception; and
+ * `matches.tier` is a GROUP's weakest tier, so it is not comparable to a PAIR's
+ * `viaTier` at all. All three are settled by ADR-072.
  */
 
 import type { MemberRole } from '../../types/domain.js';

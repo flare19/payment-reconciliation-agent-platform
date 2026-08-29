@@ -169,11 +169,11 @@ describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL
     assert.equal(r.status, 200);
     const items = r.json['exceptions'] as Record<string, unknown>[];
     assert.equal(items.length, 5);
-    assert.deepEqual(r.json['pagination'], { page: 1, pageSize: 5, total: 555, totalPages: 111 });
+    assert.deepEqual(r.json['pagination'], { page: 1, pageSize: 5, total: 256, totalPages: 52 });
 
     const facets = r.json['facets'] as Record<string, Record<string, number>>;
-    assert.equal(facets['category']!['MISSING_IN_GATEWAY'], 242);
-    assert.equal(facets['severity']!['high'], 274);
+    assert.equal(facets['category']!['MISSING_IN_GATEWAY'], 90);
+    assert.equal(facets['severity']!['high'], 117);
 
     // Default sort is severity then money at risk — ADR-044's whole point.
     assert.equal(items[0]!['severity'], 'high');
@@ -252,10 +252,10 @@ describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL
     const seqs = entries.map((e) => e['sequenceNo'] as number);
     assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b));
     assert.equal(entries[0]!['eventType'], 'RUN_STARTED', 'the anchor comes first');
-    assert.equal((run.json['pagination'] as Record<string, number>)['total'], 930);
+    assert.equal((run.json['pagination'] as Record<string, number>)['total'], 635);
 
     const byActor = await req('GET', `/api/runs/${runId}/audit?actorType=engine`);
-    assert.equal((byActor.json['pagination'] as Record<string, number>)['total'], 930);
+    assert.equal((byActor.json['pagination'] as Record<string, number>)['total'], 635);
     const byEvent = await req('GET', `/api/runs/${runId}/audit?eventType=RECORD_DEDUPLICATED`);
     assert.equal((byEvent.json['pagination'] as Record<string, number>)['total'], 9);
   });
@@ -267,7 +267,7 @@ describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL
     // A hash chain proves the entries you HOLD are consistent and cannot prove
     // you hold all of them. Without the anchor, deleting the tail reads as clean.
     assert.equal(r.json['anchored'], true);
-    assert.equal(r.json['entriesChecked'], 930);
+    assert.equal(r.json['entriesChecked'], 635);
     assert.equal(r.json['firstDivergenceSequenceNo'], null);
   });
 
@@ -289,7 +289,7 @@ describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL
     assert.equal(r.status, 200);
     const lines = r.text.split('\n');
     assert.match(lines[0]!, /^exceptionId,category/);
-    assert.equal(lines.length, 556, 'header plus every exception');
+    assert.equal(lines.length, 257, 'header plus every exception');
     const matches = await req('GET', `/api/runs/${runId}/export?scope=matches`);
     assert.equal(matches.text.split('\n').length, 285);
   });
