@@ -50,7 +50,7 @@ Rationale for each is in [docs/adr-log.md](docs/adr-log.md). Don't re-litigate t
 | [docs/agent-design.md](docs/agent-design.md) | **The Analyst (Phase A).** The agentic layer downstream of S14: tool registry, investigation loop, grounding gate, self-correction, how the agent is measured. Read it before touching anything agent-related. |
 | [docs/api-contract.md](docs/api-contract.md) | Every endpoint. Frontend and backend are built on different days — **this contract is binding.** |
 | [docs/ui-spec.md](docs/ui-spec.md) | Screens, states, the demo path, and the pre-agreed degradation order if Day 12 overruns. |
-| [docs/adr-log.md](docs/adr-log.md) | Every locked decision with reasoning. Append-only. 73 entries. |
+| [docs/adr-log.md](docs/adr-log.md) | Every locked decision with reasoning. Append-only. 74 entries. |
 | [docs/validation-strategy.md](docs/validation-strategy.md) | Ground-truth generation, precision/recall scoring, the scale benchmark, the honesty protocols. |
 | [docs/testing-strategy.md](docs/testing-strategy.md) | What gets tested and what deliberately doesn't. |
 | [docs/deployment.md](docs/deployment.md) | Hosting, env vars, secrets, deploy steps. |
@@ -517,18 +517,39 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 > **deploy moves to Day 10** (largest un-de-risked item; ADR-061's precondition has been met since Day 8),
 > **the frontend grows to two days**, and **AUDIT-4 stops sharing a day with the submission**.
 
-### Day 10 (Aug 30) — deploy, and the last unwired matching stage
+### Day 10 (Aug 30) — deploy as an unknowns-flush, and the last unwired matching stage
+
+> **Deploy is NOT a checkbox and Day 10 is not a freeze (ADR-074).** Its purpose is to convert
+> every unknown that only appears in a real environment into a known one **while there is still
+> time to absorb it** — managed-Postgres connection limits and SSL, `CORS_ORIGIN`, migrate-on-boot
+> against a non-empty database, cold-start latency on endpoint 4, and whether a run completes
+> inside the platform's limits. **Four P1s are open on the day it deploys and all of them land
+> afterwards.** So the setup is judged on how cheap it is to REDO, not on being finished:
+> redeployment stays a single manual action, and **there is no CI/CD** — one person, one branch,
+> two `npm test` commands and a review gate that already exists (ADR-074, ADR-005).
 
 | # | Unit | Model | Why |
 |---|---|---|---|
-| **U14** | Deploy API to Railway (ADR-061) | **Opus / high** | Moved up a day. Nothing is deployed, and that is now the biggest risk in the project — a result a panelist cannot open scores nothing. ADR-061 deferred this until the project ran locally; it has since Day 8. `deployment.md` §5. |
-| **R1** | Wire S10 batch decomposition | **Opus / high** | Built and tested on Day 4, never called. `UNSPLITTABLE_BATCH` scores **0.00/0.00** for that reason alone and **53 false negatives (7.4 recall points)** sit behind it. U6 named the two decisions it would not make alone: which unmatched bank credits enter the pool, and how a decomposition's members interact with S11's role-collision rule. Both are now decidable — S11 refuses 0 pairs and `assembleGroups` already accepts `batchGroups` as a passthrough. |
-| — | Re-score, record the number | — | `npm run score -- --run <id>`. Every day from here ends with a re-score. |
+| **U14** | Deploy API to Railway (ADR-061, ADR-074) | **Opus / high** | Moved up a day. Nothing has ever run outside a laptop. `deployment.md` §5. Acceptance is *"a second deploy is one command"*, not *"it is live"*. |
+| **R1** | Wire S10 batch decomposition — **[#46](https://github.com/flare19/payment-reconciliation-agent-platform/issues/46), P1** | **Opus / high** | Built and tested Day 4, never called. **48 false negatives (6.7 recall points)** and `UNSPLITTABLE_BATCH` at **0.000/0.000** sit behind it. Both blockers U6 named are now decidable — #40 made "unmatched after S9" mean something, and `assembleGroups` already takes `batchGroups` as a passthrough. |
+| — | Re-score, record the number | — | `npm run score -- --run <id>`. Every day from here ends with a re-score (habit 0). |
+
+### The four open P1s, and when each lands
+
+| # | What | Cost, measured | When |
+|---|---|---|---|
+| **[#47](https://github.com/flare19/payment-reconciliation-agent-platform/issues/47)** | **bank↔ledger cannot reach the review threshold.** Dropping the inapplicable amount weight without renormalising caps the pair at **0.55** against a **0.65** bar — arithmetically unreachable with perfect evidence. | 42 pairs directly; caps independent reachability of all **244** true bank↔ledger pairs. 0 are reached on their own merit today. | **Day 11** — cannot ship |
+| **[#46](https://github.com/flare19/payment-reconciliation-agent-platform/issues/46)** | S10 built, tested, never called | 48 pairs · 6.7 recall points · an exception category at 0.000/0.000 | **Day 10** |
+| **[#38](https://github.com/flare19/payment-reconciliation-agent-platform/issues/38)** | `anchorAgreement` compares weak keys like-for-like | 17 pairs, 11 scoring a literal zero anchor. Overlaps #47's residual 30. | Day 13 |
+| **[#43](https://github.com/flare19/payment-reconciliation-agent-platform/issues/43)** | `countsTowardEngineMatchRate` admits `pending_review` | Browse list implies 86.4% where the headline says 67.85% | **before the frontend reads it** |
+
+**#47 is the one that must not ship.** An engine that structurally cannot reconcile two of its three sources against each other is a defect a judge can find by reading the accuracy table, and its failure mode is silent — the pairs arrive as `MISSING_IN_*` exceptions carrying a confident explanation.
 
 ### Day 11 (Aug 31) — explain layer
 
 | # | Unit | Model | Why |
 |---|---|---|---|
+| **R2** | **[#47](https://github.com/flare19/payment-reconciliation-agent-platform/issues/47), P1** — renormalise the score over APPLICABLE weights | **Opus / high** | The never-found bug. Structural, not a threshold change: a score that omits a component because it is *inapplicable to this source pair*, then compares against a bar calibrated for the full set, is comparing two scales. **No threshold and no weight moves** — ADR-027 holds, and the fix is arguable without citing any holdout number. |
 | **U11** | Explain layer S13: signature, cache, LLM client, templates | **Sonnet / medium** | `schema.md` §10 is the most complete spec in the repo. Run must complete with the API unavailable (`explanation_source = 'template'`). Fills the last unwired stage, so `llmCost` and `stagesNotRun` stop being null. |
 
 ### Day 12 (Sep 1) — the Analyst

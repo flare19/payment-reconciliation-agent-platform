@@ -356,3 +356,26 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
   **A smaller one worth naming because it wasted a cycle:** the first scored run reported `precision 0, recall 0, TP 0` against an engine that had matched 658 pairs. The cause was a stale `tsx` process still serving the old `recordPreview` on port 3001 — the code was right and the server was old. Loud, harmless, and a reminder that "I restarted it" is a belief until the response body says so.
 
+  **End of Day 9 — what the measurement turned into, once the never-found set was actually opened.**
+
+  "~80 pairs never found" was a bucket, not a diagnosis, and buckets hide things. Opening it produced a number that changes what Day 10 and 11 are for:
+
+  ```
+  never-found true pairs .................................... 133
+    viaTier = batch — S10 built, tested, NEVER CALLED .......  48   #46 P1
+    bank<->ledger capped at 0.55 against a 0.65 bar .........  42   #47 P1
+    gateway-bearing, awaiting diagnosis (30 overlap #38) ....  43
+  candidates never generated ................................   0
+  ```
+
+  **Zero.** Not one of the 133 was missed by candidate generation. Every one was generated, scored, and fell below a threshold. The blocking strategy is doing its job; the scoring model is not.
+
+  **#47 is the one that would have been catastrophic to ship, and it is arithmetic rather than tuning.** `schema.md` §4.3 gives bank and ledger no comparable amount basis, so `scorePair` contributes 0 for the amount component — and does **not renormalise the remaining weights**. Best case for a bank↔ledger pair is `anchor 0.20 + date 0.20 + counterparty 0.15 = 0.55`, judged against `fuzzyReviewThreshold = 0.65`. **A bank↔ledger pair with a matching anchor, an exact date and an identical counterparty is refused.** There is no input that passes. Measured: of 244 true bank↔ledger pairs the engine reaches 178, and **every one only as a three-way group's implied leg — zero on their own merit.**
+
+  Two locked decisions had never been reconciled: ADR-030 calibrated the weights assuming all four components apply, and §4.3 created a source pair where one never does. Neither is wrong alone. **This is the Day 9 seam again — the fourth time today** — and it is the sharpest instance yet, because the two documents are not merely inconsistent, they are jointly impossible, and the impossibility is a one-line sum that nobody had performed.
+
+  **Why this was invisible for six days.** bank↔ledger pairs mostly arrive as the *implied* third edge of a three-way group, where the gateway leg carries them, so 178 of 244 look matched and the category never reads as broken. Only a scorer that asks "reached on its own merit?" separates the two, and that question did not exist until Day 9.
+
+  **The discipline this sits inside, written into ARCHITECTURE §8.1 and habit 0.** The measurement also showed that `fuzzyAutoConfirmThreshold` at 0.85 is the entire difference between the 442 auto-confirmed pairs and the 583 the engine actually found — lowering it would lift the headline overnight. **That change is forbidden and #47's is not**, and the distinction is the whole point: a scale that omits an inapplicable component and then compares against a full-scale bar is wrong on its own terms, arguable without any holdout number, and would be wrong if the holdout did not exist. A threshold change would be arguable only by pointing at the number. **If the argument for a change is "the holdout number goes up", the argument is the evidence against it.**
+
+  **Also settled today: the deploy posture (ADR-074).** Deploy moves to Day 10 not to tick it off but to meet the environment's unknowns while there is still time to absorb them — nothing here has ever run outside a laptop. Four P1s are open on the day it deploys and all of them land afterwards, so the deployment is judged on how cheaply it REDEPLOYS rather than on being finished. No CI/CD: one person, one branch, two `npm test` commands and a review gate that already exists. The cost is stated rather than hidden — without CI, "the tests passed" is a claim about what somebody ran, not a property of the commit.

@@ -244,8 +244,8 @@ The build is **13 working days**, Aug 23 → Sep 5. There is no Day for Aug 25 �
 | 7 | Aug 28 | Tier 2 driver S9, group assembly S11, classification integration S12, and the repository layer (8 tables + migration 012). **Done — also Aug 28; the calendar runs two days ahead of the plan.** |
 | 8 | Aug 28 | Routes and run orchestration. **First end-to-end persisted run — done, Aug 28.** AUDIT-2 outstanding. |
 | 9 | **Aug 29** | AUDIT-2 and its P1 (#40). Metrics S14, scorer (`tools/score`), score-report endpoint. **First honest cold-run number — three calendar days early.** **Done.** |
-| 10 | Aug 30 | **Deploy the API to Railway** (ADR-061 — its precondition is now met). Wire S10 batch decomposition. |
-| 11 | Aug 31 | Explain layer S13 + signature cache + templates. Re-score. |
+| 10 | Aug 30 | **Deploy the API to Railway** — an unknowns-flush, not a checkbox; redeployment stays manual and cheap, no CI/CD (ADR-061, ADR-074). Wire S10 (#46). |
+| 11 | Aug 31 | **#47 — the never-found P1.** Explain layer S13 + signature cache + templates. Re-score. |
 | 12 | Sep 1 | Agent tool registry and the investigation loop A1–A4. |
 | 13 | Sep 2 | **AUDIT-3.** Scale benchmark (ADR-045). The #38/#43 sweep. |
 | 14 | Sep 3 | Frontend: design direction + dashboard. |
@@ -262,7 +262,7 @@ The first honest accuracy number now lands on **Day 9, not Day 12**. That is the
 
 **What is NOT done and is the real remaining risk — updated after Day 9.** The measurement exists, so the risk register is no longer a guess. In order:
 
-1. **Nothing is deployed.** This is now the single largest un-de-risked item and it is why Day 10 is deploy. A project that scores well and cannot be opened by a panelist loses more than one that scores modestly and is live.
+1. **Nothing is deployed.** This is now the single largest un-de-risked item and it is why Day 10 is deploy. A project that scores well and cannot be opened by a panelist loses more than one that scores modestly and is live. Deploy on Day 10 is an **unknowns-flush, not a freeze** — four P1s are open that day and every one of them lands afterwards, so the setup is judged on how cheaply it REDEPLOYS (ADR-074). No CI/CD: one person, one branch, two test commands and a review gate that already exists.
 2. **There is no UI.** The track requires that a panelist see the result without reading code. Two days, not one.
 3. **The agent layer is unbuilt.** It is the track's "build an agent" requirement and it is measured, not decorative (ADR-053).
 4. **Accuracy is measured and its gap is understood** — see §8.1. It is no longer the top risk, which is the single most useful thing Day 9 bought.
@@ -281,8 +281,17 @@ engine match rate 67.85% against a computed ceiling of 93%
 | Cause | FN pairs | What it is |
 |---|---|---|
 | Found, pending review | 141 | Working as designed. Review-queue precision 0.94. |
-| **S10 unwired** | **53** | Batch decomposition is BUILT and TESTED and not called. `UNSPLITTABLE_BATCH` scores 0.00/0.00 for that reason alone. **7.4 recall points behind a wiring change.** |
-| Never found | ~80 | The genuine engineering gap. `HARD` recall is 0.20. |
+| **Never found** | **133** | Decomposed below. **Zero of them were missed by candidate generation** — every one was generated, scored, and fell below a threshold. This is a scoring-model gap, not a search gap. |
+
+**The 133, attributed:**
+
+| Cause | Pairs | Issue |
+|---|---|---|
+| `viaTier: batch` — S10 built, tested, never called | **48** | [#46](https://github.com/flare19/payment-reconciliation-agent-platform/issues/46) P1 |
+| **bank↔ledger capped at 0.55 against a 0.65 bar** | **42** | [#47](https://github.com/flare19/payment-reconciliation-agent-platform/issues/47) P1 |
+| gateway-bearing, awaiting diagnosis (30 overlap #38) | 43 | tracked in #47 |
+
+**#47 is the one that cannot ship.** `schema.md` §4.3 gives bank and ledger no comparable amount basis, so `scorePair` contributes 0 for amount — but does not renormalise. The pair is scored on a 0.55-maximum scale and judged against a threshold calibrated for 1.00, so a bank↔ledger pair with a matching anchor, exact date and identical counterparty is refused. Measured: of **244** true bank↔ledger pairs the engine reaches 178, and **every one of those only as a three-way group's implied leg** — **zero** on their own merit.
 
 **What this does NOT justify: touching a threshold.** `fuzzyAutoConfirmThreshold` at 0.85 is the difference between the 442 and the 583, and lowering it would raise the headline overnight. **ADR-027 forbids exactly this** — the number above was measured on `HOLDOUT_SEED`, and tuning any parameter in response to it is tuning against the holdout, whatever the justification sounds like. The rule for every remaining engine change:
 
