@@ -179,11 +179,42 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
       'a deduplicated copy never entered the pool, so it has no post-alias key');
   });
 
-  test('metrics stay EMPTY until U8, rather than being faked', async () => {
-    // ADR-040's denominator has three defensible readings; choosing one is not a
-    // wiring decision. An empty metrics object is honest; zeroes would not be.
+  test('S14 persists a headline whose denominator terms reproduce it', async () => {
+    // ADR-040 has three defensible readings and the wrong one is the FLATTERING
+    // one, so the published terms must reproduce the published denominator here,
+    // from the stored object, not only inside the function that computed it.
     const run = await findRun(runId);
-    assert.deepEqual(run!.metrics, {});
+    const m = run!.metrics as Record<string, Record<string, number>>;
+    assert.equal(m['matchRate']!['matchRatePct'], 67.85);
+    assert.equal(m['matchRate']!['matchedRecords'], 593);
+    assert.equal(m['matchRate']!['reconcilableRecords'], 874);
+    const p = m['population']!;
+    assert.equal(
+      p['ingested']! - p['excluded']! - p['rejectedRows']! - p['nonPrimaryDuplicates']!,
+      m['matchRate']!['reconcilableRecords']);
+  });
+
+  test('S14 reports what it did NOT compute, rather than zeroing it', async () => {
+    const run = await findRun(runId);
+    const m = run!.metrics as Record<string, unknown>;
+    assert.deepEqual(m['stagesNotRun'], ['S10_BATCH', 'S13_EXPLAIN']);
+    assert.equal(m['llmCost'], null);
+    const e = m['exceptions'] as Record<string, unknown>;
+    assert.equal(e['batchSearchExhausted'], null, '0 would claim a search that never ran');
+  });
+
+  test('tierAttribution survives the jsonb round trip as PAIR counts (ADR-072)', async () => {
+    // The figure `tools/score` reads for its tier diagnostic. If it ever became
+    // the group-tier count it would read 46 instead of 203 and U9's per-tier
+    // table would be wrong for 63% of matched pairs.
+    const run = await findRun(runId);
+    const t = (run!.metrics as Record<string, Record<string, number>>)['tierAttribution']!;
+    assert.equal(t['exact'], 203);
+    assert.equal(t['fuzzy'], 268);
+    assert.equal(t['implied'], 187);
+    assert.equal(t['unattributed'], 0);
+    assert.equal(t['identityEstablished'], 9, 'what S8 contributed, not what it re-derived');
+    assert.notEqual(t['exact'], 46, 'this is the GROUP-tier count, not the pair count');
   });
 
   test('a second identical run produces identical counts (ADR-032)', async () => {

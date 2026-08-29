@@ -369,7 +369,8 @@ git log --format=%B main..HEAD | grep -inE "(close[sd]?|fixe[sd]|fix|resolve[sd]
 | Unit | Commit | What |
 |---|---|---|
 | P1 | `94c3e85` | **#40** — Tier 2 excludes settled PAIRS, not matched RECORDS |
-| — | (this commit) | **ADR-072** — the `viaTier` reconciliation rule (#34), plus doc refresh |
+| — | `67d55bf` | **ADR-072** — the `viaTier` reconciliation rule (#34), plus doc refresh |
+| **U8** | (this commit) | **S14 metrics.** The first persisted headline: **67.85%**, with every denominator term beside it |
 
 **The #40 fix, measured against the answer key:**
 
@@ -391,7 +392,21 @@ runtime               983 ms      859 ms
 
 **ADR-072 settles #34, which CLAUDE.md had flagged as blocking U9.** `viaTier` is never a term in precision/recall — correctness is pair membership alone. Three cases, none a recall miss: tier fall-through; a pair whose *event*-level `expectedOutcome` is `EXCEPTION` (scored against the classification key, not the pairing key); and pair-tier vs group-tier, which the #40 fix turned from an edge case into the majority — **413 of 658 matched pairs (63%) have a `viaTier` that disagrees with their group's tier**, all of them matched correctly. See `validation-strategy.md` §5.1.2.
 
-> **ADR-072 places one requirement on U8:** `runs.metrics` must record how many **PAIRS** each tier produced, not only group-level counts. Without it the tier-attribution diagnostic is not computable from persisted output.
+> **ADR-072 placed one requirement on U8:** `runs.metrics` must record how many **PAIRS** each tier produced. **Done** — `tierAttribution` reads `exact 203 · fuzzy 268 · implied 187 · unattributed 0`, summing to 658, exactly the pair count of the 284 groups. The group-tier figure it deliberately is NOT would read `exact: 46`.
+
+**U8 (S14 metrics) is complete.** `runs.metrics` is populated, `GET /api/runs/:runId` serves a headline, endpoint 5 returns `engine` alongside `measured: null`. **498 tests in `apps/api`, 202 at root.**
+
+```
+matchRatePct 67.85 · matched 593 / reconcilable 874
+tierAttribution  exact 203 · fuzzy 268 · implied 187 · identityEstablished 9
+reviewBurden     58 groups · 162 records, excluded from the rate (ADR-040)
+stagesNotRun     S10_BATCH · S13_EXPLAIN   (null, never 0)
+throughput       3,898 rec/s engine · 1,093 rec/s wall clock
+```
+
+**Two things U8 caught, both in `what-broke.md`:** `serialize.ts` read the metrics block as `review` where §11.1 names it `reviewBurden`, so `headline.pendingReviewCount` had been permanently `null` — §11.5 rule 3 broken silently. And the first `tierAttribution` draft reported `identityEstablished: 212`, the same overstatement Day 8 removed from the audit log; the real figure is **9**.
+
+**`llmCost` and `batchSearch*` are `null`, not zero.** `stagesNotRun` names why. A stage that did not run must not report a performance figure.
 
 **Read `docs/what-broke.md`'s Day 9 entry before starting U8.** It records why #40 was invisible to 477 passing tests: both facts the bug needed were already written down in this repo, days apart, by the same author — §6.3's "pairs" and AUDIT-1's "Tier 1 only ever produces gateway↔ledger". The defect lived in their *conjunction*, which no document owns and no test covered.
 

@@ -62,6 +62,7 @@ import {
   assembleGroups, fromTier1, fromTier2, type GroupPair, type RefusedPair,
 } from '../matching/group-assembly.js';
 import { runClassification } from '../classification/collect.js';
+import { computeRunMetrics, type StageTimings } from '../metrics/run-metrics.js';
 
 import * as runsRepo from '../../repositories/runs.js';
 import * as txnRepo from '../../repositories/transactions.js';
@@ -178,12 +179,20 @@ async function runPhases(
   // ── S0 LOAD + S1–S3 PARSE/NORMALIZE/EXCLUDE ────────────────────────────────
   await runsRepo.setRunStatus(runId, 'ingesting');
 
+  // Stage timings are MEASURED, not estimated (schema.md §11.1). `Date.now()` is
+  // legal here — ADR-039 forbids the wall clock in the DECISION path, and a
+  // duration influences no match, no category and no score. It reaches only
+  // `metrics.throughput`, which is a claim about this machine rather than about
+  // the data.
+  const startedAt = Date.now();
+  const stage = new StageClock();
+
   const inputFileHashes = {
     gateway: hashSource(sources.gateway),
     bank: hashSource(sources.bank),
     ledger: hashSource(sources.ledger),
   };
-  const ingested = ingestSources({ runId, files: sources });
+  const ingested = stage.time('parse', () => ingestSources({ runId, files: sources }));
 
   // The alias set is read ONCE, before matching, and its size is snapshotted.
   // A run's output must be a pure function of (files, config, active aliases);
@@ -202,7 +211,7 @@ async function runPhases(
     aliasCountAtStart: aliases.length,
   };
 
-  const deduped = dedupe(ingested.transactions);
+  const deduped = stage.time('dedupe', () => dedupe(ingested.transactions));
   const nonPrimaryDuplicates = ingested.transactions.length - deduped.pool.length;
   const reconcilable = deduped.pool.filter((t) => t.statusNorm === 'reconcilable').length;
   const counts: runsRepo.RunRecordCounts = {
@@ -294,10 +303,10 @@ async function runPhases(
   // ── S5–S11 MATCHING (pure, in memory) ──────────────────────────────────────
   await runsRepo.setRunStatus(runId, 'matching');
 
-  const blocks = buildBlockIndexes(deduped.pool);
-  const t1 = runTier1(blocks, config);
+  const blocks = stage.time('block', () => buildBlockIndexes(deduped.pool));
+  const t1 = stage.time('tier1', () => runTier1(blocks, config));
   const claimedByExact = new Set(t1.matches.flatMap((m) => [m.aId, m.bId]));
-  const t15 = runTier15(deduped.pool, config, aliases, claimedByExact);
+  const t15 = stage.time('tier15', () => runTier15(deduped.pool, config, aliases, claimedByExact));
   rebuildCounterpartyIndex(blocks, t15.pool);
 
   const exactPairs = [...t1.matches, ...t15.matches];
@@ -305,7 +314,7 @@ async function runPhases(
   // S8 — identity short-circuit. Every verdict it reaches is a pair Tier 2 must
   // NOT re-score: a similarity score may never overturn a deterministic identity
   // verdict (matching-engine §6.3).
-  const identity = resolveIdentities(t15.pool, config);
+  const identity = stage.time('identity', () => resolveIdentities(t15.pool, config));
   const settled = new Set<string>();
   for (const { pair, verdict } of identity) {
     if (verdict.kind !== 'not_established') settled.add(pairKeyOf(pair[0].id, pair[1].id));
@@ -315,7 +324,7 @@ async function runPhases(
   // ledger row still needs Tier 2 to find its bank leg, or §10 rule 2's 3-way
   // group can never form and the bank leg becomes a MISSING_IN_BANK exception
   // that reports having considered nothing.
-  const tier2 = runTier2(blocks, config, exactPairs, settled);
+  const tier2 = stage.time('tier2', () => runTier2(blocks, config, exactPairs, settled));
 
   // S10 batch decomposition is NOT wired yet — see the note at the bottom of
   // this file. Passing an empty list keeps S11's contract honest rather than
@@ -325,7 +334,7 @@ async function runPhases(
     ...exactPairs.map((m) => fromTier1(m, byId)).filter((p): p is GroupPair => p !== null),
     ...tier2.accepted.map(fromTier2),
   ];
-  const assembled = assembleGroups(groupPairs, []);
+  const assembled = stage.time('group', () => assembleGroups(groupPairs, []));
 
   const appliedAliasIds = [...new Set(exactPairs.flatMap((m) => m.aliasIds))];
 
@@ -400,10 +409,10 @@ async function runPhases(
   // ── S12 CLASSIFY ───────────────────────────────────────────────────────────
   await runsRepo.setRunStatus(runId, 'classifying');
 
-  const exceptions = runClassification({
+  const exceptions = stage.time('classify', () => runClassification({
     pool: t15.pool, duplicates: deduped.findings, identity, tier2,
     batches: [], groups: assembled.matches, refused: assembled.refused, config,
-  });
+  }));
 
   await withTransaction(async (c) => {
     const audit = new PhaseAudit(c, runId);
@@ -433,21 +442,51 @@ async function runPhases(
   await runsRepo.setRunStatus(runId, 'explaining');
 
   // ── S14 METRICS + FINALIZE ─────────────────────────────────────────────────
-  // `services/metrics/run-metrics.ts` is U8 (Day 9) and is deliberately still a
-  // stub: ADR-040's denominator has three defensible readings and choosing one
-  // is not a wiring decision. The population counts it will need are already
-  // recorded in `runs.record_counts`, so U8 changes this call site and nothing
-  // upstream of it.
+  // `computeRunMetrics` re-derives ADR-040's denominator and THROWS if the
+  // formula disagrees with the population the engine actually matched over. That
+  // failure is deliberately loud and deliberately here: a run that cannot
+  // account for its own denominator must not publish a match rate, and the
+  // failure path below records it as a failed run rather than a completed one
+  // carrying a number nobody can reconcile.
+  const aliasCounts = await aliasRepo.aliasStatusCounts();
+  const metrics = computeRunMetrics({
+    population: {
+      gateway: counts.gateway, bank: counts.bank, ledger: counts.ledger,
+      excluded: counts.excluded, rejected: counts.rejected,
+      nonPrimaryDuplicates: counts.nonPrimaryDuplicates,
+    },
+    pool: t15.pool,
+    exactPairs,
+    tier2,
+    identity,
+    groups: assembled.matches,
+    exceptions,
+    aliasCountAtStart: config.aliasCountAtStart,
+    aliasCounts,
+    // Every alias ever taught is a correction a human made, revoked ones
+    // included — see `aliasStatusCounts`. Dropping the revoked ones would
+    // flatter the leverage ratio by hiding the corrections that were wrong.
+    humanCorrectionsToDate: aliasCounts.active + aliasCounts.superseded + aliasCounts.revoked,
+    timings: stage.finish(startedAt),
+    config,
+  });
+
   return await withTransaction(async (c) => {
     const audit = new PhaseAudit(c, runId);
+    await runsRepo.setRunMetrics(runId, metrics, c);
     await audit.write({
       ...blank,
       eventType: 'RUN_COMPLETED', subjectType: 'run', subjectId: runId,
       reason:
         `run completed: ${assembled.matches.length} match groups, ` +
-        `${exceptions.length} exceptions over ${counts.reconcilable} reconcilable records`,
+        `${exceptions.length} exceptions over ${counts.reconcilable} reconcilable records, ` +
+        `match rate ${metrics.matchRate.matchRatePct}%`,
+      // The headline goes in the CHAIN, not only in `runs.metrics`. `runs` is a
+      // mutable row; the audit log is append-only and hash-chained, so a number
+      // recorded here cannot be quietly restated later (ADR-042).
       details: details({ matches: assembled.matches.length, exceptions: exceptions.length,
-                         recordCounts: counts, refusedPairs: assembled.refused.length }),
+                         recordCounts: counts, refusedPairs: assembled.refused.length,
+                         matchRate: metrics.matchRate, tierAttribution: metrics.tierAttribution }),
     });
     await runsRepo.finishRun(runId, { status: 'completed' }, c);
     auditEntries += audit.count;
@@ -458,6 +497,59 @@ async function runPhases(
       auditEntries,
     };
   });
+}
+
+/**
+ * Per-stage wall-clock, accumulated as the run walks S1 -> S12.
+ *
+ * Accumulating rather than assigning: `tier15` runs once today, but a stage that
+ * is ever called twice should report the total it cost, not the last call. A
+ * timing that silently drops earlier work is the throughput equivalent of a
+ * recall test with a loose floor.
+ *
+ * Stages that did not run report `null`, never `0` (schema.md §11.1). `0 ms` is
+ * a performance claim; `null` is an absence, and S10 and S13 are absences.
+ */
+class StageClock {
+  private readonly ms = new Map<string, number>();
+
+  time<T>(name: string, fn: () => T): T {
+    const t0 = Date.now();
+    try {
+      return fn();
+    } finally {
+      this.ms.set(name, (this.ms.get(name) ?? 0) + (Date.now() - t0));
+    }
+  }
+
+  private get(name: string): number {
+    return this.ms.get(name) ?? 0;
+  }
+
+  finish(startedAt: number): StageTimings {
+    // Parsing and normalization are one pass in `ingestSources` and cannot be
+    // separated without instrumenting the parsers themselves. Reported as
+    // `parse`, with `normalize` at 0 rather than inventing a split — a made-up
+    // breakdown is worse than a coarser true one.
+    const engineMs = ['parse', 'dedupe', 'block', 'tier1', 'tier15', 'identity',
+      'tier2', 'group', 'classify'].reduce((sum, k) => sum + this.get(k), 0);
+    return {
+      parse: this.get('parse'),
+      normalize: 0,
+      dedupe: this.get('dedupe'),
+      block: this.get('block'),
+      tier1: this.get('tier1'),
+      tier15: this.get('tier15'),
+      identity: this.get('identity'),
+      tier2: this.get('tier2'),
+      batch: null,      // S10 unwired
+      group: this.get('group'),
+      classify: this.get('classify'),
+      explain: null,    // S13 unwired
+      engineMs,
+      wallClockMs: Date.now() - startedAt,
+    };
+  }
 }
 
 /** The config actually used, written verbatim (schema.md §4). */
