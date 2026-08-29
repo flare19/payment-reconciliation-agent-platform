@@ -194,6 +194,16 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 
 ## 9. Daily habits
 
+0. **END EVERY DAY WITH A RE-SCORE, and write the number down.** Since Day 9 this is one command:
+
+   ```
+   npm run score -- --run <runId>
+   ```
+
+   Exit 0 = every honesty gate passed · 1 = transport/hash failure · **2 = a BUILD BLOCKER fired**. This is now the cheapest regression check in the project and it covers the whole system at once — a stage that stops being called, a group rule that starts laundering, a classifier that drifts, all show up as a number that moved. **Do not end a day on an unexplained movement.** Every prior defect of consequence in this repo was invisible to a green test suite and would have been visible to this.
+
+   **Never change a parameter because the score went up** (ADR-027, ARCHITECTURE §8.1). Thresholds, windows, weights and tolerances are off-limits in response to a holdout measurement; structural fixes — wiring a stage that is not called, comparing keys that should be compared — are allowed because they are arguable without citing the number. Validate on `DEV_SEED`, report on `HOLDOUT_SEED`.
+
 1. **Update `docs/what-broke.md` every single day.** It's a required submission artifact and it cannot be honestly reconstructed on Day 13. One line is fine; blank is not.
 2. **Append to `docs/adr-log.md`** whenever you make a decision a future session might otherwise reverse.
 3. **Never tune against `HOLDOUT_SEED`.** Develop against `DEV_SEED`. (ADR-027)
@@ -412,6 +422,15 @@ throughput       3,898 rec/s engine · 1,093 rec/s wall clock
 
 ### THE FIRST MEASURED NUMBER (U10) — reported unedited, per ADR-020
 
+> **The headline understates what the engine FOUND, and the honest reframing is already specified.**
+> Of 716 scorable true pairs the engine auto-confirms **442**. A further **141 it found and correctly
+> declined to auto-confirm** — they sit in the review queue at **0.94 precision**. Counted as "did the
+> engine locate this relationship at all", that is **583 / 716 = 81.4%**; only **133 pairs (18.6%) were
+> never found**. ADR-040 is right to keep proposals out of the headline and §5.1.1's review-queue
+> precision is exactly the figure that makes the distinction legible. **Both ship, both labelled.**
+> A further **53** of the misses are S10 being unwired — **7.4 recall points behind a wiring change.**
+
+
 ```
 pairs      precision 1.0000 · recall 0.6173 · F1 0.7634
            TP 442 · FP 0 · FN 274
@@ -485,7 +504,7 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 | **U7** | Routes — 28 endpoints | Opus / high | ✅ `d836a58`. All 28 over real HTTP; 24 integration tests green first run. |
 | **AUDIT-2** | Isolated audit of U3–U7 | **Opus / max** | ✅ Ran Day 9. Six issues (#40–#45); the P1 (#40) is fixed in `94c3e85`. It was the last checkpoint before a number exists, and it earned its place: the engine was understating its own match rate by 10.76 points. |
 
-### Day 9 (Sep 1) — **the first honest number**
+### Day 9 (Aug 29) — **the first honest number** — COMPLETE
 
 | # | Unit | Model | Why |
 |---|---|---|---|
@@ -493,32 +512,56 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 | **U9** ✅ | `tools/score` | **Opus / high** | The purest case: no test can catch a scorer that is wrong in the direction you hoped. §5.1.1's `pending_review` handling and the group→pair mapping are both judgment. **The `viaTier` rule is no longer a judgment call — ADR-072 and §5.1.2 settle it. Read both before joining anything on tier.** |
 | **U10** ✅ | **First scored cold run** against `data/truth/holdout_seed_90210.json` | **Opus / high** | Report cold AND warm with the false-positive count beside them (ADR-020). Whatever the number is, it goes in `what-broke.md` unedited. |
 
-### Day 10 (Sep 2) — explain layer and the Analyst
+> **THE PLAN GAINED THREE DAYS. Read §8 of ARCHITECTURE.md for the re-dated table.**
+> Day 9 landed on **Aug 29** against a plan that put it on Sep 1. The slack is spent, not absorbed:
+> **deploy moves to Day 10** (largest un-de-risked item; ADR-061's precondition has been met since Day 8),
+> **the frontend grows to two days**, and **AUDIT-4 stops sharing a day with the submission**.
+
+### Day 10 (Aug 30) — deploy, and the last unwired matching stage
 
 | # | Unit | Model | Why |
 |---|---|---|---|
-| **U11** | Explain layer S13: signature, cache, LLM client, templates | **Sonnet / medium** | `schema.md` §10 is the most complete spec in the repo. Run must complete with the API unavailable (`explanation_source = 'template'`). |
+| **U14** | Deploy API to Railway (ADR-061) | **Opus / high** | Moved up a day. Nothing is deployed, and that is now the biggest risk in the project — a result a panelist cannot open scores nothing. ADR-061 deferred this until the project ran locally; it has since Day 8. `deployment.md` §5. |
+| **R1** | Wire S10 batch decomposition | **Opus / high** | Built and tested on Day 4, never called. `UNSPLITTABLE_BATCH` scores **0.00/0.00** for that reason alone and **53 false negatives (7.4 recall points)** sit behind it. U6 named the two decisions it would not make alone: which unmatched bank credits enter the pool, and how a decomposition's members interact with S11's role-collision rule. Both are now decidable — S11 refuses 0 pairs and `assembleGroups` already accepts `batchGroups` as a passthrough. |
+| — | Re-score, record the number | — | `npm run score -- --run <id>`. Every day from here ends with a re-score. |
+
+### Day 11 (Aug 31) — explain layer
+
+| # | Unit | Model | Why |
+|---|---|---|---|
+| **U11** | Explain layer S13: signature, cache, LLM client, templates | **Sonnet / medium** | `schema.md` §10 is the most complete spec in the repo. Run must complete with the API unavailable (`explanation_source = 'template'`). Fills the last unwired stage, so `llmCost` and `stagesNotRun` stop being null. |
+
+### Day 12 (Sep 1) — the Analyst
+
+| # | Unit | Model | Why |
+|---|---|---|---|
 | **U12** | Agent tool registry | **Opus / high** | `score_pair`/`rerun_subset_search` must call locked engine code (ADR-049) — the first `services/agent` → `services/matching` import, which is legal and required. `agent-design.md` §4 still says "meet-in-the-middle"; ADR-060 replaced that with depth-first. Fix the doc. |
 | **U13** | Investigation loop A2 + triage A1 | **Opus / high** (loop), **Sonnet / medium** (triage) | The loop decides whether the grounding gate's per-investigation property holds; #21's `investigationId` plumbing is already in place and must be honoured. Triage's `ORDER BY` is stated exactly. |
 | **AUDIT-3** | Isolated audit of U11–U13 | **Opus / max** | Hallucination is a build blocker (ADR-053), not a metric |
 
-### Day 11 (Sep 3) — deploy and scale
+### Day 13 (Sep 2) — AUDIT-3, scale, and the P2 sweep
 
-| # | Unit | Model |
-|---|---|---|
-| **U14** | Deploy API to Railway (ADR-061) | **Opus / high** — first environment, `deployment.md` §5 |
-| **U15** | Q&A loop | **Sonnet / medium** — same loop, smaller budget, one tool removed |
-| **U16** | Scale benchmark 1k/10k/100k (ADR-045) | **Sonnet / medium** — generator is already parameterized by event count |
+| # | Unit | Model | Why |
+|---|---|---|---|
+| **AUDIT-3** | Isolated audit of U11–U13 | **Opus / max** | Hallucination is a build blocker (ADR-053), not a metric |
+| **U16** | Scale benchmark 1k/10k/100k (ADR-045) | **Sonnet / medium** | Throughput is a judged axis and the curve is the evidence for ADR-033's O(n×k) claim. Generator is already parameterized. |
+| — | **#38** (P1, 17 pairs) and **#43** | **Sonnet / high** | #43 must land before the frontend reads `countsTowardEngineMatchRate` |
+| **U15** | Q&A loop | **Sonnet / medium** | Same loop, smaller budget, one tool removed. **First cut candidate if the day overruns.** |
 
-### Day 12 (Sep 4) — frontend
+### Day 14 (Sep 3) — frontend
 
 | # | Unit | Model | Why |
 |---|---|---|---|
 | **U17** | Design direction + dashboard | **Opus / high** | CLAUDE.md §8's own routing rule: Opus for the creative pass |
+
+### Day 15 (Sep 4) — the rest of the frontend, and the web deploy
+
+| # | Unit | Model | Why |
+|---|---|---|---|
 | **U18** | Remaining screens | **Sonnet / medium** | `ui-spec.md` §1–9 + the endpoint-to-screen map. §8's degradation order is pre-agreed — cut from the bottom and SAY what was cut. |
 | **U19** | Deploy web to Vercel | **Sonnet / medium** | |
 
-### Day 13 (Sep 5) — submission
+### Day 16 (Sep 5) — submission
 
 | # | Unit | Model |
 |---|---|---|

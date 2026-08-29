@@ -243,11 +243,16 @@ The build is **13 working days**, Aug 23 → Sep 5. There is no Day for Aug 25 �
 | 6 | Aug 28 | Ingestion S1–S3: three parsers wired to the Day 3 primitives, exclusion rules, rejected rows. Blocking S5, Tier 1 S6, **and Tier 1.5 S7** (moved up from Day 7 — it re-runs S6's predicate, so it belongs with it). Isolated audit AUDIT-1 and its two P1 fixes. **Done — landed Aug 28 alongside Day 5, so the calendar now runs one day ahead of the plan.** |
 | 7 | Aug 28 | Tier 2 driver S9, group assembly S11, classification integration S12, and the repository layer (8 tables + migration 012). **Done — also Aug 28; the calendar runs two days ahead of the plan.** |
 | 8 | Aug 28 | Routes and run orchestration. **First end-to-end persisted run — done, Aug 28.** AUDIT-2 outstanding. |
-| 9 | Sep 1 | Scorer (`tools/score`), score-report endpoint, metrics. **First honest cold-run number.** |
-| 10 | Sep 2 | Explain layer S13 + signature cache + templates. Agent tool registry and the investigation loop A1–A4. |
-| 11 | Sep 3 | **Deploy the API to Railway** (ADR-061). Q&A loop, scale benchmark. |
-| 12 | Sep 4 | Frontend, **and deploy the web app to Vercel**. |
-| 13 | Sep 5 | Holdout run, accuracy report, README, pitch video, build-challenges write-up, **submit**. |
+| 9 | **Aug 29** | AUDIT-2 and its P1 (#40). Metrics S14, scorer (`tools/score`), score-report endpoint. **First honest cold-run number — three calendar days early.** **Done.** |
+| 10 | Aug 30 | **Deploy the API to Railway** (ADR-061 — its precondition is now met). Wire S10 batch decomposition. |
+| 11 | Aug 31 | Explain layer S13 + signature cache + templates. Re-score. |
+| 12 | Sep 1 | Agent tool registry and the investigation loop A1–A4. |
+| 13 | Sep 2 | **AUDIT-3.** Scale benchmark (ADR-045). The #38/#43 sweep. |
+| 14 | Sep 3 | Frontend: design direction + dashboard. |
+| 15 | Sep 4 | Remaining screens, **and deploy the web app to Vercel**. |
+| 16 | Sep 5 | **AUDIT-4.** Holdout run, accuracy report, README, pitch video, build-challenges write-up, **submit**. |
+
+**The plan gained three days, and they are spent deliberately rather than absorbed.** Days 5–8 all landed on Aug 28 and Day 9 on Aug 29, against a plan that put Day 9 on Sep 1. The slack goes to the two things that were always underweighted: **deploy moves from Day 11 to Day 10** (it is the largest un-de-risked item in the project and ADR-061's condition — "the project runs locally" — has been met since Day 8), and **the frontend grows from one day to two**, which is what `ui-spec.md` §8's pre-agreed degradation order exists to admit was too tight. AUDIT-4 also stops sharing a day with the submission itself.
 
 **Two notes, stated rather than discovered later.**
 
@@ -255,7 +260,35 @@ Days 3 and 4 between them landed the whole of the engine's decision-making core 
 
 The first honest accuracy number now lands on **Day 9, not Day 12**. That is the point of the ordering: a measured number with four days left to react to it is useful, and the same number on the final day is only a report.
 
-**What is NOT done and is the real remaining risk:** nothing is wired end to end. The generator and the holdout dataset now exist (Day 5) and the engine reads them as far as Tier 1.5 (Day 6), but `tools/score` is still a stub, so nothing has been scored against ground truth and every accuracy claim in this repo is still a claim about code rather than a measurement. Day 9 is when that changes, and it is the day to watch.
+**What is NOT done and is the real remaining risk — updated after Day 9.** The measurement exists, so the risk register is no longer a guess. In order:
+
+1. **Nothing is deployed.** This is now the single largest un-de-risked item and it is why Day 10 is deploy. A project that scores well and cannot be opened by a panelist loses more than one that scores modestly and is live.
+2. **There is no UI.** The track requires that a panelist see the result without reading code. Two days, not one.
+3. **The agent layer is unbuilt.** It is the track's "build an agent" requirement and it is measured, not decorative (ADR-053).
+4. **Accuracy is measured and its gap is understood** — see §8.1. It is no longer the top risk, which is the single most useful thing Day 9 bought.
+
+### 8.1 What the first measurement actually says, and what it does NOT justify
+
+```
+precision 1.0000 · recall 0.6173 · F1 0.7634 · FP 0
+engine match rate 67.85% against a computed ceiling of 93%
+```
+
+**The headline understates what the engine found, and the honest reframing is already specified.** Of 716 scorable true pairs the engine auto-confirms 442. A further **141 it FOUND and correctly declined to auto-confirm** — they sit in the review queue at **0.94 precision**. Counted as "did the engine locate this relationship at all", the figure is **583 of 716 = 81.4%**; only **133 pairs (18.6%) were never found**. ADR-040 is right to keep pending proposals out of the headline, and §5.1.1's review-queue precision is exactly the number that makes the distinction legible. **Both ship, both labelled.** That is a reporting decision, not a new metric invented to look better.
+
+**Where the remaining gap actually lives:**
+
+| Cause | FN pairs | What it is |
+|---|---|---|
+| Found, pending review | 141 | Working as designed. Review-queue precision 0.94. |
+| **S10 unwired** | **53** | Batch decomposition is BUILT and TESTED and not called. `UNSPLITTABLE_BATCH` scores 0.00/0.00 for that reason alone. **7.4 recall points behind a wiring change.** |
+| Never found | ~80 | The genuine engineering gap. `HARD` recall is 0.20. |
+
+**What this does NOT justify: touching a threshold.** `fuzzyAutoConfirmThreshold` at 0.85 is the difference between the 442 and the 583, and lowering it would raise the headline overnight. **ADR-027 forbids exactly this** — the number above was measured on `HOLDOUT_SEED`, and tuning any parameter in response to it is tuning against the holdout, whatever the justification sounds like. The rule for every remaining engine change:
+
+- **Structural fixes are allowed** — wiring a stage that is not called, comparing two anchor keys that should be compared (#38). These are wrong regardless of dataset and their correctness is arguable without citing a number.
+- **Parameter changes are not** — thresholds, windows, weights, tolerances. If the argument for a change is "the holdout number goes up", the change is forbidden by ADR-027 and the argument is the evidence.
+- **Validate on `DEV_SEED`, report on `HOLDOUT_SEED`.** Any change lands and is measured on dev first; the holdout is looked at once, when reporting.
 
 ## 9. Submission artifacts
 
