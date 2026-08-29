@@ -101,6 +101,12 @@ export function recordPreview(t: NormalizedTransaction): Record<string, unknown>
   return {
     transactionId: t.id,
     sourceSystem: t.sourceSystem,
+    // ADR-073. `(sourceSystem, sourceRowNumber)` is the ONLY join key
+    // `data/truth/` can express — the answer key is written before the engine
+    // exists and cannot reference engine-assigned UUIDs (validation-strategy
+    // §2.1). Without this field `tools/score` cannot perform §5's documented
+    // join at all, which is how U9 found the gap.
+    sourceRowNumber: t.sourceRowNumber,
     externalId: t.externalId,
     ...money(t.amountPaise),
     txnDate: t.txnDate,

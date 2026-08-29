@@ -394,7 +394,7 @@ The pairing is enforced here, at the contract level, rather than left to UI disc
   "members": [
     { "transactionId": "…", "role": "gateway", "externalId": "pay_QK29fT10aXbZ81",
       "amountPaise": 123450, "amountDisplay": "₹1,234.50", "txnDate": "2026-08-14",
-      "counterpartyRaw": "AMZN" },
+      "sourceRowNumber": 87, "counterpartyRaw": "AMZN" },
     { "transactionId": "…", "role": "bank", "externalId": "SBIN0R52…",
       "amountPaise": 119812, "amountDisplay": "₹1,198.12", "txnDate": "2026-08-16",
       "counterpartyRaw": "AMAZON RETAIL IN" }
@@ -404,6 +404,8 @@ The pairing is enforced here, at the contract level, rather than left to UI disc
 ```
 
 `tier` has **five** values, not four: `exact | alias | fuzzy | batch | manual`. `manual` is the one that carries weight — a human asserting two records are the same (ADR-043) is not the engine matching them.
+
+Every `RecordPreview` carries **`sourceRowNumber`** alongside `transactionId` (ADR-073). It is the only join key `data/truth/` can express — the answer key is written before the engine exists and cannot reference engine-assigned UUIDs — so `tools/score` cannot perform `validation-strategy.md` §5's documented join without it. It also lets a reader find the row in their own file, which a UUID does not.
 
 `countsTowardEngineMatchRate` is **server-computed** (`tier !== "manual" && status !== "human_rejected"`), not a stored column, and the frontend must not re-derive it — the same rule as `eligibleForAliasTier` below, for the same reason. This screen is where a viewer forms an impression of how much the engine did, and a browse list that silently counts human fixes as engine matches would overstate exactly the number the whole project exists to state honestly.
 

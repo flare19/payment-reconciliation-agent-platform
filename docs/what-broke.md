@@ -327,3 +327,32 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
   **An overstatement caught before it shipped, because Day 8 had already found it once.** The first `tierAttribution` draft reported `identityEstablished: 212`. S8 re-derives every pair S6 already claimed and reports `outcome: 'match'` "for completeness"; the real contribution is the **9** amount/timing verdicts Tier 1 declined. Day 8 removed exactly this inflation from the audit log and wrote down why. Reintroducing it under a different name in a different file, one day later, is worth recording plainly: **a lesson learned in one module does not propagate to the next by itself.** The fix is the same filter, and the test now pins both numbers — 9 as the answer, 212 as the number it must never report — so the next place this appears fails rather than publishes.
 
   **The denominator, which is what U8 was flagged as risky for.** ADR-040 says `reconcilable = ingested − excluded − rejected_rows − non_primary_duplicates`. That sentence is only coherent if `ingested` means **rows read from the files** — but `ingestion/index.ts` builds `counts.gateway` from `gateway.transactions.length`, and a row that failed to parse never becomes a transaction. So an implementer who sums the three source counts and *also* subtracts `rejected` removes rows that were never added, shrinking the denominator and **inflating the match rate**. On the holdout `rejected = 0`, so all three readings agree at 874 and the error would have been invisible. `population.ingested` is now file rows attempted, stated in the object itself, and `assertDenominatorIdentity` re-derives the arithmetic and **throws** rather than publishing a rate whose denominator does not reconcile. A run that cannot account for its own denominator should fail, not round.
+
+  **Still Day 9 — U9 (`tools/score`) and U10 (the first scored run). The project has a MEASURED number for the first time, and getting it required admitting two scorer bugs and one contract gap.**
+
+  **THE NUMBER, unedited, as ADR-020 requires:**
+
+  ```
+  pairs      precision 1.0000 · recall 0.6173 · F1 0.7634
+             TP 442 · FP 0 · FN 274
+             review queue: 150 pending pairs at 0.94 precision
+             165 pairs excluded from both sides (their EVENT is an exception, ADR-072)
+  classify   macro P 0.7222 · macro R 0.7309 · secondary-flag Jaccard 0.80
+  honesty    unresolvable recall 1.0 over 21 · false-despair 58/74 = 0.78
+  difficulty EASY 0.71 · MEDIUM 0.67 · HARD 0.20
+  engine     match rate 67.85% against a computed ceiling of 93%
+  ```
+
+  **Zero false positives is the number worth reading first.** The engine claims 442 pairs and every one of them is in the key. Recall 0.617 says it finds under two-thirds of what is there — the honest weakness — and HARD at 0.20 says exactly where. That is a better result to report than a higher F1 with a non-zero FP count, and it is the shape this project chose deliberately: refusing to guess is a feature.
+
+  **THE SCORER WAS WRONG TWICE ON ITS FIRST RUN, AND BOTH TIMES IT SAID THE ENGINE WAS WORSE THAN IT IS.** The first execution printed two build blockers: "the engine INVENTED a match on 5 designed-unresolvable events" and "3 TIMING_DRIFT events auto-confirmed". Both were scorer defects.
+
+  - The unresolvable check asked "was any pair inside this event confirmed?" But §4's three sub-classes are unresolvable **in one leg**, not throughout: an `UNSPLITTABLE_NET_BATCH` event is a bank credit that nets N payments with no breakup file, and the gateway and ledger rows behind each payment are ordinary rows that match on `payment_id`. **The key says so itself** — all three pairs of all five flagged events carry `shouldMatch: true`. The engine was right and the scorer called it invention.
+  - The TIMING_DRIFT cell read `expectedSecondaryFlags` where §5.2 means the primary `expectedCategory`. TIMING_DRIFT rides along as a secondary flag on `AMOUNT_MISMATCH` events whose gateway↔ledger leg legitimately matches, so the blocker fired three times on a clean run. The holdout has **no** event whose primary category is TIMING_DRIFT, so the correct cell is structurally zero here.
+
+  **Why this is the entry that matters.** `tools/score` was flagged in the plan as *"the purest case: no test can catch a scorer that is wrong in the direction you hoped."* Both bugs were wrong in the direction nobody hopes for, which is the only reason they were caught in one run. Had either gone the other way — a check that quietly passed a real invention, or a recall denominator that dropped a few misses — the number would have looked *better*, nothing would have complained, and it would have shipped. **The asymmetry is the whole lesson: a scorer's optimistic bugs are silent and its pessimistic bugs are loud, so the loud ones are a gift and the silent ones are what an audit has to go looking for.** Correcting a check until a blocker stops firing is also indistinguishable from tuning, so every gate now has a test asserting it still FIRES on genuinely wrong output, not merely that it passes on the real run.
+
+  **A contract gap that made the documented measurement impossible (ADR-073).** §5 says the scorer joins engine output to the key on `(sourceSystem, sourceRowNumber)`, and §2.1 explains why it must: the key is written before the engine exists and cannot reference engine-assigned UUIDs. But `RecordPreview` — the record shape inside every match member and exception — carried `transactionId` and `sourceSystem` and **not** `sourceRowNumber`. The only endpoints exposing a row number were 24 (which lists exactly the rows *outside* the denominator) and 12 (one transaction per request). **Two locked documents specified a measurement the contract between them could not carry**, and nothing surfaced it — not the typechecker, not 498 passing tests, not a careful reading of either document alone — until U9 tried to execute the join and got a 404. This is the Day 9 seam lesson a third time: the gap was not inside any module, it was between two documents that were each internally correct.
+
+  **A smaller one worth naming because it wasted a cycle:** the first scored run reported `precision 0, recall 0, TP 0` against an engine that had matched 658 pairs. The cause was a stale `tsx` process still serving the old `recordPreview` on port 3001 — the code was right and the server was old. Loud, harmless, and a reminder that "I restarted it" is a belief until the response body says so.
+
