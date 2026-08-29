@@ -301,7 +301,6 @@ async function runPhases(
   rebuildCounterpartyIndex(blocks, t15.pool);
 
   const exactPairs = [...t1.matches, ...t15.matches];
-  const claimed = new Set(exactPairs.flatMap((m) => [m.aId, m.bId]));
 
   // S8 — identity short-circuit. Every verdict it reaches is a pair Tier 2 must
   // NOT re-score: a similarity score may never overturn a deterministic identity
@@ -312,7 +311,11 @@ async function runPhases(
     if (verdict.kind !== 'not_established') settled.add(pairKeyOf(pair[0].id, pair[1].id));
   }
 
-  const tier2 = runTier2(blocks, config, claimed, settled);
+  // S6/S7's PAIRS, not their records (§6.3, issue #40). A gateway matched to its
+  // ledger row still needs Tier 2 to find its bank leg, or §10 rule 2's 3-way
+  // group can never form and the bank leg becomes a MISSING_IN_BANK exception
+  // that reports having considered nothing.
+  const tier2 = runTier2(blocks, config, exactPairs, settled);
 
   // S10 batch decomposition is NOT wired yet — see the note at the bottom of
   // this file. Passing an empty list keeps S11's contract honest rather than

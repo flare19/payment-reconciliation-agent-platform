@@ -10,7 +10,9 @@ import { buildBlockIndexes, rebuildCounterpartyIndex } from '../../src/services/
 import { runTier1 } from '../../src/services/matching/tier1-exact.js';
 import { runTier15 } from '../../src/services/matching/tier1_5-alias.js';
 import { resolveIdentities } from '../../src/services/matching/identity-resolution.js';
-import { runTier2, pairKeyOf, NEAR_MISS_FLOOR } from '../../src/services/matching/tier2-fuzzy.js';
+import {
+  runTier2, generateCandidates, pairKeyOf, NEAR_MISS_FLOOR,
+} from '../../src/services/matching/tier2-fuzzy.js';
 import {
   assembleGroups, fromTier1, fromTier2, type GroupPair,
 } from '../../src/services/matching/group-assembly.js';
@@ -111,13 +113,12 @@ describe('S12 over the full pipeline (holdout)', () => {
     const t15 = runTier15(d.pool, config, [], new Set(t1.matches.flatMap((m) => [m.aId, m.bId])));
     rebuildCounterpartyIndex(blocks, t15.pool);
     const exact = [...t1.matches, ...t15.matches];
-    const claimed = new Set(exact.flatMap((m) => [m.aId, m.bId]));
     const identity = resolveIdentities(t15.pool, config);
     const settled = new Set<string>();
     for (const { pair, verdict } of identity) {
       if (verdict.kind !== 'not_established') settled.add(pairKeyOf(pair[0].id, pair[1].id));
     }
-    const tier2 = runTier2(blocks, config, claimed, settled);
+    const tier2 = runTier2(blocks, config, exact, settled);
     const byId = new Map<string, NormalizedTransaction>(t15.pool.map((t) => [t.id, t]));
     const g = assembleGroups([
       ...exact.map((m) => fromTier1(m, byId)).filter((p): p is GroupPair => p !== null),
@@ -126,7 +127,8 @@ describe('S12 over the full pipeline (holdout)', () => {
     return {
       pool: t15.pool, duplicates: d.findings, identity, tier2,
       batches: [], groups: g.matches, refused: g.refused, config,
-    };
+      blocks,
+    } as PipelineOutput & { blocks: ReturnType<typeof buildBlockIndexes> };
   }
 
   const out = pipeline();
@@ -153,6 +155,60 @@ describe('S12 over the full pipeline (holdout)', () => {
       assert.ok(!roles.has(missing as 'gateway' | 'bank' | 'ledger'),
         `${e.transactionId} is reported ${e.category} while its group holds a ${missing} member`);
     }
+  });
+
+  test('an exception may only report finding nothing if the engine actually looked (#40)', () => {
+    // The honesty criterion, and the half of issue #40 that reached a reader.
+    // 193 MISSING_IN_BANK exceptions used to report `candidatesConsidered: 0`
+    // and serialise as resolvability "needs_external_data" — "the counterpart
+    // may exist outside these three files" — for gateway records whose bank
+    // counterpart was sitting in the file, unlooked-at, because Tier 2 had
+    // dropped the record from its pool.
+    //
+    // A zero here is a claim about the world, so it has to be earned: it is only
+    // honest when blocking genuinely offered no counterpart in that source.
+    const byId = new Map(out.pool.map((t) => [t.id, t]));
+    // Every record Tier 2 actually searched has a stats entry; a record dropped
+    // from the pool has none. That is the crisp form of "did the engine look?".
+    const searched = new Set(out.tier2.candidateStats.map((s) => s.transactionId));
+
+    const neverSearched: string[] = [];
+    const liars: string[] = [];
+    let examined = 0;
+
+    for (const e of exceptions) {
+      if (!e.category.startsWith('MISSING_IN_')) continue;
+      const record = byId.get(e.transactionId);
+      if (record === undefined || record.statusNorm !== 'reconcilable') continue;
+      if (record.duplicateOfTransactionId !== null) continue;
+      examined += 1;
+
+      const where = `${record.sourceSystem}:${record.sourceRowNumber}`;
+      if (!searched.has(record.id)) {
+        neverSearched.push(`${where} reports ${e.category} but never entered Tier 2`);
+        continue;
+      }
+      if ((e.evidence.candidatesConsidered ?? 0) > 0) continue;
+
+      // Considered nothing. Honest only if blocking offered nothing either.
+      const missing = e.category.replace('MISSING_IN_', '').toLowerCase();
+      const offered = generateCandidates(record, out.blocks, config)
+        .filter((c) => c.sourceSystem === missing);
+      if (offered.length > 0) {
+        liars.push(
+          `${where} reports ${e.category} having considered 0 candidates, but ` +
+          `blocking offered ${offered.length} ${missing} counterpart(s)`);
+      }
+    }
+
+    // Non-vacuous by construction: if this ever reaches 0 the assertions below
+    // stop meaning anything, and the test would pass by examining nothing.
+    assert.equal(examined, 207, 'every reconcilable MISSING_IN_* primary, counted');
+    assert.deepEqual(neverSearched, [],
+      'a record reported missing a counterpart that Tier 2 was never allowed to ' +
+      'search for — this is issue #40, and it fabricates 200 such exceptions');
+    assert.deepEqual(liars, [],
+      'an exception claiming the engine found nothing, on a record it never searched');
   });
 
   test('candidatesConsidered exceeds the logged list wherever a floor was applied (§11)', () => {
@@ -212,17 +268,25 @@ describe('S12 over the full pipeline (holdout)', () => {
     // []), so the 12 UNSPLITTABLE_BATCH legs currently land in the presence
     // categories; U6 wires it and these numbers move. Any OTHER movement is a
     // regression and should fail this test.
+    //
+    // The presence categories fell by 299 when issue #40 was fixed, and that is
+    // the whole point of the fix: 193 of the old MISSING_IN_BANK entries sat on
+    // gateway records Tier 1 had already matched, each reporting
+    // `candidatesConsidered: 0` because the record had been removed from the
+    // Tier 2 pool before anything could look for its bank leg. They were not
+    // findings; they were the engine failing to search and saying it had.
+    // AMBIGUOUS_MATCH rose 20 -> 22 from the S9 guard seeing more of the pool.
     const byCategory: Record<string, number> = {};
     for (const e of exceptions) byCategory[e.category] = (byCategory[e.category] ?? 0) + 1;
     assert.deepEqual(byCategory, {
-      MISSING_IN_GATEWAY: 242,
-      MISSING_IN_BANK: 203,
+      MISSING_IN_GATEWAY: 90,
+      MISSING_IN_BANK: 54,
       MISSING_IN_LEDGER: 63,
-      AMBIGUOUS_MATCH: 20,
+      AMBIGUOUS_MATCH: 22,
       AMOUNT_MISMATCH: 18,
       DUPLICATE_RECORD: 9,
     });
-    assert.equal(exceptions.length, 555);
+    assert.equal(exceptions.length, 256);
   });
 });
 

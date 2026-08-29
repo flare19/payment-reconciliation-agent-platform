@@ -168,12 +168,29 @@ describe('runTier2', () => {
     assert.equal(stat.candidateCapHit, true);
   });
 
-  test('a record S6/S7 already matched never re-enters Tier 2', () => {
+  test('a PAIR S6/S7 matched is not re-scored, but its RECORDS stay in the pool (#40)', () => {
+    // §6.3 excludes pairs, not records. Excluding the records instead deletes
+    // every gateway Tier 1 matched before its bank leg can be scored, which is
+    // what made §10 rule 2 unsatisfiable and cost 314 true pairs.
     const gw = txn('g', 'gateway', 1, { amount: 100_000 });
+    const led = txn('l', 'ledger', 1, { amount: 100_000 });
     const bk = txn('b', 'bank', 1, { amount: 100_000 });
-    const blocks = buildBlockIndexes([gw, bk]);
-    assert.ok(runTier2(blocks, config).pairsScored > 0);
-    assert.equal(runTier2(blocks, config, new Set(['g'])).pairsScored, 0);
+    const blocks = buildBlockIndexes([gw, led, bk]);
+
+    const all = runTier2(blocks, config);
+    assert.equal(all.pairsScored, 3, 'g-l, g-b and l-b with nothing excluded');
+
+    // S6 matched g<->l. That PAIR must not be re-scored...
+    const after = runTier2(blocks, config, [{ aId: 'g', bId: 'l' }]);
+    const keys = new Set<string>();
+    for (const p of after.accepted) keys.add(pairKeyOf(p.a.id, p.b.id));
+    assert.equal(keys.has(pairKeyOf('g', 'l')), false, 'the matched pair was re-scored');
+
+    // ...and BOTH its records must still be reachable for their third leg.
+    assert.equal(after.pairsScored, 2, 'g-b and l-b must still be scored');
+    const stat = (id: string) => after.candidateStats.find((s) => s.transactionId === id)!;
+    assert.ok(stat('g').consideredCount > 0, 'g left the pool: this is the #40 regression');
+    assert.ok(stat('l').consideredCount > 0, 'l left the pool: this is the #40 regression');
   });
 
   test('a pair S8 already settled is not re-scored (§6.3)', () => {
@@ -183,7 +200,7 @@ describe('runTier2', () => {
     const bk = txn('b', 'bank', 1, { amount: 100_000 });
     const blocks = buildBlockIndexes([gw, bk]);
     const settled = new Set([pairKeyOf('g', 'b')]);
-    assert.equal(runTier2(blocks, config, new Set(), settled).pairsScored, 0);
+    assert.equal(runTier2(blocks, config, [], settled).pairsScored, 0);
   });
 
   test('each unordered pair is scored exactly once, whichever end reaches it first', () => {
@@ -341,21 +358,20 @@ describe('S9 + S11 against the holdout', () => {
     const t15 = runTier15(pool, holdout, [], claimedByExact);
     rebuildCounterpartyIndex(blocks, t15.pool);
     const exact = [...t1.matches, ...t15.matches];
-    const claimed = new Set(exact.flatMap((m) => [m.aId, m.bId]));
     const settled = new Set<string>();
     for (const { pair, verdict } of resolveIdentities(t15.pool, holdout)) {
       if (verdict.kind !== 'not_established') settled.add(pairKeyOf(pair[0].id, pair[1].id));
     }
-    const t2 = runTier2(blocks, holdout, claimed, settled);
+    const t2 = runTier2(blocks, holdout, exact, settled);
     const byId = new Map(t15.pool.map((t) => [t.id, t]));
     const pairs = [
       ...exact.map((m) => fromTier1(m, byId)).filter((p): p is GroupPair => p !== null),
       ...t2.accepted.map(fromTier2),
     ];
-    return { pool, t2, groups: assembleGroups(pairs) };
+    return { pool, blocks, settled, t2, t1Matches: t1.matches, groups: assembleGroups(pairs) };
   }
 
-  const { pool, t2, groups } = run();
+  const { pool, blocks, settled, t2, t1Matches, groups } = run();
   const rowKey = (t: NormalizedTransaction) => `${t.sourceSystem}:${t.sourceRowNumber}`;
   const truth = new Map<string, boolean>();
   const key = JSON.parse(readFileSync(TRUTH, 'utf8')) as {
@@ -391,6 +407,40 @@ describe('S9 + S11 against the holdout', () => {
     assert.deepEqual(t2.candidateStats.filter((s) => s.candidateCapHit), []);
   });
 
+  test('a record matched at Tier 1 still acquires its third leg (§10 rule 2, #40)', () => {
+    // The property issue #40 broke. Rule 2 says "gateway<->bank plus
+    // gateway<->ledger on the same gateway record produces one 3-way group",
+    // and Tier 1 only ever produces gateway<->ledger pairs (bank rows carry no
+    // structured strong anchor, §3.1). So if Tier 2 cannot see a record Tier 1
+    // matched, rule 2 is unsatisfiable and every count below is zero.
+    const exactPairKeys = new Set(
+      t1Matches.map((m) => [m.aId, m.bId].sort().join('|')));
+    const t2PairKeys = new Set(
+      t2.accepted.map((p) => [p.a.id, p.b.id].sort().join('|')));
+
+    const inBoth = new Set<string>();
+    for (const m of groups.matches) {
+      const ids = m.members.map((x) => x.transactionId);
+      let hasExact = false;
+      let hasFuzzy = false;
+      for (let i = 0; i < ids.length; i += 1) {
+        for (let j = i + 1; j < ids.length; j += 1) {
+          const k = [ids[i]!, ids[j]!].sort().join('|');
+          if (exactPairKeys.has(k)) hasExact = true;
+          if (t2PairKeys.has(k)) hasFuzzy = true;
+        }
+      }
+      if (hasExact && hasFuzzy) for (const id of ids) inBoth.add(id);
+    }
+    // Exact, not a floor: 157 of Tier 1's 203 groups gain a bank leg.
+    assert.equal(
+      groups.matches.filter((m) => m.members.length === 3).length, 187,
+      'three-way groups: rule 2 firing, counted');
+    assert.ok(inBoth.size > 0,
+      'no record appears in both an exact pair and a Tier 2 pair — Tier 2 has ' +
+      'stopped seeing records the exact tiers matched, which is issue #40');
+  });
+
   test('S11 places no record in two groups', () => {
     // The invariant ux_txn_single_match enforces at write time; catching it here
     // means a violation is a test failure rather than a run-time INSERT error.
@@ -424,6 +474,12 @@ describe('S9 + S11 against the holdout', () => {
     // NOT a loose floor. Issue #33 exists because `matches.length > 150` hid nine
     // real misses under a title that claimed a recall property. This pins the
     // exact numbers, so any regression AND any unexplained improvement fails.
+    //
+    // The title's SECOND clause used to be unasserted, and issue #40 hid under it
+    // for a day: 396 of the misses shared one cause — Tier 2 excluding records
+    // S6/S7 had matched — and nothing here was classifying them. Every miss is
+    // now attributed to a named cause, and a miss that matches no cause fails the
+    // test. That is what makes the title true.
     const produced = new Set<string>();
     for (const m of groups.matches) {
       const ids = m.members.map((x) => x.transactionId);
@@ -439,11 +495,59 @@ describe('S9 + S11 against the holdout', () => {
     const hit = expected.filter((k) => produced.has(k)).length;
 
     assert.equal(expected.length, 872);
-    assert.equal(hit, 344,
+    assert.equal(hit, 658,
       `pair recall changed. If this is an improvement, raise the number and say why in ` +
       `the commit; if it is a regression, something upstream stopped generating candidates.`);
     // Precision must stay perfect while recall moves.
     const invented = [...produced].filter((k) => truth.get(k) !== true);
     assert.deepEqual(invented, [], 'no group may assert a pair the key denies');
+
+    // ── every shortfall, attributed ──────────────────────────────────────────
+    const byRow = new Map(pool.map((t) => [rowKey(t), t]));
+    const causes = new Map<string, number>();
+    const unattributed: string[] = [];
+
+    for (const k of expected) {
+      if (produced.has(k)) continue;
+      const [ka, kb] = k.split('|') as [string, string];
+      const a = byRow.get(ka);
+      const b = byRow.get(kb);
+      let cause: string | null = null;
+
+      if (a === undefined || b === undefined) {
+        // Excluded status, non-primary duplicate, or a rejected row. Outside the
+        // reconcilable denominator by design, so outside recall too.
+        cause = 'outside the reconcilable pool';
+      } else if (settled.has(pairKeyOf(a.id, b.id))) {
+        // S8 reached a deterministic verdict; §6.3 forbids Tier 2 re-scoring it.
+        cause = 'settled by S8 identity';
+      } else if (
+        !generateCandidates(a, blocks, holdout).some((c) => c.id === b.id)
+        && !generateCandidates(b, blocks, holdout).some((c) => c.id === a.id)
+      ) {
+        // The net-batch legs: a batch credit's amount is buckets away from any
+        // single payment, which is S10's job (§8), not candidate generation's.
+        cause = 'no candidate generated (S10 batch legs)';
+      } else {
+        // Generated and scored, but the evidence did not clear §7.3.
+        cause = 'scored below threshold or displaced';
+      }
+
+      if (cause === null) unattributed.push(k);
+      else causes.set(cause, (causes.get(cause) ?? 0) + 1);
+    }
+
+    assert.deepEqual(unattributed, [], 'every miss must fall under a named cause');
+    // Exact counts, not floors: a cause that grows is a regression even if the
+    // headline holds, and 'claimed by S6/S7 in another match' — 396 misses before
+    // #40 — must stay absent rather than merely small.
+    assert.deepEqual(Object.fromEntries([...causes].sort()), {
+      'no candidate generated (S10 batch legs)': 6,
+      'outside the reconcilable pool': 18,
+      'scored below threshold or displaced': 181,
+      'settled by S8 identity': 9,
+    });
+    assert.equal([...causes.values()].reduce((x, y) => x + y, 0), expected.length - hit,
+      'the causes must account for every miss, with none double-counted');
   });
 });
