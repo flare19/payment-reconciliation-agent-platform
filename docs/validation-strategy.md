@@ -108,6 +108,8 @@ Flattened pairwise expectations, because precision/recall is defined over pairs:
 
 `viaTier` is the *weakest tier that should suffice* — it lets scoring report tier-level correctness ("did the engine match at exact when exact was available, or did it fall through to fuzzy?"). Falling through isn't wrong, but a system that matches everything by fuzzy is more fragile than the same match rate earned at exact, and this makes that visible.
 
+**`viaTier` is a diagnostic, never an accuracy term, and it is not comparable to `matches.tier`** — the key labels a pair, the engine reports a group at its weakest tier. §5.1.2 states the reconciliation rule; ADR-072 locks it. Read both before writing anything that joins on tier.
+
 ### 2.3 `aliasKey` — the alias-learning key
 
 ```json
@@ -242,6 +244,38 @@ review_queue_precision = correct pending proposals / all pending proposals
 ```
 
 That number answers the question the review queue actually raises: *when this engine asks a human, is it asking about the right things?* A queue at 0.9 precision is a useful assistant; a queue at 0.4 is noise that costs more attention than it saves. It is also the number that justifies the review band existing at all, and it would be invisible if pending pairs were folded into either bucket.
+
+### 5.1.2 How `viaTier` is reconciled (ADR-072)
+
+**`viaTier` is never a term in precision, recall or F1.** Correctness is pair membership alone: did the engine place these two records in one group? Three cases are settled, and none of them is a recall miss.
+
+| Case | Key says | Engine does | Scored as |
+|---|---|---|---|
+| **Tier fall-through** — gateway↔bank | `viaTier: exact` | matches at Tier 2 on a `strong_weak` anchor | **matched.** `viaTier` is "the weakest tier that *should suffice*" (§2.2), not a requirement |
+| **Identity established, match refused** — gateway↔ledger `AMOUNT_TRUE_MISMATCH` | `shouldMatch: true`, `viaTier: exact`, but the event's `expectedOutcome` is `EXCEPTION` | S8 resolves it to an `AMOUNT_MISMATCH` exception | **against the classification key (§5.2), not the pairing key.** Not a match, and not a miss |
+| **Pair tier vs group tier** | labels a **pair** | `matches.tier` describes a **group**, and `matching-engine.md` §10 rule 5 makes it the *weakest* tier among its constituent pairs | **not comparable.** Different quantities |
+
+The general rule behind all three: **the key describes pairs and economic events; the engine reports groups and records.** Scoring the wrong quantity moves a published number for reasons that have nothing to do with engine quality.
+
+The third case is the largest and the least obvious. Measured on the holdout:
+
+```
+matched true pairs: key viaTier vs the tier of the group the engine placed them in
+  375   exact -> fuzzy        a Tier 1 pair whose group also holds a fuzzy third leg
+  209   fuzzy -> fuzzy
+   36   exact -> exact
+   21   alias -> fuzzy
+   10   batch -> exact
+    7   batch -> fuzzy
+  ─────
+  413 of 658 matched pairs (63%) disagree
+```
+
+Every one of those 375 is matched correctly and completely. A scorer that joined `viaTier` to `matches.tier` would report them as "failed to match at exact" — a plausible-looking per-tier table that is wrong for most of the rows in it, sitting underneath a headline that is right.
+
+**Tier attribution is still reported**, because §2.2's question is a good one — a system that matches everything by fuzzy is more fragile than the same match rate earned at exact. It is computed by comparing the key's `viaTier` distribution against **the engine's own per-tier PAIR counts**, both pair-level and directly comparable, and it is labelled a diagnostic rather than an accuracy figure.
+
+> **This places one requirement on S14:** `runs.metrics` must record how many **pairs** each tier produced, not only group-level counts. Without it the diagnostic is not computable from persisted output.
 
 ### 5.2 Classification accuracy
 

@@ -50,7 +50,7 @@ Rationale for each is in [docs/adr-log.md](docs/adr-log.md). Don't re-litigate t
 | [docs/agent-design.md](docs/agent-design.md) | **The Analyst (Phase A).** The agentic layer downstream of S14: tool registry, investigation loop, grounding gate, self-correction, how the agent is measured. Read it before touching anything agent-related. |
 | [docs/api-contract.md](docs/api-contract.md) | Every endpoint. Frontend and backend are built on different days — **this contract is binding.** |
 | [docs/ui-spec.md](docs/ui-spec.md) | Screens, states, the demo path, and the pre-agreed degradation order if Day 12 overruns. |
-| [docs/adr-log.md](docs/adr-log.md) | Every locked decision with reasoning. Append-only. 57 entries. |
+| [docs/adr-log.md](docs/adr-log.md) | Every locked decision with reasoning. Append-only. 72 entries. |
 | [docs/validation-strategy.md](docs/validation-strategy.md) | Ground-truth generation, precision/recall scoring, the scale benchmark, the honesty protocols. |
 | [docs/testing-strategy.md](docs/testing-strategy.md) | What gets tested and what deliberately doesn't. |
 | [docs/deployment.md](docs/deployment.md) | Hosting, env vars, secrets, deploy steps. |
@@ -204,7 +204,11 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 
 ## 10. Current state
 
-**As of 2026-08-28 (Day 8): the engine runs end to end, persists everything, and serves all 28 endpoints over HTTP. A full holdout run takes 983 ms and produces 920 transactions, 284 matches, 555 exceptions and a 930-entry audit chain that verifies and is anchored. What is still missing is `tools/score` — so this remains a claim about code rather than a measurement. That changes on Day 9.**
+**As of 2026-08-29 (Day 9): AUDIT-2 is done and its P1 is fixed. A full holdout run takes 859 ms and produces 920 transactions, 284 matches (755 members), 256 exceptions and a 635-entry audit chain that verifies and is anchored. Pair-level recall against the answer key is 658/872 with ZERO false positives, and the engine's own match rate is 67.85% against a computed ceiling of 93.0%.**
+
+> **Those numbers moved a long way on Day 9 and the movement is CORRECT — do not treat them as a regression.** AUDIT-2 found that Tier 2 excluded whole *records* matched at S6/S7 where `matching-engine.md` §6.3 excludes *pairs* (issue #40). Fixing it recovered 314 true pairs, turned 157 two-way groups into three-way ones, and removed 299 exceptions — 193 of which were fabricated `MISSING_IN_BANK` entries reporting `candidatesConsidered: 0` on records the engine was structurally forbidden from searching. `MATCH_CONFIRMED_EXACT` fell 203 → 46 for the same reason and is also correct: §10 rule 5 reports a group at its weakest tier, and 157 of Tier 1's groups now hold a fuzzy third leg.
+
+**What is still missing is `tools/score` — so this remains a claim about code rather than a measurement. That changes with U8/U9.**
 
 > **Day numbering.** The build is 13 *working* days, Aug 23 → Sep 5. **Aug 25 is not a numbered day** — no session happened, and numbering it inflated every subsequent day by one. Corrected on Day 4; the full table is ARCHITECTURE §8.
 
@@ -220,7 +224,8 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 - **Day 5 (Aug 28)** — the generator, in six reviewed units, plus the committed holdout dataset.
 - **Day 6 (Aug 28)** — ingestion and the first two tiers, then AUDIT-1 and its two P1 fixes.
 - **Day 7 (Aug 28)** — Tier 2 + group assembly, classification integration, the repository layer.
-- **Day 8 (Aug 28)** — *today.* The run orchestrator and the 28 routes. **AUDIT-2 still outstanding.**
+- **Day 8 (Aug 28)** — the run orchestrator and the 28 routes.
+- **Day 9 (Aug 29)** — *today.* **AUDIT-2** (six issues, #40–#45) and its P1 fix; ADR-072 settles the `viaTier` rule U9 needs. **U8/U9/U10 not started.**
 
 ### What exists in code
 
@@ -321,11 +326,11 @@ S12  555 exceptions · one primary per record · 328 carry candidate evidence
 - **Migration 012 exists** because `ux_alias_active` + `alias_superseded_has_target` + the `superseded_by` FK formed a cycle that made §6.3's alias policy impossible to execute in any statement order. Only the FK is deferred.
 - **`candidatesConsidered` ≠ `candidates.length`** by design (§11): the first is everything scored, the second is the ≥0.40 logged subset.
 
-**#38 is a P1 due before AUDIT-2 on Day 8** — a bank `bank_ref_no` equal to a gateway `rrn` scores zero anchor, costing ~24 true pairs. Filed with evidence and acceptance criteria; deliberately not fixed inside U3.
+**#38 is a P1, still open** — a bank `bank_ref_no` equal to a gateway `rrn` scores zero anchor. Filed at "~24 true pairs"; re-measured on Day 9 after #40 the residual is **17**. Filed with evidence and acceptance criteria; deliberately not fixed inside U3.
 
 **Read `docs/what-broke.md`'s Day 7 entry before starting Day 8.** It names the pattern that now dominates: three modules, each correct against its spec, each wrong the first time something actually called it. A spec cannot be executed by reading it.
 
-### Day 8 (2026-08-28) — units complete, **AUDIT-2 outstanding.**
+### Day 8 (2026-08-28) — complete. AUDIT-2 followed on Day 9.
 
 | Unit | Commit | What |
 |---|---|---|
@@ -339,6 +344,7 @@ S12  555 exceptions · one primary per record · 328 carry candidate evidence
 ```
 920 transactions · 284 matches (598 members) · 555 exceptions
 930 audit entries · chain valid AND anchored · 983 ms
+[SUPERSEDED on Day 9 by the #40 fix — see the Day 9 block below]
 reference date 2026-08-21 · no record in two matches
 reconcilable 874 = 920 ingested − 37 excluded − 0 rejected − 9 duplicates
 ```
@@ -355,6 +361,39 @@ git log --format=%B main..HEAD | grep -inE "(close[sd]?|fixe[sd]|fix|resolve[sd]
 ```
 
 **Read `docs/what-broke.md`'s Day 8 entry before starting Day 9.** It records that incident in full — the first failure in this project that was a defect in *prose* acted on by a machine, invisible to every test.
+
+### Day 9 (2026-08-29) — AUDIT-2, its P1, and the rule U9 was blocked on.
+
+**AUDIT-2** (isolated, Opus/max, audit-only) filed six issues: **[#40](https://github.com/flare19/payment-reconciliation-agent-platform/issues/40) P1**, #41–#44 P2, #45 P3. It also verified — and this is a result, not silence — that `candidateDateRange` inverts the §5.2 windows correctly in both directions, the ADR-033 cap does not bind, `matchedPairs` derives from S11's groups, `candidatesConsidered` is a true count, every paginated repository query ends in a unique tiebreak, migration 012 weakened neither constraint, and no unwired stage fabricates a value.
+
+| Unit | Commit | What |
+|---|---|---|
+| P1 | `94c3e85` | **#40** — Tier 2 excludes settled PAIRS, not matched RECORDS |
+| — | (this commit) | **ADR-072** — the `viaTier` reconciliation rule (#34), plus doc refresh |
+
+**The #40 fix, measured against the answer key:**
+
+```
+                       before      after
+pair recall            344/872     658/872    +314 true pairs
+false positives          0           0        precision unchanged
+three-way groups        30         187
+groups                 284         284        same events, assembled fully
+match members          598         755
+exceptions             555         256   (MISSING_IN_BANK 203 -> 54)
+match rate (ADR-040) 57.09%      67.85%       ceiling 93.0%
+runtime               983 ms      859 ms
+```
+
+`runTier2`'s third parameter is now `readonly { aId, bId }[]` rather than `ReadonlySet<string>`, **so a caller holding record ids cannot typecheck.** The signature is the guard.
+
+**479 tests in `apps/api`, 202 at root.** Typecheck and both builds clean.
+
+**ADR-072 settles #34, which CLAUDE.md had flagged as blocking U9.** `viaTier` is never a term in precision/recall — correctness is pair membership alone. Three cases, none a recall miss: tier fall-through; a pair whose *event*-level `expectedOutcome` is `EXCEPTION` (scored against the classification key, not the pairing key); and pair-tier vs group-tier, which the #40 fix turned from an edge case into the majority — **413 of 658 matched pairs (63%) have a `viaTier` that disagrees with their group's tier**, all of them matched correctly. See `validation-strategy.md` §5.1.2.
+
+> **ADR-072 places one requirement on U8:** `runs.metrics` must record how many **PAIRS** each tier produced, not only group-level counts. Without it the tier-attribution diagnostic is not computable from persisted output.
+
+**Read `docs/what-broke.md`'s Day 9 entry before starting U8.** It records why #40 was invisible to 477 passing tests: both facts the bug needed were already written down in this repo, days apart, by the same author — §6.3's "pairs" and AUDIT-1's "Tier 1 only ever produces gateway↔ledger". The defect lived in their *conjunction*, which no document owns and no test covered.
 
 ---
 
@@ -397,14 +436,14 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 |---|---|---|---|
 | **U6** | Run orchestrator S0–S14 | Opus / high | ✅ `3af578f`. Phase-per-transaction (the poll target needs committed status); audit records decisions, not transcription. |
 | **U7** | Routes — 28 endpoints | Opus / high | ✅ `d836a58`. All 28 over real HTTP; 24 integration tests green first run. |
-| **AUDIT-2** | Isolated audit of U3–U7 | **Opus / max** | **The last checkpoint before a number exists.** After this, wrong output becomes a wrong published figure. |
+| **AUDIT-2** | Isolated audit of U3–U7 | **Opus / max** | ✅ Ran Day 9. Six issues (#40–#45); the P1 (#40) is fixed in `94c3e85`. It was the last checkpoint before a number exists, and it earned its place: the engine was understating its own match rate by 10.76 points. |
 
 ### Day 9 (Sep 1) — **the first honest number**
 
 | # | Unit | Model | Why |
 |---|---|---|---|
-| **U8** | `metrics/run-metrics.ts` S14 | **Opus / high** | ADR-040's denominator is prose; three defensible readings give three different headline match rates. The worked examples were corrected on Day 5 — implement from ADR-040 itself, not from an example. |
-| **U9** | `tools/score` | **Opus / high** | The purest case: no test can catch a scorer that is wrong in the direction you hoped. §5.1.1's `pending_review` handling and the group→pair mapping are both judgment. |
+| **U8** | `metrics/run-metrics.ts` S14 | **Opus / high** | ADR-040's denominator is prose; three defensible readings give three different headline match rates. The worked examples were corrected on Day 5 — implement from ADR-040 itself, not from an example. **Must also record per-TIER PAIR counts (ADR-072)**, or U9's tier-attribution diagnostic is not computable. |
+| **U9** | `tools/score` | **Opus / high** | The purest case: no test can catch a scorer that is wrong in the direction you hoped. §5.1.1's `pending_review` handling and the group→pair mapping are both judgment. **The `viaTier` rule is no longer a judgment call — ADR-072 and §5.1.2 settle it. Read both before joining anything on tier.** |
 | **U10** | **First scored cold run** against `data/truth/holdout_seed_90210.json` | **Opus / high** | Report cold AND warm with the false-positive count beside them (ADR-020). Whatever the number is, it goes in `what-broke.md` unedited. |
 
 ### Day 10 (Sep 2) — explain layer and the Analyst
@@ -439,8 +478,13 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 | **AUDIT-4** | Final pre-submission audit, whole repo | **Opus / max** |
 | **U20** | Holdout run, accuracy report, README, pitch video, build-challenges write-up | **Opus / high** |
 
-### Open P2/P3 issues (#20, #22–#29)
-Not scheduled. Sweep them at AUDIT-2 and fold any that touch the measurement into Day 9.
+### Open issues — status going into U8
+
+**P1, still open:** **#38** — `anchorAgreement` compares weak anchor keys like-for-like, so a bank `bank_ref_no` equal to a gateway `rrn` scores zero anchor. Re-measured after #40: the residual is **17 pairs**, 11 of them scoring a literal zero anchor (down from the "~24" it was filed at, because #40 recovered most of the same pairs by a different route). Comment on the issue carries the measurement.
+
+**Should land before the number is published:** **#43** (`countsTowardEngineMatchRate` admits `pending_review`, which ADR-040 excludes — the browse list implies 86.4% where the headline says 67.85%); **#41** (fee band inverted for bank→gateway; costs nothing today, scales with amount); **#32** and **#33** (both flagged for Day 9 since Day 6).
+
+**Not scheduled:** #9–#15, #20, #22–#29, #35–#37, #42, #44, #45. Sweep at AUDIT-3.
 
 ### Carried debt, stated rather than buried
 - **Nothing is deployed, deliberately** (ADR-061). Day 11 (API), Day 12 (web). A dated task, not a spare-time task.
