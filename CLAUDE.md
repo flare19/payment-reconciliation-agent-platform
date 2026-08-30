@@ -214,6 +214,10 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 
 ## 10. Current state
 
+**As of 2026-08-30 (Day 10): S10 is wired and the whole dependency chain #45 → #49 → #46 is closed. Re-scored: precision 1.0000, FP 0, recall 0.6089, review-queue precision 1.0000, unresolvable recall 1.0, zero build blockers. Match rate 66.48% against a 93% ceiling — DOWN 1.37 points from Day 9, and that is CORRECT: split legs are `pending_review` (ADR-038) and §10 rule 4 makes a group holding a proposal a proposal. Found-at-all rose 81.4% → 86.5%.**
+
+> **Report both figures or neither.** Two days running, the honest headline has moved opposite to the honest improvement. `matchRatePct` counts what the engine will confirm on its own; found-at-all counts what it located. ARCHITECTURE §8.1 has the framing.
+
 **As of 2026-08-29 (Day 9): AUDIT-2 is done and its P1 is fixed. A full holdout run takes 859 ms and produces 920 transactions, 284 matches (755 members), 256 exceptions and a 635-entry audit chain that verifies and is anchored. Pair-level recall against the answer key is 658/872 with ZERO false positives, and the engine's own match rate is 67.85% against a computed ceiling of 93.0%.**
 
 > **Those numbers moved a long way on Day 9 and the movement is CORRECT — do not treat them as a regression.** AUDIT-2 found that Tier 2 excluded whole *records* matched at S6/S7 where `matching-engine.md` §6.3 excludes *pairs* (issue #40). Fixing it recovered 314 true pairs, turned 157 two-way groups into three-way ones, and removed 299 exceptions — 193 of which were fabricated `MISSING_IN_BANK` entries reporting `candidatesConsidered: 0` on records the engine was structurally forbidden from searching. `MATCH_CONFIRMED_EXACT` fell 203 → 46 for the same reason and is also correct: §10 rule 5 reports a group at its weakest tier, and 157 of Tier 1's groups now hold a fuzzy third leg.

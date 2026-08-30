@@ -66,7 +66,7 @@ import {
   type EngineException,
 } from './scoring.js';
 
-export const SCORER_VERSION = '1.0.0';
+export const SCORER_VERSION = '1.2.0';
 
 interface Args {
   runId: string; keyFile: string; api: string; post: boolean; out: string | null;
@@ -250,13 +250,15 @@ export function formatReport(r: ScoreReport, key: AnswerKey): string {
   L.push(`  TP ${m.truePositives}   FP ${m.falsePositives}   FN ${m.falseNegatives}`);
   L.push(`  FALSE POSITIVES: ${m.falsePositives}   <- the raw integer, per ADR-020`);
   L.push(`  pending_review pairs ${m.pendingPairs} (scored separately, ADR-040)` +
-    `   review-queue precision ${m.reviewQueuePrecision ?? 'n/a'}`);
+    `   review-queue precision ${m.reviewQueuePrecision ?? 'n/a'}` +
+    ` over ${m.pendingPairs - m.pendingExcludedFromQueuePrecision} judged`);
   L.push(`  excluded from both sides: ${m.excludedExceptionEventPairs} pairs whose EVENT is an ` +
     `EXCEPTION (ADR-072), ${m.excludedSameSourceLegs} same-source cardinality legs`);
   L.push('');
   L.push('══ CLASSIFICATION ═════════════════════════════════════════════');
   L.push(`  macro precision ${r.classification.macroPrecision}   macro recall ${r.classification.macroRecall}`);
-  L.push(`  secondary-flag Jaccard ${r.classification.secondaryFlagJaccard ?? 'n/a'}`);
+  L.push(`  secondary-flag Jaccard ${r.classification.secondaryFlagJaccard ?? 'n/a'}` +
+    `   · ${r.classification.multiCategoryEvents} events raised >1 category (only one is scored)`);
   for (const [c, v] of Object.entries(r.classification.perCategory)) {
     if (v.support === 0) continue;
     L.push(`    ${c.padEnd(22)} P ${v.precision.toFixed(3)}  R ${v.recall.toFixed(3)}  n=${v.support}`);

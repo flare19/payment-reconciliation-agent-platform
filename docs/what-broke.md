@@ -480,3 +480,31 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
   **The match rate went DOWN and that is correct.** A split settlement is `pending_review` (ADR-038: a decomposition is a strong inference, never a certainty), and §10 rule 4 says a group containing a proposal IS a proposal — so seven groups that had been auto-confirmed became pending when their bank legs arrived. **The pairs were found; they are just not confirmed.** That is the found-versus-auto-confirmed distinction ARCHITECTURE §8.1 already documents, showing up in the headline for the first time, and it is the honest direction for it to move.
 
+  **End of Day 10 — the re-score, and three more scorer defects that only S10's new output could reach.**
+
+  ```
+                        Day 9      Day 10
+  precision            1.0000     1.0000
+  recall (confirmed)   0.6173     0.6089
+  TP / FP / FN        442/0/274  436/0/280
+  pending pairs          150        207
+  review-queue prec     0.94       1.0000  (over 183 judged)
+  FOUND AT ALL       583 = 81.4%  619 = 86.5%
+  unresolvable recall    1.0        1.0
+  false-despair         0.78       0.80
+  match rate           67.85%     66.48%   ceiling 93%
+  build blockers          0          0
+  ```
+
+  **The headline fell and the engine got better, and both halves of that are true.** Split legs are `pending_review` (ADR-038), §10 rule 4 makes a group holding a proposal a proposal, so six pairs moved from confirmed to pending — while 51 more pairs were found. Auto-confirmed recall −0.008; **found-at-all +5.1 points**. This is the second day running where the honest headline moves opposite to the honest improvement, and it is the strongest argument yet for publishing both figures side by side rather than one.
+
+  **Three scorer defects, all latent until the engine produced a shape it never had before.**
+
+  1. **A crash.** `scoreResolvability` read `e.evidence['searchExhausted']` from `ExceptionSummary`, which does not carry `evidence` — only `ExceptionDetail` does. It never threw because S10 was unwired and the `UNSPLITTABLE_BATCH` guard always skipped. The first run to produce one died with `Cannot read properties of undefined`. Now read from `runs.metrics`, which S14 computes from the verdicts themselves.
+  2. **Review-queue precision applied different exclusions from the primary metric.** Pending pairs on EXCEPTION events counted as wrong asks, reporting **24 bad proposals on a run whose genuinely wrong count is zero** and dragging the queue from 1.0 to 0.88. The queue's exclusions must match TP/FP's exactly, or the two disagree about what a wrong question is. **Correct figure: 1.0000 over 183 judged.**
+  3. **A tie-break nobody had chosen.** §5.2 scores classification per EVENT; the engine raises exceptions per RECORD; **40 of ~72 exception events carry more than one category.** The scorer was picking whichever came first in the key's `projections` array — generator output order. Replacing it with canonical row order moved macro precision by 0.08 and took `UNSPLITTABLE_BATCH` from **1.000/0.167 to 0.000/0.000 on identical engine output**. Filed as [#50](https://github.com/flare19/payment-reconciliation-agent-platform/issues/50), P1: it is ADR-072's unit mismatch — the key describes events, the engine reports records — in its other half.
+
+  **The pattern for the day, stated plainly.** Every defect found today lived in a consumer that had never been fed real input: `roleConflict`'s cardinality exception, S10's pool predicate, the scorer's evidence read, its queue exclusions, its category tie-break. **A stage that produces nothing validates every consumer downstream of it, and validates none of them.** Wiring S10 was worth doing for what it broke as much as for the 51 pairs it found.
+
+  **And twice today a guard written against an over-claim became an under-claim** — the two-candidate batch floor, and the canonical tie-break that hides a category the engine gets right. Both times the correction was to go back to what the spec says the case IS. Neither time was it to move a number until it looked better.
+
