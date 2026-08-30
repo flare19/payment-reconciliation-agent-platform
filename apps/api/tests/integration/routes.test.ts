@@ -219,12 +219,18 @@ describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL
   });
 
   test('8 · MatchSummary computes countsTowardEngineMatchRate server-side', async () => {
+    // (see #44) This loop re-derives the server's own formula, so on the page it
+    // reads here — before tests 10+11 and 21 create a human_rejected and a
+    // manual match — every row is `tier !== 'manual' && status !== 'human_rejected'`
+    // by construction and the assertion cannot discriminate a broken formula from
+    // a correct one. The discriminating, hardcoded (non-re-derived) checks are
+    // `countsTowardEngineMatchRate === false` for an actual rejected match
+    // (test 10+11, below) and an actual manual match (test 21, below) — those are
+    // what fail if `serialize.ts`'s clauses are removed. This loop stays as a
+    // page-wide shape check (headlineAmountSource / headlineAmountDisplay).
     const r = await req('GET', `/api/runs/${runId}/matches?pageSize=10`);
     assert.equal(r.status, 200);
     for (const m of r.json['matches'] as Record<string, unknown>[]) {
-      // The frontend must NOT re-derive this. A browse list that counted human
-      // fixes as engine matches would overstate the number the project exists
-      // to state honestly.
       assert.equal(m['countsTowardEngineMatchRate'],
         m['tier'] !== 'manual' && m['status'] !== 'human_rejected');
       assert.ok(['gateway', 'bank', 'ledger'].includes(m['headlineAmountSource'] as string));
@@ -352,29 +358,29 @@ describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL
   });
 
   test('21 · a manual match is tier `manual` and does NOT count as an engine match', async () => {
+    // (see #44) Picking two MISSING_IN_BANK gateway records made the 201 path
+    // non-deterministic: Tier 1 only ever matches gateway<->ledger (AUDIT-1), so
+    // a gateway record missing its BANK leg is routinely already matched to a
+    // ledger row, and the POST reliably hit 409 TRANSACTION_ALREADY_MATCHED
+    // instead — meaning `tier === 'manual'` had zero coverage in this suite.
+    // Excluded rows never enter the matching pipeline at all (ADR-046-adjacent:
+    // they are outside the reconcilable pool), so they are guaranteed to hold
+    // no existing match and the 201 path is deterministic.
     const pop = await req('GET', `/api/runs/${runId}/population?kind=excluded&pageSize=200`);
-    const unmatched = await req('GET', `/api/runs/${runId}/exceptions?category=MISSING_IN_BANK&pageSize=2`);
-    const ids = (unmatched.json['exceptions'] as Record<string, unknown>[])
-      .map((e) => (e['primaryRecord'] as Record<string, unknown>)['transactionId'] as string);
-    assert.equal(ids.length, 2);
-    assert.ok(pop.status === 200);
+    assert.equal(pop.status, 200);
+    const items = pop.json['items'] as Record<string, unknown>[];
+    assert.ok(items.length >= 2, 'need at least two excluded records to prove the 201 path deterministically');
+    const ids = items.slice(0, 2).map((i) => i['transactionId'] as string);
 
     const r = await req('POST', `/api/runs/${runId}/matches`, {
       createdBy: 'tejas', reason: 'same payment, reference was truncated in the bank file',
       members: ids.map((transactionId) => ({ transactionId })),
     });
-    // Both legs are unmatched MISSING_IN_BANK records from the same source, so
-    // the group is same-source and the engine refuses it — or they differ and it
-    // succeeds. Either is a legitimate contract outcome; what must NOT happen is
-    // a manual match counting toward the engine's rate.
-    if (r.status === 201) {
-      const m = r.json['match'] as Record<string, unknown>;
-      assert.equal(m['tier'], 'manual');
-      assert.equal(m['countsTowardEngineMatchRate'], false,
-        'a human asserting two records are the same is not the engine matching them');
-    } else {
-      assert.ok([400, 409].includes(r.status), r.text);
-    }
+    assert.equal(r.status, 201, r.text);
+    const m = r.json['match'] as Record<string, unknown>;
+    assert.equal(m['tier'], 'manual');
+    assert.equal(m['countsTowardEngineMatchRate'], false,
+      'a human asserting two records are the same is not the engine matching them');
   });
 
   // ── aliases ────────────────────────────────────────────────────────────────
