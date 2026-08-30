@@ -158,6 +158,7 @@ describe('computeRunMetrics against the holdout', () => {
     },
     pool: t15.pool, exactPairs, tier2, identity, groups: assembled.matches, exceptions,
     batchOutcomes: [],
+    batchPairs: [],
     aliasCountAtStart: 0,
     aliasCounts: { active: 0, superseded: 0, revoked: 0 },
     humanCorrectionsToDate: 0,

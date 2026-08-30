@@ -332,17 +332,17 @@ async function runPhases(
   // but never contradict it. The two decisions U6 declined to make alone — which
   // records enter the pool, and how a decomposition interacts with S11's
   // role-collision rule — are argued in `batch-stage.ts`'s header.
-  const claimedAfterS9 = new Set<string>([
-    ...exactPairs.flatMap((m) => [m.aId, m.bId]),
-    ...tier2.accepted.flatMap((p) => [p.a.id, p.b.id]),
-  ]);
-  const batch = stage.time('batch', () => runBatchStage(t15.pool, claimedAfterS9, config));
-
   const byId = new Map<string, NormalizedTransaction>(t15.pool.map((t) => [t.id, t]));
-  const groupPairs: GroupPair[] = [
+  const tierPairs: GroupPair[] = [
     ...exactPairs.map((m) => fromTier1(m, byId)).filter((p): p is GroupPair => p !== null),
     ...tier2.accepted.map(fromTier2),
   ];
+  // S10 reads counterparts PER ROLE from these pairs (#49). "Has this gateway a
+  // BANK leg?" is the question; "is it in any group?" is the one that emptied
+  // the pool and is the #40 error one stage later.
+  const batch = stage.time('batch', () => runBatchStage(t15.pool, tierPairs, config));
+
+  const groupPairs: GroupPair[] = [...tierPairs, ...batch.splitPairs];
   // S10's verdicts arrive as pre-formed GROUPS, not pairs: a decomposition is
   // already a group, and `assembleGroups` marks their members `inBatch` so no
   // pairwise pair can claim one of them (§10 rule 3).
@@ -485,6 +485,7 @@ async function runPhases(
     // flatter the leverage ratio by hiding the corrections that were wrong.
     humanCorrectionsToDate: aliasCounts.active + aliasCounts.superseded + aliasCounts.revoked,
     batchOutcomes: batch.batches.map((b) => ({ stats: b.outcome.stats })),
+    batchPairs: batch.splitPairs,
     timings: stage.finish(startedAt),
     config,
   });

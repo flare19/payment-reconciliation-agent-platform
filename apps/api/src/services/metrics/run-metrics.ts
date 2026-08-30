@@ -97,6 +97,14 @@ export interface MetricsInput {
   pool: readonly NormalizedTransaction[];
   /** S6 + S7 output, in order. `tier` discriminates exact from alias. */
   exactPairs: readonly Tier1PairMatch[];
+  /**
+   * S10's split legs (#46). They carry `tier: 'batch'` and were produced by a
+   * rule, so they must be attributed to `batch` — falling into `implied` would
+   * make the engine report `batch: 0` forever against a key holding 77
+   * `viaTier: batch` pairs, which is the exact mis-attribution ADR-072 exists
+   * to prevent.
+   */
+  batchPairs: readonly { a: { id: string }; b: { id: string } }[];
   tier2: Tier2Result;
   identity: readonly { verdict: IdentityVerdict }[];
   groups: readonly ProposedMatch[];
@@ -252,10 +260,12 @@ export function tierPairCounts(
   groups: readonly ProposedMatch[],
   exactPairs: readonly Tier1PairMatch[],
   tier2: Tier2Result,
+  batchPairs: readonly { a: { id: string }; b: { id: string } }[] = [],
 ): Record<string, number> {
   const byPair = new Map<string, MatchTier>();
   for (const p of exactPairs) byPair.set(pairKeyOf(p.aId, p.bId), p.tier);
   for (const p of tier2.accepted) byPair.set(pairKeyOf(p.a.id, p.b.id), 'fuzzy');
+  for (const p of batchPairs) byPair.set(pairKeyOf(p.a.id, p.b.id), 'batch');
 
   const counts: Record<string, number> = {
     exact: 0, alias: 0, fuzzy: 0, batch: 0, manual: 0, unattributed: 0,
@@ -285,6 +295,7 @@ export function computeRunMetrics(input: MetricsInput): RunMetrics {
   const {
     population, pool, exactPairs, tier2, identity, groups, exceptions,
     aliasCountAtStart, aliasCounts, humanCorrectionsToDate, timings, batchOutcomes,
+    batchPairs,
   } = input;
 
   const reconcilable = pool.filter((t) => t.statusNorm === 'reconcilable').length;
@@ -318,7 +329,7 @@ export function computeRunMetrics(input: MetricsInput): RunMetrics {
   // the metrics object must not reintroduce it under a different name.
   const identityEstablished = identity.filter(
     (v) => v.verdict.kind === 'established' && v.verdict.outcome !== 'match').length;
-  const tiers = tierPairCounts(groups, exactPairs, tier2);
+  const tiers = tierPairCounts(groups, exactPairs, tier2, batchPairs);
   tiers['identityEstablished'] = identityEstablished;
 
   const engineSec = timings.engineMs / 1000;

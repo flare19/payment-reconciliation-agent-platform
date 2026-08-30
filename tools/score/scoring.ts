@@ -123,11 +123,49 @@ export function pairKey(a: string, b: string): string {
   return a < b ? `${a}|${b}` : `${b}|${a}`;
 }
 
+/** `gateway:12|gateway:44` — both halves from the same source file. */
+export function isSameSource(k: string): boolean {
+  const [a, b] = k.split('|') as [string, string];
+  return a.split(':')[0] === b.split(':')[0];
+}
+
+/**
+ * Is a same-source pair the engine produced something the key can judge?
+ *
+ * The key models CROSS-SOURCE pairs. Its only same-source entries are the nine
+ * `IDENTITY_DESTROYED` gateway↔gateway DENIALS — the case where three
+ * indistinguishable rows are planted and matching any two of them is the single
+ * most damning failure available. Those must stay scoreable, and stay false
+ * positives.
+ *
+ * Every other same-source pair comes from a legitimate `one_to_many` /
+ * `many_to_one` group: two bank legs of one split settlement are both members of
+ * one economic event, and the key never enumerates that relationship because it
+ * is not a claim that the two rows are each other's counterpart. `scorePair`'s
+ * `GATE_SAME_SOURCE_V1` means such a pair can only ever arise from a cardinality
+ * rule, never from a similarity score, so there is no way for a wrong match to
+ * hide here.
+ *
+ * Scoring them as false positives would have penalised the engine for the exact
+ * shape §8.1 exists to produce — it appeared the moment S10's splits started
+ * forming groups (#46/#49), and it is a defect in the SCORER, not the engine.
+ */
+export function isJudgeableSameSourcePair(key: AnswerKey, k: string): boolean {
+  return key.expectedPairs.some(
+    (p) => p.a.sourceSystem === p.b.sourceSystem
+      && pairKey(rowKey(p.a), rowKey(p.b)) === k);
+}
+
 export interface MatchingScore {
   precision: number; recall: number; f1: number;
   truePositives: number; falsePositives: number; falseNegatives: number;
   /** Pairs excluded from BOTH sides because their event is an EXCEPTION (ADR-072). */
   excludedExceptionEventPairs: number;
+  /**
+   * Same-source legs of a `one_to_many` / `many_to_one` group, which the key does
+   * not model. Excluded and COUNTED, never silently dropped.
+   */
+  excludedSameSourceLegs: number;
   /** Pairs the engine proposed but has not confirmed. Scored separately (§5.1.1). */
   pendingPairs: number;
   reviewQueuePrecision: number | null;
@@ -190,8 +228,15 @@ export function scoreMatching(key: AnswerKey, engine: EngineSnapshot): MatchingS
   }
 
   let tp = 0;
+  let excludedSameSourceLegs = 0;
   const fps: { a: string; b: string }[] = [];
   for (const k of confirmed) {
+    // A same-source pair the key does not mention is a cardinality leg, not a
+    // counterpart claim. One the key DENIES stays fully scoreable.
+    if (isSameSource(k) && !isJudgeableSameSourcePair(key, k)) {
+      excludedSameSourceLegs += 1;
+      continue;
+    }
     if (exceptionEvents.size > 0 && !shouldMatch.has(k) && !shouldNotMatch.has(k)) {
       // Either an exception-event pair (excluded by design, not an error) or a
       // pair the key does not mention at all. The second IS a false positive:
@@ -224,6 +269,7 @@ export function scoreMatching(key: AnswerKey, engine: EngineSnapshot): MatchingS
     falsePositives: fp,
     falseNegatives: fn,
     excludedExceptionEventPairs: excluded,
+    excludedSameSourceLegs,
     pendingPairs: pending.size,
     reviewQueuePrecision: pending.size === 0 ? null : round4(pendingCorrect / pending.size),
     falsePositivePairs: fps.sort((x, y) => (x.a + x.b < y.a + y.b ? -1 : 1)),
@@ -405,6 +451,8 @@ export function scoreResolvability(key: AnswerKey, engine: EngineSnapshot): Reso
   const inventedSet = new Set<string>();
   for (const k of confirmed.keys()) {
     if (affirmed.has(k)) continue;                      // the key agrees with this pair
+    // A cardinality leg is not an invented match — see `isJudgeableSameSourcePair`.
+    if (isSameSource(k) && !isJudgeableSameSourcePair(key, k)) continue;
     const [a, b] = k.split('|') as [string, string];
     for (const half of [a, b]) {
       const owner = eventOfRow.get(half);

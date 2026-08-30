@@ -252,7 +252,7 @@ export function formatReport(r: ScoreReport, key: AnswerKey): string {
   L.push(`  pending_review pairs ${m.pendingPairs} (scored separately, ADR-040)` +
     `   review-queue precision ${m.reviewQueuePrecision ?? 'n/a'}`);
   L.push(`  excluded from both sides: ${m.excludedExceptionEventPairs} pairs whose EVENT is an ` +
-    `EXCEPTION (ADR-072)`);
+    `EXCEPTION (ADR-072), ${m.excludedSameSourceLegs} same-source cardinality legs`);
   L.push('');
   L.push('══ CLASSIFICATION ═════════════════════════════════════════════');
   L.push(`  macro precision ${r.classification.macroPrecision}   macro recall ${r.classification.macroRecall}`);

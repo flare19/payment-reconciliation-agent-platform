@@ -451,3 +451,32 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
   **The honest outcome of a wiring day is a stage that runs and a number that did not move.** #46 stays open with four of eight criteria met, and its recall arrives with #49.
 
+  **Day 10, continued — #45 and #49 landed, and S10 finally does something. Two over-claims and one arithmetic slip were caught on the way, all three by measuring rather than by reading.**
+
+  **#45 — rule 3's cardinality exception.** §10 rule 3 has always said `many_to_one` and `one_to_many` groups are *"the sole exception: multiple members of one role are legitimate there, and only there"*, and `roleConflict` never implemented it. The exception is now **declared by the rule that asserts the cardinality** (`mayDuplicateRole`), never inferred from the resulting shape — inferring it would make rule 3 toothless, because every ambiguous second candidate would quietly become a "many_to_one group" instead of an `AMBIGUOUS_MATCH`. Making same-role merges legal also made the cluster-merge branch reachable for the first time, so #45's second half — that branch silently dropping `cb.pairs` — had to land in the same commit. Left alone it would have let a weak `pending_review` pair absorbed into a strong cluster vanish from the merged group's confidence, tier and status.
+
+  **#49 — the pool predicate.** Role-scoped now: *"does this gateway have a **bank** counterpart?"* rather than *"is it in any group?"*. That is the #40 category error, and this was its third appearance.
+
+  **Then three things the measurement caught that reading would not have.**
+
+  1. **A same-source scoring artefact.** A `one_to_many` group's two bank legs produce a `bank↔bank` pair, and `tools/score` counted 15 of them as invented matches — precision would have dropped from 1.0000 for the exact shape §8.1 exists to produce. The key models cross-source pairs; its only same-source entries are the nine `IDENTITY_DESTROYED` gateway↔gateway **denials**, which must stay fully scoreable. So the scorer now excludes unaffirmed same-source legs and **counts the exclusion**, and a test asserts the denials still fire. **A scorer defect that only becomes reachable when the engine starts producing a shape it never produced before.**
+
+  2. **`UNSPLITTABLE_BATCH` at precision 0.067.** With only a pool-size floor, wiring S10 relabelled 17 credits across 15 events as unsplittable batches — one of them a designed batch, fourteen of them ordinary `TIMING_LAG_NORMAL` settlements. **A category moving off 0.000 looked like progress and was a straight downgrade in honesty.** §8 says a batch is *"the net of MANY payments"*, so the discriminator is that the credit must exceed the largest available candidate; with that, precision is **1.000** and recall **0.500**, with the three misses named.
+
+  3. **And the first version of that fix was wrong in a way worth recording.** I required **two** present candidates. §4's `UNSPLITTABLE_NET_BATCH` is a credit netting payments *"with no breakup file provided"*, and the generator proves unresolvability over the payments that ARE available — often one. **The floor demanded the very evidence whose absence defines the scenario**, and it took the six designed batches to 0/6 before the measurement said so. Twice in one day, a guard written to prevent an over-claim became an under-claim; both times the fix was to go back to what the spec says the case IS, not to move a number until it looked right.
+
+  **Where the holdout landed:**
+
+  ```
+                      before S10    after
+  pair recall           658/872    694/872     +36
+  cross-source invented     0          0
+  one_to_many groups        0          7
+  match members           755        773
+  exceptions              256        236
+  UNSPLITTABLE_BATCH  0.000/0.000  1.000/0.500
+  match rate            67.85%     66.48%      -1.37
+  ```
+
+  **The match rate went DOWN and that is correct.** A split settlement is `pending_review` (ADR-038: a decomposition is a strong inference, never a certainty), and §10 rule 4 says a group containing a proposal IS a proposal — so seven groups that had been auto-confirmed became pending when their bank legs arrived. **The pairs were found; they are just not confirmed.** That is the found-versus-auto-confirmed distinction ARCHITECTURE §8.1 already documents, showing up in the headline for the first time, and it is the honest direction for it to move.
+

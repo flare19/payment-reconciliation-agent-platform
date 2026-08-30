@@ -13,16 +13,19 @@
  * than transcription:
  *
  * ── QUESTION 1: which records does S10 see? ──
- * Records still unmatched after S9 — nothing else. A record already in a
- * confirmed or proposed pair has a claim on it, and S10 re-deciding that claim
- * would make the engine's output depend on which stage spoke last. Every other
- * stage in this pipeline operates on what its predecessors left; S10 is not
- * special. It also means S10 can never contradict S9, only extend it.
+ * Records with no counterpart IN THE ROLE THIS STAGE IS ASKING ABOUT — not
+ * records that are in no group at all (#49).
  *
- * That answer only became well-defined after #40: before that fix, "unmatched
- * after S9" included 406 records Tier 2 had been structurally forbidden to look
- * at, and a pool built from it would have been full of records the engine had
- * simply not searched.
+ * The first wiring asked "is this gateway record in any group?", and that is the
+ * #40 error again one stage later: a gateway payment matched to its LEDGER row
+ * still has no bank leg, and a net settlement batch is precisely a set of
+ * payments whose bank legs were netted into one credit. On the holdout that
+ * predicate excluded 58 of 68 eligible payments and left every candidate pool at
+ * size 1 — the stage ran, searched honestly, and searched an empty room.
+ *
+ * The role-scoped predicate is `hasCounterpartIn(record, role)`, read from the
+ * groups S11 will build from S6-S9's pairs. S10 still never re-decides a claim
+ * an earlier stage made: it only ever ADDS a leg in a role that was empty.
  *
  * ── QUESTION 2: splits or batches first? ──
  * **Splits first (§8.1), then batches (§8) over what splits did not consume.**
@@ -39,24 +42,34 @@
  * similarity (S6 exact, S7 alias, S8 identity, S9 fuzzy); running arithmetic
  * inference ahead of anchor-backed evidence would invert that inside one stage.
  *
- * ── WHAT THIS STAGE MAY NOT DO ──
- * It may not extend a group that already exists. A gateway record matched 1:1 at
- * S9 to one of its bank legs is NOT re-opened here to have a second leg added:
- * that is a re-decision of a settled claim, and it would put two bank members in
- * a group S11 built as `one_to_one`, tripping the role-collision rule (§10 rule
- * 3) at assembly time. The consequence is stated rather than hidden — a split
- * whose first leg happened to match at Tier 2 is NOT recovered by this stage,
- * and shows up as the remaining legs sitting in the exception list. Recovering
- * those needs S9 and S10 to negotiate, which is a design change and not a wiring
- * one.
+ * ── WHY SPLITS MERGE AND BATCHES DO NOT ──
+ * A split settlement is ONE gateway payment across N bank credits, so its group
+ * is one economic event and every pair it implies — gateway<->leg,
+ * ledger<->leg — is a true pair. Its legs are emitted as PAIRS carrying
+ * `mayDuplicateRole: 'bank'` (#45), so they merge into whatever group the
+ * gateway already has and bring the ledger row with them.
+ *
+ * A net batch is the opposite shape and the difference is not cosmetic. N
+ * gateway payments share one credit, and each of those payments has its OWN
+ * ledger row, so merging a batch into the existing groups would fuse N economic
+ * events into one — and every implied pair ACROSS those events (gateway_1 with
+ * ledger_2, and so on) is a pair the answer key denies. That is a false-positive
+ * factory, and precision is the number this project has that is worth most.
+ *
+ * So batch decompositions stay atomic pre-formed groups over records that are
+ * wholly unclaimed, and the SEARCH still runs over the wide role-scoped pool so
+ * that `UNSPLITTABLE_BATCH` remains a finding rather than an absence (ADR-038).
+ * A decomposition whose members are already grouped is refused, counted, and
+ * named — it needs the implied-pair problem solved, which is a design change
+ * rather than a wiring one.
  */
 
 import { compareCanonical, type MemberRole } from '../../types/domain.js';
 import type { NormalizedTransaction, ProposedMatch, RunConfig } from '../../types/engine.js';
 import { dayDelta } from '../ingestion/dates.js';
-import { cardinalityOf } from './group-assembly.js';
+import { cardinalityOf, type GroupPair } from './group-assembly.js';
 import {
-  contributionOf, decomposeBatch, findSplitSettlement,
+  buildBatchPool, contributionOf, decomposeBatch, findSplitSettlement,
   type BatchOutcome,
 } from './batch-decomposition.js';
 
@@ -78,23 +91,46 @@ const BATCH_TIER = 'batch' as const;
 const BATCH_CONFIDENCE = 0.8;
 
 /**
- * A pool this small is not a batch question.
+ * Is this credit a NET BATCH question at all?
  *
- * ADR-038's whole point is that the engine may claim a batch is unsplittable
- * only after GENUINELY trying to split it. A search over fewer than two
- * candidates is not a genuine attempt at a *batch* — it is the observation that
- * there was nothing to combine, which the presence categories already say
- * better. Reporting `UNSPLITTABLE_BATCH` there would dress an absence up as a
- * proof, and it is the same over-claim in the opposite direction from never
- * searching at all.
+ * §8 defines the case precisely: *"A bank `SETTLEMENT` credit may be the net of
+ * MANY gateway payments minus fees."* Two things follow, and both are needed —
+ * the first alone is not, which cost a measurement to learn:
  *
- * Credits below this bar are still SEARCHED and still counted in
- * `creditsExamined`; they simply do not produce a batch verdict for S12.
+ *  1. **At least one candidate to net.** With an empty pool there is nothing
+ *     to combine and nothing was searched; that is `MISSING_IN_GATEWAY`, not
+ *     a proof about a batch.
+ *  2. **The credit must exceed the largest single candidate's contribution.** A
+ *     credit that one available payment could account for on its own is not a
+ *     netting of many — it is an ordinary 1:1 whose match failed for some other
+ *     reason, and the presence categories describe that correctly.
+ *
+ * Requiring TWO present candidates was the first attempt, and it contradicts
+ * the scenario's own definition: §4's `UNSPLITTABLE_NET_BATCH` is a credit
+ * netting payments *"with no breakup file provided"*, and the generator proves
+ * unresolvability over the payments that ARE available — which may be one. A
+ * floor of two demands the very evidence whose absence defines the case.
+ *
+ * Rule 2 alone lets any unmatched settlement credit with payments nearby be
+ * declared an unsplittable batch. Measured on the holdout that produced **17
+ * `UNSPLITTABLE_BATCH` exceptions across 15 events of which one was a designed
+ * batch — precision 0.067** — with fourteen `TIMING_LAG_NORMAL` credits
+ * relabelled as batch failures. The category reading 0.000 because the stage
+ * never ran is an honest absence; reading 0.067 because the stage answers a
+ * question nobody asked is worse, and it would have looked like progress.
+ *
+ * Credits failing either test are still SEARCHED and counted in
+ * `creditsExamined`; they simply produce no batch verdict for S12.
  */
-const MIN_BATCH_SHAPED_POOL = 2;
+const MIN_BATCH_SHAPED_POOL = 1;
 
 export interface BatchStageResult {
-  /** Pre-formed groups for `assembleGroups`' `batchGroups` passthrough. */
+  /**
+   * Split legs, as PAIRS carrying `mayDuplicateRole: 'bank'` (#45), so they
+   * merge into the group the gateway already has instead of competing with it.
+   */
+  splitPairs: GroupPair[];
+  /** Batch decompositions: atomic pre-formed groups, for the passthrough. */
   groups: ProposedMatch[];
   /**
    * Verdicts S12 should classify (§11 entry 3) — only credits whose pool was
@@ -107,6 +143,8 @@ export interface BatchStageResult {
   creditsExamined: number;
   /** Credits whose candidate pool was too small to be a batch question. */
   creditsBelowPoolFloor: number;
+  /** Decompositions found but refused because their members were already grouped. */
+  decompositionsRefusedAsAlreadyGrouped: number;
 }
 
 /**
@@ -117,32 +155,75 @@ export interface BatchStageResult {
  */
 export function runBatchStage(
   pool: readonly NormalizedTransaction[],
-  claimed: ReadonlySet<string>,
+  /** Every pair S6-S9 produced, so counterparts can be read PER ROLE (#49). */
+  priorPairs: readonly { a: NormalizedTransaction; b: NormalizedTransaction }[],
   config: RunConfig,
 ): BatchStageResult {
-  // `consumed` grows as S10 itself claims records, so a record cannot appear in
-  // both a split and a batch. Seeded from the earlier stages' claims.
-  const consumed = new Set<string>(claimed);
+  // Role-scoped counterpart index. `hasCounterpartIn(x, 'bank')` is the question
+  // this stage actually asks; "is x in any group at all" is the one that emptied
+  // the pool (#49).
+  const counterpartRoles = new Map<string, Set<string>>();
+  const note = (x: NormalizedTransaction, y: NormalizedTransaction): void => {
+    const set = counterpartRoles.get(x.id) ?? new Set<string>();
+    set.add(y.sourceSystem);
+    counterpartRoles.set(x.id, set);
+  };
+  for (const p of priorPairs) { note(p.a, p.b); note(p.b, p.a); }
+  const hasCounterpartIn = (x: NormalizedTransaction, role: MemberRole): boolean =>
+    counterpartRoles.get(x.id)?.has(role) === true;
 
-  const unmatched = (source: NormalizedTransaction['sourceSystem']): NormalizedTransaction[] =>
+  // Records S10 itself has claimed. A record cannot appear in both a split and a
+  // batch, and a payment consumed by one decomposition is not offered to another.
+  const consumed = new Set<string>();
+
+  /** Reconcilable records of `source` that have no counterpart in `role` yet. */
+  const openIn = (
+    source: NormalizedTransaction['sourceSystem'], role: MemberRole,
+  ): NormalizedTransaction[] =>
     pool
       .filter((t) => t.sourceSystem === source
         && t.statusNorm === 'reconcilable'
-        && !consumed.has(t.id))
+        && !consumed.has(t.id)
+        && !hasCounterpartIn(t, role))
       .sort(compareCanonical);
 
+  /** Records in no group at all — the conservative set batch GROUPS may use. */
+  const whollyUnclaimed = (source: NormalizedTransaction['sourceSystem']): Set<string> =>
+    new Set(pool
+      .filter((t) => t.sourceSystem === source
+        && t.statusNorm === 'reconcilable'
+        && !consumed.has(t.id)
+        && !counterpartRoles.has(t.id))
+      .map((t) => t.id));
+
   const groups: ProposedMatch[] = [];
+  const splitPairs: GroupPair[] = [];
   const splits: BatchStageResult['splits'] = [];
 
   // ── §8.1 SPLIT SETTLEMENTS — identity-bearing, so first ────────────────────
-  for (const gateway of unmatched('gateway')) {
-    const outcome = findSplitSettlement(gateway, unmatched('bank'), config);
+  // A gateway with no BANK counterpart, against bank credits with no GATEWAY
+  // counterpart. Whether either is already matched to a ledger row is irrelevant
+  // to whether this payment was settled across several credits.
+  for (const gateway of openIn('gateway', 'bank')) {
+    const outcome = findSplitSettlement(gateway, openIn('bank', 'gateway'), config);
     if (outcome.kind !== 'split') continue;
 
     consumed.add(gateway.id);
     for (const leg of outcome.legs) consumed.add(leg.id);
     splits.push({ gateway, legs: outcome.legs, reason: outcome.reason });
-    groups.push(toGroup([gateway, ...outcome.legs], gateway, outcome.ruleId, config));
+
+    // Emitted as pairs, not a group: the gateway may already sit in a
+    // [gateway+ledger] group, and these legs belong in THAT group rather than a
+    // competing one. `mayDuplicateRole: 'bank'` is rule 3's declared exception.
+    for (const leg of outcome.legs) {
+      splitPairs.push({
+        a: gateway, b: leg, tier: BATCH_TIER, status: 'pending_review',
+        confidence: BATCH_CONFIDENCE, ruleId: outcome.ruleId,
+        amountDeltaPaise: leg.amountPaise, dateDeltaDays: dayDelta(gateway.txnDate, leg.txnDate),
+        aliasIds: [], scoreBreakdown: null,
+        mayDuplicateRole: 'bank',
+      });
+    }
   }
 
   // ── §8 NET SETTLEMENT BATCHES ──────────────────────────────────────────────
@@ -152,8 +233,9 @@ export function runBatchStage(
   const batches: BatchStageResult['batches'] = [];
   let creditsExamined = 0;
   let creditsBelowPoolFloor = 0;
+  let decompositionsRefusedAsAlreadyGrouped = 0;
 
-  for (const credit of unmatched('bank')) {
+  for (const credit of openIn('bank', 'gateway')) {
     if (credit.txnType !== 'SETTLEMENT') continue;
     if (credit.direction !== 'credit') continue;
     creditsExamined += 1;
@@ -162,9 +244,20 @@ export function runBatchStage(
     // decomposition is not offered to a later one. Order is canonical, so which
     // credit gets a contested payment is a function of file position, not of
     // Map iteration (ADR-032 rule 3).
-    const outcome = decomposeBatch(credit, unmatched('gateway'), config);
+    // The SEARCH uses the wide role-scoped pool, so `UNSPLITTABLE_BATCH` stays a
+    // finding about the data rather than an artefact of an empty pool (ADR-038).
+    const outcome = decomposeBatch(credit, openIn('gateway', 'bank'), config);
 
     if (outcome.kind === 'decomposed') {
+      // A GROUP, though, may only form over wholly unclaimed records — see the
+      // header. Merging a many_to_one batch into existing groups would fuse N
+      // economic events and imply pairs across them that the key denies.
+      const free = whollyUnclaimed('gateway');
+      if (!outcome.members.every((m) => free.has(m.id)) || counterpartRoles.has(credit.id)) {
+        decompositionsRefusedAsAlreadyGrouped += 1;
+        batches.push({ credit, outcome: { ...outcome, kind: 'unsplittable' } as BatchOutcome });
+        continue;
+      }
       consumed.add(credit.id);
       for (const member of outcome.members) consumed.add(member.id);
       batches.push({ credit, outcome });
@@ -174,14 +267,37 @@ export function runBatchStage(
 
     // Searched, but the question was not batch-shaped. The credit is an ordinary
     // unmatched settlement and the presence categories describe it correctly.
-    if (outcome.stats.poolSize < MIN_BATCH_SHAPED_POOL) {
+    if (!isBatchShaped(credit, openIn('gateway', 'bank'), config)) {
       creditsBelowPoolFloor += 1;
       continue;
     }
     batches.push({ credit, outcome });
   }
 
-  return { groups, batches, splits, creditsExamined, creditsBelowPoolFloor };
+  return {
+    splitPairs, groups, batches, splits,
+    creditsExamined, creditsBelowPoolFloor, decompositionsRefusedAsAlreadyGrouped,
+  };
+}
+
+/** §8's two conditions for a credit to be a net-batch question at all. */
+function isBatchShaped(
+  credit: NormalizedTransaction,
+  available: readonly NormalizedTransaction[],
+  config: RunConfig,
+): boolean {
+  // THIS credit's own pool - date-windowed and counterparty-filtered by
+  // `buildBatchPool` - not the global set of unmatched payments. Testing the
+  // credit against every payment in the run compares it to the largest payment
+  // anywhere, which is a different and useless question.
+  const { pool } = buildBatchPool(credit, [...available], config);
+  if (pool.length < MIN_BATCH_SHAPED_POOL) return false;
+  // The largest expected CONTRIBUTION, not the largest gross amount: what a
+  // payment contributes to a credit is its net after fees, which is the quantity
+  // the decomposition actually sums (schema.md 5.3).
+  const largest = pool.reduce(
+    (max, g) => Math.max(max, contributionOf(g, config).maxPaise), 0);
+  return Math.abs(credit.amountPaise) > largest;
 }
 
 /**

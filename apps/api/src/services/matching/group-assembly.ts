@@ -65,6 +65,23 @@ export interface GroupPair {
   dateDeltaDays: number;
   aliasIds: string[];
   scoreBreakdown: ScoreBreakdown | null;
+  /**
+   * Rule 3's exception, declared by the rule that produced the pair (#45).
+   *
+   * §10 rule 3 refuses same-role merges — *"`many_to_one` and `one_to_many`
+   * groups are the sole exception: multiple members of one role are legitimate
+   * there, and only there."* That exception was never implemented, so the
+   * cardinalities `cardinalityOf` can return were unreachable from pairwise
+   * assembly and S10's split settlements had nowhere to go.
+   *
+   * It is DECLARED rather than inferred, and that is the whole safety of it. If
+   * the assembler admitted any merge that happened to produce N:1, rule 3 would
+   * be toothless — every ambiguous second candidate would quietly become a
+   * "many_to_one group" instead of an `AMBIGUOUS_MATCH`. Only a rule that
+   * ASSERTS a cardinality may set this (today: `SPLIT_SETTLEMENT_V1`), and it
+   * names the single role it is entitled to duplicate.
+   */
+  mayDuplicateRole?: MemberRole;
 }
 
 /** A pair that could not join a group without violating rule 2. Becomes AMBIGUOUS_MATCH at S12. */
@@ -208,8 +225,17 @@ export function assembleGroups(
     } else {
       // Two existing clusters joined by this pair. `ca` is the stronger one
       // (it was formed earlier in a strength-ordered walk), so it absorbs.
+      //
+      // `cb.pairs` travels with `cb.members` (#45). Dropping them would let the
+      // merged group forget the evidence that formed `cb`, and rules 4 and 5 are
+      // computed from `cluster.pairs` — so a weak pending pair absorbed into a
+      // strong cluster would vanish from the group's confidence, its tier AND
+      // its status. That is exactly the laundering those rules exist to prevent,
+      // and it was unreachable until this commit made same-role merges legal.
       absorb(ca!, [...cb!.members.values()], pair, clusterOf);
+      ca!.pairs.push(...cb!.pairs);
       cb!.members.clear();
+      cb!.pairs = [];
     }
   }
 
@@ -248,6 +274,14 @@ function roleConflict(
     if (existing.has(t.id)) continue;
     const held = heldBy.get(t.sourceSystem);
     if (held !== undefined && held.length > 0 && !held.some((h) => h.id === t.id)) {
+      // Rule 3's sole exception (#45): the incoming pair's own rule asserted this
+      // cardinality and named the role it may duplicate. Nothing else widens it —
+      // a fuzzy pair cannot launder a second candidate into a legitimate group by
+      // arriving when a slot is already full.
+      if (pair.mayDuplicateRole === t.sourceSystem) {
+        heldBy.set(t.sourceSystem, [...held, t]);
+        continue;
+      }
       return {
         pair,
         reason:
