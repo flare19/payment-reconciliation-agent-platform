@@ -19,6 +19,20 @@
  * Arrays keep their order: in this schema array order is meaningful (candidate
  * lists, secondary flags in precedence order), so sorting them would destroy
  * information the entry is asserting.
+ *
+ *  4. **A NUL character or an unpaired surrogate (see #24).** `JSON.stringify`
+ *     produces well-formed, byte-stable JSON text for both -- a NUL becomes a
+ *     six-character Unicode escape sequence, and a lone surrogate round-trips
+ *     as itself -- but Postgres's `jsonb` input parser rejects that escape
+ *     sequence outright ("unsupported Unicode escape sequence") and rejects
+ *     an unpaired surrogate ("invalid input syntax for type json"), because
+ *     neither can be represented in jsonb's internal string storage. Both are
+ *     ordinary artefacts of messy source data (a stray NUL byte, a truncated
+ *     multi-byte sequence), so every string is sanitized before
+ *     serialization: NUL is stripped, and an unpaired surrogate becomes the
+ *     Unicode replacement character. This runs before hashing, not after, so
+ *     the hash and the stored bytes agree on the sanitized form -- the same
+ *     property key normalisation and date normalisation already have.
  */
 
 export type CanonicalValue =
@@ -49,6 +63,49 @@ export function canonicalize(value: CanonicalValue): CanonicalValue {
   return JSON.parse(canonicalJson(value)) as CanonicalValue;
 }
 
+const LOW_SURROGATE_MIN = 0xDC00;
+const LOW_SURROGATE_MAX = 0xDFFF;
+const HIGH_SURROGATE_MIN = 0xD800;
+const HIGH_SURROGATE_MAX = 0xDBFF;
+const REPLACEMENT_CHAR = '�';
+
+/**
+ * Strip NUL, and replace an unpaired UTF-16 surrogate with the replacement
+ * character — see the NUL/surrogate section of this file's docstring (#24).
+ * A no-op for any string that does not contain one, so no existing hash
+ * changes.
+ *
+ * Exported so `toStoredForm` (hash-chain.ts) can apply the identical
+ * transform to `reason` — a plain TEXT column that never passes through
+ * `canonicalJson`/`canonicalize` at write time, but is still walked by
+ * `serialize()` when the whole entry is hashed. Without this, a `reason`
+ * containing a NUL would hash as sanitized-by-`serialize()` here but arrive
+ * at the database unsanitized via the raw SQL parameter, so the row that
+ * gets stored would not be the row that was hashed.
+ */
+export function sanitizeAuditString(s: string): string {
+  let out = '';
+  let changed = false;
+  for (let i = 0; i < s.length; i += 1) {
+    const code = s.charCodeAt(i);
+    if (code === 0) { changed = true; continue; }
+    if (code >= HIGH_SURROGATE_MIN && code <= HIGH_SURROGATE_MAX) {
+      const next = s.charCodeAt(i + 1);
+      if (next >= LOW_SURROGATE_MIN && next <= LOW_SURROGATE_MAX) {
+        out += s[i]! + s[i + 1]!;
+        i += 1;
+        continue;
+      }
+      out += REPLACEMENT_CHAR; changed = true; continue;
+    }
+    if (code >= LOW_SURROGATE_MIN && code <= LOW_SURROGATE_MAX) {
+      out += REPLACEMENT_CHAR; changed = true; continue;
+    }
+    out += s[i];
+  }
+  return changed ? out : s;
+}
+
 function serialize(value: CanonicalValue): string {
   if (value === null || value === undefined) return 'null';
 
@@ -62,8 +119,9 @@ function serialize(value: CanonicalValue): string {
   switch (typeof value) {
     case 'string':
       // JSON.stringify has produced well-formed, deterministically escaped output
-      // for strings since ES2019, including lone surrogates.
-      return JSON.stringify(value);
+      // for strings since ES2019, including lone surrogates — but "well-formed
+      // JSON text" is not "storable by jsonb"; see this file's docstring, item 4.
+      return JSON.stringify(sanitizeAuditString(value));
 
     case 'boolean':
       return value ? 'true' : 'false';
@@ -86,7 +144,7 @@ function serialize(value: CanonicalValue): string {
       // the machine's locale, which is exactly the class of bug this file exists
       // to remove.
       const keys = Object.keys(record).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-      const parts = keys.map((k) => `${JSON.stringify(k)}:${serialize(record[k])}`);
+      const parts = keys.map((k) => `${JSON.stringify(sanitizeAuditString(k))}:${serialize(record[k])}`);
       return `{${parts.join(',')}}`;
     }
 

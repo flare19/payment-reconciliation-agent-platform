@@ -27,7 +27,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { canonicalJson, canonicalize, type CanonicalValue } from './canonical-json.js';
+import { canonicalJson, canonicalize, sanitizeAuditString, type CanonicalValue } from './canonical-json.js';
 
 /** The first entry of a chain links from 64 zeros. */
 export const GENESIS_HASH = '0'.repeat(64);
@@ -81,6 +81,12 @@ export function toStoredForm(entry: HashableAuditEntry): HashableAuditEntry {
     beforeState: canonicalize(entry.beforeState ?? null),
     afterState: canonicalize(entry.afterState ?? null),
     details: canonicalize(entry.details ?? {}),
+    // `reason` is a plain TEXT column — it never passes through `canonicalize`
+    // at write time the way the three JSONB columns do, but it IS walked by
+    // `canonicalJson` below when the whole entry is hashed. Sanitizing it here
+    // too (see #24) keeps the hashed value and the SQL parameter the repository
+    // sends for the `reason` column identical.
+    reason: sanitizeAuditString(entry.reason),
   };
 }
 

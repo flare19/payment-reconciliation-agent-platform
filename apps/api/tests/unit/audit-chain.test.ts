@@ -119,6 +119,44 @@ describe('canonical JSON — byte stability is the whole point', () => {
     const first = canonicalJson(build() as never);
     for (let i = 0; i < 50; i += 1) assert.equal(canonicalJson(build() as never), first);
   });
+
+  describe('a NUL character or an unpaired surrogate does not reach jsonb (#24)', () => {
+    // Postgres's jsonb input parser rejects both, even though JSON.stringify
+    // produces well-formed JSON text for them (see this file's own docstring —
+    // canonical-json.ts §4). These are ordinary artefacts of messy source data
+    // (a stray NUL byte, a truncated multi-byte sequence), not adversarial input.
+    const NUL = String.fromCharCode(0);
+    const LONE_HIGH = String.fromCharCode(0xD800);
+    const LONE_LOW = String.fromCharCode(0xDFFF);
+    const VALID_PAIR = String.fromCharCode(0xD83D) + String.fromCharCode(0xDE00); // 😀
+
+    test('a NUL character is stripped, not escaped through to the JSON text', () => {
+      const out = canonicalJson(`before${NUL}after`);
+      assert.doesNotMatch(out, /\\u0000/, 'jsonb rejects this escape sequence outright');
+      assert.equal(JSON.parse(out), 'beforeafter');
+    });
+
+    test('an unpaired high or low surrogate becomes the replacement character', () => {
+      assert.equal(JSON.parse(canonicalJson(`x${LONE_HIGH}y`)), 'x�y');
+      assert.equal(JSON.parse(canonicalJson(`x${LONE_LOW}y`)), 'x�y');
+    });
+
+    test('a VALID surrogate pair is left completely alone', () => {
+      assert.equal(JSON.parse(canonicalJson(`hi ${VALID_PAIR} there`)), `hi ${VALID_PAIR} there`);
+    });
+
+    test('sanitizing is idempotent and a no-op for ordinary strings', () => {
+      for (const s of ['plain', 'Amazon Retail ✓', '₹1,234.50', '']) {
+        assert.equal(canonicalJson(s), canonicalJson(canonicalize(s) as never));
+      }
+    });
+
+    test('object keys are sanitized the same way as values', () => {
+      const out = canonicalJson({ [`k${NUL}ey`]: 'v' });
+      assert.doesNotMatch(out, /\\u0000/);
+      assert.deepEqual(JSON.parse(out), { key: 'v' });
+    });
+  });
 });
 
 describe('entry hashing', () => {
@@ -188,6 +226,23 @@ describe('the stored form is the hash input (issue #17)', () => {
   test('toStoredForm is idempotent, so verification may apply it to a stored row', () => {
     const once = toStoredForm(entry({ details: { a: undefined }, afterState: null }));
     assert.equal(canonicalJson(once as never), canonicalJson(toStoredForm(once) as never));
+  });
+
+  test('reason is sanitized the SAME way as the jsonb columns (#24), so the hash ' +
+    'matches what the plain TEXT column will actually hold', () => {
+    // `reason` never passes through canonicalize() at write time the way
+    // beforeState/afterState/details do — the repository sends it to the
+    // `reason` TEXT column directly. If toStoredForm did not sanitize it too,
+    // computeEntryHash (which DOES walk `reason` when hashing the whole entry)
+    // would hash a different string than the one that reaches the database.
+    const NUL = String.fromCharCode(0);
+    const raw = entry({ reason: `no ${NUL} bank record shares an identity reference` });
+    const stored = toStoredForm(raw);
+    assert.equal(stored.reason, 'no  bank record shares an identity reference');
+    // Hashing must not throw, and must hash the SANITIZED reason, not the raw one.
+    assert.equal(computeEntryHash(raw, GENESIS_HASH), computeEntryHash(stored, GENESIS_HASH));
+    assert.notEqual(computeEntryHash(raw, GENESIS_HASH),
+      computeEntryHash(entry({ reason: 'no  bank record shares an identity reference XX' }), GENESIS_HASH));
   });
 
   test('a Date inside a JSON column hashes as the string the column returns', () => {
