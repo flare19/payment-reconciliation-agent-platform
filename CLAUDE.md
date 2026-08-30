@@ -50,7 +50,7 @@ Rationale for each is in [docs/adr-log.md](docs/adr-log.md). Don't re-litigate t
 | [docs/agent-design.md](docs/agent-design.md) | **The Analyst (Phase A).** The agentic layer downstream of S14: tool registry, investigation loop, grounding gate, self-correction, how the agent is measured. Read it before touching anything agent-related. |
 | [docs/api-contract.md](docs/api-contract.md) | Every endpoint. Frontend and backend are built on different days — **this contract is binding.** |
 | [docs/ui-spec.md](docs/ui-spec.md) | Screens, states, the demo path, and the pre-agreed degradation order if Day 12 overruns. |
-| [docs/adr-log.md](docs/adr-log.md) | Every locked decision with reasoning. Append-only. 72 entries. |
+| [docs/adr-log.md](docs/adr-log.md) | Every locked decision with reasoning. Append-only. 75 entries. |
 | [docs/validation-strategy.md](docs/validation-strategy.md) | Ground-truth generation, precision/recall scoring, the scale benchmark, the honesty protocols. |
 | [docs/testing-strategy.md](docs/testing-strategy.md) | What gets tested and what deliberately doesn't. |
 | [docs/deployment.md](docs/deployment.md) | Hosting, env vars, secrets, deploy steps. |
@@ -194,6 +194,16 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 
 ## 9. Daily habits
 
+0. **END EVERY DAY WITH A RE-SCORE, and write the number down.** Since Day 9 this is one command:
+
+   ```
+   npm run score -- --run <runId>
+   ```
+
+   Exit 0 = every honesty gate passed · 1 = transport/hash failure · **2 = a BUILD BLOCKER fired**. This is now the cheapest regression check in the project and it covers the whole system at once — a stage that stops being called, a group rule that starts laundering, a classifier that drifts, all show up as a number that moved. **Do not end a day on an unexplained movement.** Every prior defect of consequence in this repo was invisible to a green test suite and would have been visible to this.
+
+   **Never change a parameter because the score went up** (ADR-027, ARCHITECTURE §8.1). Thresholds, windows, weights and tolerances are off-limits in response to a holdout measurement; structural fixes — wiring a stage that is not called, comparing keys that should be compared — are allowed because they are arguable without citing the number. Validate on `DEV_SEED`, report on `HOLDOUT_SEED`.
+
 1. **Update `docs/what-broke.md` every single day.** It's a required submission artifact and it cannot be honestly reconstructed on Day 13. One line is fine; blank is not.
 2. **Append to `docs/adr-log.md`** whenever you make a decision a future session might otherwise reverse.
 3. **Never tune against `HOLDOUT_SEED`.** Develop against `DEV_SEED`. (ADR-027)
@@ -225,7 +235,7 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 - **Day 6 (Aug 28)** — ingestion and the first two tiers, then AUDIT-1 and its two P1 fixes.
 - **Day 7 (Aug 28)** — Tier 2 + group assembly, classification integration, the repository layer.
 - **Day 8 (Aug 28)** — the run orchestrator and the 28 routes.
-- **Day 9 (Aug 29)** — *today.* **AUDIT-2** (six issues, #40–#45) and its P1 fix; ADR-072 settles the `viaTier` rule U9 needs. **U8/U9/U10 not started.**
+- **Day 9 (Aug 29)** — *today.* **AUDIT-2** (six issues, #40–#45) and its P1 fix; ADR-072 and ADR-073; **U8, U9 and U10 complete — the project has a measured number.**
 
 ### What exists in code
 
@@ -369,7 +379,10 @@ git log --format=%B main..HEAD | grep -inE "(close[sd]?|fixe[sd]|fix|resolve[sd]
 | Unit | Commit | What |
 |---|---|---|
 | P1 | `94c3e85` | **#40** — Tier 2 excludes settled PAIRS, not matched RECORDS |
-| — | (this commit) | **ADR-072** — the `viaTier` reconciliation rule (#34), plus doc refresh |
+| — | `67d55bf` | **ADR-072** — the `viaTier` reconciliation rule (#34), plus doc refresh |
+| **U8** | `cffd386` | **S14 metrics.** The first persisted headline: **67.85%**, with every denominator term beside it |
+| **U9** | (this commit) | **`tools/score`.** The scorer, plus ADR-073 — `sourceRowNumber` on every record preview |
+| **U10** | (this commit) | **The first MEASURED number.** Posted to `score_reports`; endpoint 5 serves `engine` + `measured` together |
 
 **The #40 fix, measured against the answer key:**
 
@@ -391,7 +404,60 @@ runtime               983 ms      859 ms
 
 **ADR-072 settles #34, which CLAUDE.md had flagged as blocking U9.** `viaTier` is never a term in precision/recall — correctness is pair membership alone. Three cases, none a recall miss: tier fall-through; a pair whose *event*-level `expectedOutcome` is `EXCEPTION` (scored against the classification key, not the pairing key); and pair-tier vs group-tier, which the #40 fix turned from an edge case into the majority — **413 of 658 matched pairs (63%) have a `viaTier` that disagrees with their group's tier**, all of them matched correctly. See `validation-strategy.md` §5.1.2.
 
-> **ADR-072 places one requirement on U8:** `runs.metrics` must record how many **PAIRS** each tier produced, not only group-level counts. Without it the tier-attribution diagnostic is not computable from persisted output.
+> **ADR-072 placed one requirement on U8:** `runs.metrics` must record how many **PAIRS** each tier produced. **Done** — `tierAttribution` reads `exact 203 · fuzzy 268 · implied 187 · unattributed 0`, summing to 658, exactly the pair count of the 284 groups. The group-tier figure it deliberately is NOT would read `exact: 46`.
+
+**U8 (S14 metrics) is complete.** `runs.metrics` is populated, `GET /api/runs/:runId` serves a headline, endpoint 5 returns `engine` alongside `measured: null`. **498 tests in `apps/api`, 202 at root.**
+
+```
+matchRatePct 67.85 · matched 593 / reconcilable 874
+tierAttribution  exact 203 · fuzzy 268 · implied 187 · identityEstablished 9
+reviewBurden     58 groups · 162 records, excluded from the rate (ADR-040)
+stagesNotRun     S10_BATCH · S13_EXPLAIN   (null, never 0)
+throughput       3,898 rec/s engine · 1,093 rec/s wall clock
+```
+
+**Two things U8 caught, both in `what-broke.md`:** `serialize.ts` read the metrics block as `review` where §11.1 names it `reviewBurden`, so `headline.pendingReviewCount` had been permanently `null` — §11.5 rule 3 broken silently. And the first `tierAttribution` draft reported `identityEstablished: 212`, the same overstatement Day 8 removed from the audit log; the real figure is **9**.
+
+**`llmCost` and `batchSearch*` are `null`, not zero.** `stagesNotRun` names why. A stage that did not run must not report a performance figure.
+
+### THE FIRST MEASURED NUMBER (U10) — reported unedited, per ADR-020
+
+> **The headline understates what the engine FOUND, and the honest reframing is already specified.**
+> Of 716 scorable true pairs the engine auto-confirms **442**. A further **141 it found and correctly
+> declined to auto-confirm** — they sit in the review queue at **0.94 precision**. Counted as "did the
+> engine locate this relationship at all", that is **583 / 716 = 81.4%**; only **133 pairs (18.6%) were
+> never found**. ADR-040 is right to keep proposals out of the headline and §5.1.1's review-queue
+> precision is exactly the figure that makes the distinction legible. **Both ship, both labelled.**
+> A further **53** of the misses are S10 being unwired — **7.4 recall points behind a wiring change.**
+
+
+```
+pairs      precision 1.0000 · recall 0.6173 · F1 0.7634
+           TP 442 · FP 0 · FN 274
+           review queue: 150 pending pairs at 0.94 precision
+           165 pairs excluded from both sides (their EVENT is an exception, ADR-072)
+classify   macro P 0.7222 · macro R 0.7309 · secondary-flag Jaccard 0.80
+           AMBIGUOUS 1.00/0.67 · AMOUNT_MISMATCH 1.00/0.58 · DUPLICATE 1.00/1.00
+           MISSING_IN_BANK 0.78/0.93 · MISSING_IN_LEDGER 0.78/0.93
+           MISSING_IN_GATEWAY 0.50/1.00 · UNSPLITTABLE_BATCH 0.00/0.00  (S10 unwired)
+honesty    unresolvable recall 1.0 over 21 · false-despair 58/74 = 0.78
+difficulty EASY 0.71 · MEDIUM 0.67 · HARD 0.20
+engine     match rate 67.85% against a computed ceiling of 93%
+```
+
+**Read `precision 1.0000` and `FP 0` first.** The engine claims 442 pairs and every one is in the key. Recall 0.617 is the honest weakness and HARD 0.20 says where it lives. `UNSPLITTABLE_BATCH` at 0.00 is S10 being unwired, not a classifier defect — wiring it is the single largest identified gain.
+
+**The scorer was WRONG TWICE on its first run, both times against the engine.** It printed two build blockers — "invented a match on 5 unresolvable events" and "3 TIMING_DRIFT auto-confirmed" — and both were scorer defects, not engine defects. §4's sub-classes are unresolvable in ONE LEG (the key marks all five events' pairs `shouldMatch: true`), and §5.2's TIMING_DRIFT cell means the primary `expectedCategory`, not a secondary flag. **Every gate now has a test asserting it still FIRES on genuinely wrong output** — a check corrected until a blocker stops firing is otherwise indistinguishable from tuning.
+
+**ADR-073 was needed before U9 could run at all.** §5's documented join is on `(sourceSystem, sourceRowNumber)`, and `RecordPreview` did not carry `sourceRowNumber` — so two locked documents specified a measurement the contract between them could not express. Additive fix; no field changed meaning.
+
+**To reproduce:**
+
+```
+npm run score -- --run <runId> [--post] [--out report.json]
+```
+
+Exit 0 = every honesty gate passed · 1 = transport/hash failure · 2 = a BUILD BLOCKER fired.
 
 **Read `docs/what-broke.md`'s Day 9 entry before starting U8.** It records why #40 was invisible to 477 passing tests: both facts the bug needed were already written down in this repo, days apart, by the same author — §6.3's "pairs" and AUDIT-1's "Tier 1 only ever produces gateway↔ledger". The defect lived in their *conjunction*, which no document owns and no test covered.
 
@@ -438,40 +504,92 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 | **U7** | Routes — 28 endpoints | Opus / high | ✅ `d836a58`. All 28 over real HTTP; 24 integration tests green first run. |
 | **AUDIT-2** | Isolated audit of U3–U7 | **Opus / max** | ✅ Ran Day 9. Six issues (#40–#45); the P1 (#40) is fixed in `94c3e85`. It was the last checkpoint before a number exists, and it earned its place: the engine was understating its own match rate by 10.76 points. |
 
-### Day 9 (Sep 1) — **the first honest number**
+### Day 9 (Aug 29) — **the first honest number** — COMPLETE
 
 | # | Unit | Model | Why |
 |---|---|---|---|
-| **U8** | `metrics/run-metrics.ts` S14 | **Opus / high** | ADR-040's denominator is prose; three defensible readings give three different headline match rates. The worked examples were corrected on Day 5 — implement from ADR-040 itself, not from an example. **Must also record per-TIER PAIR counts (ADR-072)**, or U9's tier-attribution diagnostic is not computable. |
-| **U9** | `tools/score` | **Opus / high** | The purest case: no test can catch a scorer that is wrong in the direction you hoped. §5.1.1's `pending_review` handling and the group→pair mapping are both judgment. **The `viaTier` rule is no longer a judgment call — ADR-072 and §5.1.2 settle it. Read both before joining anything on tier.** |
-| **U10** | **First scored cold run** against `data/truth/holdout_seed_90210.json` | **Opus / high** | Report cold AND warm with the false-positive count beside them (ADR-020). Whatever the number is, it goes in `what-broke.md` unedited. |
+| **U8** ✅ | `metrics/run-metrics.ts` S14 | **Opus / high** | ADR-040's denominator is prose; three defensible readings give three different headline match rates. The worked examples were corrected on Day 5 — implement from ADR-040 itself, not from an example. **Must also record per-TIER PAIR counts (ADR-072)**, or U9's tier-attribution diagnostic is not computable. |
+| **U9** ✅ | `tools/score` | **Opus / high** | The purest case: no test can catch a scorer that is wrong in the direction you hoped. §5.1.1's `pending_review` handling and the group→pair mapping are both judgment. **The `viaTier` rule is no longer a judgment call — ADR-072 and §5.1.2 settle it. Read both before joining anything on tier.** |
+| **U10** ✅ | **First scored cold run** against `data/truth/holdout_seed_90210.json` | **Opus / high** | Report cold AND warm with the false-positive count beside them (ADR-020). Whatever the number is, it goes in `what-broke.md` unedited. |
 
-### Day 10 (Sep 2) — explain layer and the Analyst
+> **THE PLAN GAINED THREE DAYS. Read §8 of ARCHITECTURE.md for the re-dated table.**
+> Day 9 landed on **Aug 29** against a plan that put it on Sep 1. The slack is spent, not absorbed:
+> **deploy moves to Day 10** (largest un-de-risked item; ADR-061's precondition has been met since Day 8),
+> **the frontend grows to two days**, and **AUDIT-4 stops sharing a day with the submission**.
+
+### Day 10 (Aug 30) — deploy as an unknowns-flush, and the last unwired matching stage
+
+> **Deploy is NOT a checkbox and Day 10 is not a freeze (ADR-074).** Its purpose is to convert
+> every unknown that only appears in a real environment into a known one **while there is still
+> time to absorb it** — managed-Postgres connection limits and SSL, `CORS_ORIGIN`, migrate-on-boot
+> against a non-empty database, cold-start latency on endpoint 4, and whether a run completes
+> inside the platform's limits. **Four P1s are open on the day it deploys and all of them land
+> afterwards.** So the setup is judged on how cheap it is to REDO, not on being finished:
+> redeployment stays a single manual action, and **there is no CI/CD** — one person, one branch,
+> two `npm test` commands and a review gate that already exists (ADR-074, ADR-005).
 
 | # | Unit | Model | Why |
 |---|---|---|---|
-| **U11** | Explain layer S13: signature, cache, LLM client, templates | **Sonnet / medium** | `schema.md` §10 is the most complete spec in the repo. Run must complete with the API unavailable (`explanation_source = 'template'`). |
+| **U14** | Deploy API to Railway (ADR-061, ADR-074) | **Opus / high** | Moved up a day. Nothing has ever run outside a laptop. `deployment.md` §5. Acceptance is *"a second deploy is one command"*, not *"it is live"*. |
+| **R1** | Wire S10 batch decomposition — **[#46](https://github.com/flare19/payment-reconciliation-agent-platform/issues/46), P1** | **Opus / high** | Built and tested Day 4, never called. **48 false negatives (6.7 recall points)** and `UNSPLITTABLE_BATCH` at **0.000/0.000** sit behind it. Both blockers U6 named are now decidable — #40 made "unmatched after S9" mean something, and `assembleGroups` already takes `batchGroups` as a passthrough. |
+| — | Re-score, record the number | — | `npm run score -- --run <id>`. Every day from here ends with a re-score (habit 0). |
+
+### The four open P1s, and when each lands
+
+| # | What | Cost, measured | When |
+|---|---|---|---|
+| **[#46](https://github.com/flare19/payment-reconciliation-agent-platform/issues/46)** | S10 built, tested, never called | 48 pairs · 6.7 recall points · an exception category at 0.000/0.000 | **Day 10** |
+| **[#38](https://github.com/flare19/payment-reconciliation-agent-platform/issues/38)** | `anchorAgreement` compares weak keys like-for-like | 17 pairs — and **11 of them are in the never-found set**, the entire actionable remainder once #46 is wired | **Day 11** |
+| **[#43](https://github.com/flare19/payment-reconciliation-agent-platform/issues/43)** | `countsTowardEngineMatchRate` admits `pending_review` | Browse list implies 86.4% where the headline says 67.85% | **before the frontend reads it** |
+
+> **[#47](https://github.com/flare19/payment-reconciliation-agent-platform/issues/47) IS CLOSED AS NOT-A-DEFECT — do not re-open it from the arithmetic alone (ADR-075).**
+> It was filed as the P1 that "cannot ship", and it was wrong. The sum is real — an anchorless
+> bank↔ledger pair caps at `0.35` against a `0.65` floor — but ADR-064 decided this **deliberately on
+> Day 4**, with the same arithmetic, and set a revisit condition that the first measurement does not
+> meet: **all 83,979 scorable bank↔ledger pairs on the holdout score `anchor 0.00`**, so the caps are
+> theoretical and **renormalising recovers 0 pairs**. The 66 unreached pairs share no reference value
+> across any key — bank has `bank_ref_no`/`utr`, ledger has `entry_id`/`invoice_no` — so #38 is not
+> their cause either. Refusing them is the honesty property working. What DID come out of it is
+> [#48](https://github.com/flare19/payment-reconciliation-agent-platform/issues/48): §5.4 promises such
+> a pair "can reach the review band and ask a human", and for bank↔ledger that is false.
+
+### Day 11 (Aug 31) — explain layer
+
+| # | Unit | Model | Why |
+|---|---|---|---|
+| **U11** | Explain layer S13: signature, cache, LLM client, templates | **Sonnet / medium** | `schema.md` §10 is the most complete spec in the repo. Run must complete with the API unavailable (`explanation_source = 'template'`). Fills the last unwired stage, so `llmCost` and `stagesNotRun` stop being null. |
+
+### Day 12 (Sep 1) — the Analyst
+
+| # | Unit | Model | Why |
+|---|---|---|---|
 | **U12** | Agent tool registry | **Opus / high** | `score_pair`/`rerun_subset_search` must call locked engine code (ADR-049) — the first `services/agent` → `services/matching` import, which is legal and required. `agent-design.md` §4 still says "meet-in-the-middle"; ADR-060 replaced that with depth-first. Fix the doc. |
 | **U13** | Investigation loop A2 + triage A1 | **Opus / high** (loop), **Sonnet / medium** (triage) | The loop decides whether the grounding gate's per-investigation property holds; #21's `investigationId` plumbing is already in place and must be honoured. Triage's `ORDER BY` is stated exactly. |
 | **AUDIT-3** | Isolated audit of U11–U13 | **Opus / max** | Hallucination is a build blocker (ADR-053), not a metric |
 
-### Day 11 (Sep 3) — deploy and scale
+### Day 13 (Sep 2) — AUDIT-3, scale, and the P2 sweep
 
-| # | Unit | Model |
-|---|---|---|
-| **U14** | Deploy API to Railway (ADR-061) | **Opus / high** — first environment, `deployment.md` §5 |
-| **U15** | Q&A loop | **Sonnet / medium** — same loop, smaller budget, one tool removed |
-| **U16** | Scale benchmark 1k/10k/100k (ADR-045) | **Sonnet / medium** — generator is already parameterized by event count |
+| # | Unit | Model | Why |
+|---|---|---|---|
+| **AUDIT-3** | Isolated audit of U11–U13 | **Opus / max** | Hallucination is a build blocker (ADR-053), not a metric |
+| **U16** | Scale benchmark 1k/10k/100k (ADR-045) | **Sonnet / medium** | Throughput is a judged axis and the curve is the evidence for ADR-033's O(n×k) claim. Generator is already parameterized. |
+| — | **#38** (P1, 17 pairs) and **#43** | **Sonnet / high** | #43 must land before the frontend reads `countsTowardEngineMatchRate` |
+| **U15** | Q&A loop | **Sonnet / medium** | Same loop, smaller budget, one tool removed. **First cut candidate if the day overruns.** |
 
-### Day 12 (Sep 4) — frontend
+### Day 14 (Sep 3) — frontend
 
 | # | Unit | Model | Why |
 |---|---|---|---|
 | **U17** | Design direction + dashboard | **Opus / high** | CLAUDE.md §8's own routing rule: Opus for the creative pass |
+
+### Day 15 (Sep 4) — the rest of the frontend, and the web deploy
+
+| # | Unit | Model | Why |
+|---|---|---|---|
 | **U18** | Remaining screens | **Sonnet / medium** | `ui-spec.md` §1–9 + the endpoint-to-screen map. §8's degradation order is pre-agreed — cut from the bottom and SAY what was cut. |
 | **U19** | Deploy web to Vercel | **Sonnet / medium** | |
 
-### Day 13 (Sep 5) — submission
+### Day 16 (Sep 5) — submission
 
 | # | Unit | Model |
 |---|---|---|
@@ -488,8 +606,9 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 
 ### Carried debt, stated rather than buried
 - **Nothing is deployed, deliberately** (ADR-061). Day 11 (API), Day 12 (web). A dated task, not a spare-time task.
-- **`tools/score` is still a stub, so nothing has been MEASURED.** The dataset to measure against now exists; the measurement is Day 9. Until then every accuracy claim here is still a claim about code.
-- **Nothing is PERSISTED end to end.** Every stage S1–S12 exists and they run in sequence against the holdout in-memory (see the Day 7 block), but no orchestrator writes any of it to the database, no routes are mounted, and `createApp` serves 404s by design. That is U6 and U7.
+- ~~`tools/score` is still a stub~~ — **done Day 9. The project has a measured number: precision 1.0000, recall 0.6173, zero false positives, against a 93% ceiling.**
+- ~~Nothing is PERSISTED end to end~~ — done Day 8. Original note:
+- **(historical)** Every stage S1–S12 exists and they run in sequence against the holdout in-memory (see the Day 7 block), but no orchestrator writes any of it to the database, no routes are mounted, and `createApp` serves 404s by design. That is U6 and U7.
 - The repository layer is complete (U5), and exercised against a real Postgres — but only by its own integration test, not yet by the engine.
 - `proofs.ts`'s `matcherView` is a VIEW, not a parser. U1 has landed, so the §4 proofs can now be re-run through the real parsers — not yet done.
 - `testing-strategy.md` §2 plans a 60-event DEV_SEED golden snapshot. **60 events is too few** — §3's 2.8% `IDENTITY_DESTROYED` share rounds below the 3-member cluster floor and the generator correctly refuses. Use ≥100 events or raise that weight for the snapshot config.

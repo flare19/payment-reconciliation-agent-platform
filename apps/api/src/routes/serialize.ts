@@ -71,15 +71,21 @@ export function runSummary(r: Run): Record<string, unknown> {
       reconcilable: c['reconcilable'] ?? 0,
     },
     inputFileHashes: r.inputFileHashes,
-    // `headline` is read from `runs.metrics`, which S14 (U8) fills. Until then it
-    // is null rather than zeroed: a match rate of 0.0% and an absent match rate
-    // are different claims, and only one of them is true right now.
+    // `headline` is read from `runs.metrics`, which S14 fills. Before a run
+    // finalizes it is null rather than zeroed: a match rate of 0.0% and an
+    // absent match rate are different claims.
+    //
+    // The block is `reviewBurden`, per schema.md §11.1 — this read was written
+    // against a producer that did not exist yet and named it `review`, so it
+    // resolved to null on every run. §11.5 rule 3 requires review burden beside
+    // the match rate, and a silent null is the one way to break that rule
+    // without anything failing.
     headline: m['matchRate'] === undefined ? null : {
       matchRatePct: m['matchRate']['matchRatePct'] ?? null,
       falsePositiveMatches: null,        // measured, not engine-computed (ADR-041)
       coldStartMatchRatePct: (m['coldStart'] ?? {})['matchRatePct'] ?? null,
       exceptionCount: m['exceptions']?.['total'] ?? null,
-      pendingReviewCount: m['review']?.['pendingReviewCount'] ?? null,
+      pendingReviewCount: m['reviewBurden']?.['pendingReviewCount'] ?? null,
     },
     configSnapshot: r.configSnapshot,
   };
@@ -95,6 +101,12 @@ export function recordPreview(t: NormalizedTransaction): Record<string, unknown>
   return {
     transactionId: t.id,
     sourceSystem: t.sourceSystem,
+    // ADR-073. `(sourceSystem, sourceRowNumber)` is the ONLY join key
+    // `data/truth/` can express — the answer key is written before the engine
+    // exists and cannot reference engine-assigned UUIDs (validation-strategy
+    // §2.1). Without this field `tools/score` cannot perform §5's documented
+    // join at all, which is how U9 found the gap.
+    sourceRowNumber: t.sourceRowNumber,
     externalId: t.externalId,
     ...money(t.amountPaise),
     txnDate: t.txnDate,

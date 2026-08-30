@@ -319,3 +319,111 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
   **Also from AUDIT-2, filed rather than fixed:** [#41](https://github.com/flare19/payment-reconciliation-agent-platform/issues/41) P2 — `candidateAmountBuckets` inverts the fee band for bank→gateway, using `feeBandMinPct` where the upper bound needs `feeBandMaxPct`; 9 true pairs fall outside the span and all 9 are currently rescued by another candidate source, so it costs nothing today and scales with amount. [#42](https://github.com/flare19/payment-reconciliation-agent-platform/issues/42) P2 — S11 rule 3 names the refused pair as its own displacer. [#43](https://github.com/flare19/payment-reconciliation-agent-platform/issues/43) P2 — `countsTowardEngineMatchRate` admits `pending_review`, which ADR-040 excludes, so the browse list implies a higher rate than the headline. [#44](https://github.com/flare19/payment-reconciliation-agent-platform/issues/44) P2 — three tests that cannot fail. [#45](https://github.com/flare19/payment-reconciliation-agent-platform/issues/45) P3 — S11's cluster-merge branch is unreachable and discards pairs if reached.
 
   **Verified correct and worth recording as such,** because silence is not a result: `candidateDateRange` inverts the §5.2 windows correctly in both directions (854 true pairs checked, 12 misses, all of them S10 batch legs); the ADR-033 cap does not bind; `matchedPairs` derives from S11's groups so a refused pair cannot reappear as matched; `candidatesConsidered` is a true count, differing from the logged list in 308 of 555 exceptions; every paginated repository query ends in a unique tiebreak; migration 012 weakened neither the partial unique index nor the CHECK; and no unwired stage fabricates a value — `headline` is `null`, `runs.metrics` is `{}`, `measured` is never backfilled from `engine`.
+
+  **Later on Day 9 — U8 (S14 metrics), and two things it caught.**
+
+  **A reader written against a producer that did not exist.** `serialize.ts`'s `headline` block read `m['review']?.['pendingReviewCount']`; the metrics block is named `reviewBurden` (schema.md §11.1). U7 wrote that read on Day 8 against a `runs.metrics` that was `{}`, so `?.` resolved to `null` on every run and nothing failed. `schema.md` §11.5 rule 3 requires review burden to travel *with* the match rate — and this is the one way to break that rule silently: not by omitting the field, but by shipping it permanently null. **58 pending-review groups would have rendered as "—" next to the headline for the whole demo.** Day 7 named the pattern as "a module correct against its spec, wrong the first time something called it"; this is its mirror — a CONSUMER correct against its spec, wrong because the producer arrived later and nothing re-checked the seam.
+
+  **An overstatement caught before it shipped, because Day 8 had already found it once.** The first `tierAttribution` draft reported `identityEstablished: 212`. S8 re-derives every pair S6 already claimed and reports `outcome: 'match'` "for completeness"; the real contribution is the **9** amount/timing verdicts Tier 1 declined. Day 8 removed exactly this inflation from the audit log and wrote down why. Reintroducing it under a different name in a different file, one day later, is worth recording plainly: **a lesson learned in one module does not propagate to the next by itself.** The fix is the same filter, and the test now pins both numbers — 9 as the answer, 212 as the number it must never report — so the next place this appears fails rather than publishes.
+
+  **The denominator, which is what U8 was flagged as risky for.** ADR-040 says `reconcilable = ingested − excluded − rejected_rows − non_primary_duplicates`. That sentence is only coherent if `ingested` means **rows read from the files** — but `ingestion/index.ts` builds `counts.gateway` from `gateway.transactions.length`, and a row that failed to parse never becomes a transaction. So an implementer who sums the three source counts and *also* subtracts `rejected` removes rows that were never added, shrinking the denominator and **inflating the match rate**. On the holdout `rejected = 0`, so all three readings agree at 874 and the error would have been invisible. `population.ingested` is now file rows attempted, stated in the object itself, and `assertDenominatorIdentity` re-derives the arithmetic and **throws** rather than publishing a rate whose denominator does not reconcile. A run that cannot account for its own denominator should fail, not round.
+
+  **Still Day 9 — U9 (`tools/score`) and U10 (the first scored run). The project has a MEASURED number for the first time, and getting it required admitting two scorer bugs and one contract gap.**
+
+  **THE NUMBER, unedited, as ADR-020 requires:**
+
+  ```
+  pairs      precision 1.0000 · recall 0.6173 · F1 0.7634
+             TP 442 · FP 0 · FN 274
+             review queue: 150 pending pairs at 0.94 precision
+             165 pairs excluded from both sides (their EVENT is an exception, ADR-072)
+  classify   macro P 0.7222 · macro R 0.7309 · secondary-flag Jaccard 0.80
+  honesty    unresolvable recall 1.0 over 21 · false-despair 58/74 = 0.78
+  difficulty EASY 0.71 · MEDIUM 0.67 · HARD 0.20
+  engine     match rate 67.85% against a computed ceiling of 93%
+  ```
+
+  **Zero false positives is the number worth reading first.** The engine claims 442 pairs and every one of them is in the key. Recall 0.617 says it finds under two-thirds of what is there — the honest weakness — and HARD at 0.20 says exactly where. That is a better result to report than a higher F1 with a non-zero FP count, and it is the shape this project chose deliberately: refusing to guess is a feature.
+
+  **THE SCORER WAS WRONG TWICE ON ITS FIRST RUN, AND BOTH TIMES IT SAID THE ENGINE WAS WORSE THAN IT IS.** The first execution printed two build blockers: "the engine INVENTED a match on 5 designed-unresolvable events" and "3 TIMING_DRIFT events auto-confirmed". Both were scorer defects.
+
+  - The unresolvable check asked "was any pair inside this event confirmed?" But §4's three sub-classes are unresolvable **in one leg**, not throughout: an `UNSPLITTABLE_NET_BATCH` event is a bank credit that nets N payments with no breakup file, and the gateway and ledger rows behind each payment are ordinary rows that match on `payment_id`. **The key says so itself** — all three pairs of all five flagged events carry `shouldMatch: true`. The engine was right and the scorer called it invention.
+  - The TIMING_DRIFT cell read `expectedSecondaryFlags` where §5.2 means the primary `expectedCategory`. TIMING_DRIFT rides along as a secondary flag on `AMOUNT_MISMATCH` events whose gateway↔ledger leg legitimately matches, so the blocker fired three times on a clean run. The holdout has **no** event whose primary category is TIMING_DRIFT, so the correct cell is structurally zero here.
+
+  **Why this is the entry that matters.** `tools/score` was flagged in the plan as *"the purest case: no test can catch a scorer that is wrong in the direction you hoped."* Both bugs were wrong in the direction nobody hopes for, which is the only reason they were caught in one run. Had either gone the other way — a check that quietly passed a real invention, or a recall denominator that dropped a few misses — the number would have looked *better*, nothing would have complained, and it would have shipped. **The asymmetry is the whole lesson: a scorer's optimistic bugs are silent and its pessimistic bugs are loud, so the loud ones are a gift and the silent ones are what an audit has to go looking for.** Correcting a check until a blocker stops firing is also indistinguishable from tuning, so every gate now has a test asserting it still FIRES on genuinely wrong output, not merely that it passes on the real run.
+
+  **A contract gap that made the documented measurement impossible (ADR-073).** §5 says the scorer joins engine output to the key on `(sourceSystem, sourceRowNumber)`, and §2.1 explains why it must: the key is written before the engine exists and cannot reference engine-assigned UUIDs. But `RecordPreview` — the record shape inside every match member and exception — carried `transactionId` and `sourceSystem` and **not** `sourceRowNumber`. The only endpoints exposing a row number were 24 (which lists exactly the rows *outside* the denominator) and 12 (one transaction per request). **Two locked documents specified a measurement the contract between them could not carry**, and nothing surfaced it — not the typechecker, not 498 passing tests, not a careful reading of either document alone — until U9 tried to execute the join and got a 404. This is the Day 9 seam lesson a third time: the gap was not inside any module, it was between two documents that were each internally correct.
+
+  **A smaller one worth naming because it wasted a cycle:** the first scored run reported `precision 0, recall 0, TP 0` against an engine that had matched 658 pairs. The cause was a stale `tsx` process still serving the old `recordPreview` on port 3001 — the code was right and the server was old. Loud, harmless, and a reminder that "I restarted it" is a belief until the response body says so.
+
+  **End of Day 9 — what the measurement turned into, once the never-found set was actually opened.**
+
+  "~80 pairs never found" was a bucket, not a diagnosis, and buckets hide things. Opening it produced a number that changes what Day 10 and 11 are for:
+
+  ```
+  never-found true pairs .................................... 133
+    viaTier = batch — S10 built, tested, NEVER CALLED .......  48   #46 P1
+    bank<->ledger capped at 0.55 against a 0.65 bar .........  42   #47 P1
+    gateway-bearing, awaiting diagnosis (30 overlap #38) ....  43
+  candidates never generated ................................   0
+  ```
+
+  **Zero.** Not one of the 133 was missed by candidate generation. Every one was generated, scored, and fell below a threshold. The blocking strategy is doing its job; the scoring model is not.
+
+  **#47 is the one that would have been catastrophic to ship, and it is arithmetic rather than tuning.** `schema.md` §4.3 gives bank and ledger no comparable amount basis, so `scorePair` contributes 0 for the amount component — and does **not renormalise the remaining weights**. Best case for a bank↔ledger pair is `anchor 0.20 + date 0.20 + counterparty 0.15 = 0.55`, judged against `fuzzyReviewThreshold = 0.65`. **A bank↔ledger pair with a matching anchor, an exact date and an identical counterparty is refused.** There is no input that passes. Measured: of 244 true bank↔ledger pairs the engine reaches 178, and **every one only as a three-way group's implied leg — zero on their own merit.**
+
+  Two locked decisions had never been reconciled: ADR-030 calibrated the weights assuming all four components apply, and §4.3 created a source pair where one never does. Neither is wrong alone. **This is the Day 9 seam again — the fourth time today** — and it is the sharpest instance yet, because the two documents are not merely inconsistent, they are jointly impossible, and the impossibility is a one-line sum that nobody had performed.
+
+  **Why this was invisible for six days.** bank↔ledger pairs mostly arrive as the *implied* third edge of a three-way group, where the gateway leg carries them, so 178 of 244 look matched and the category never reads as broken. Only a scorer that asks "reached on its own merit?" separates the two, and that question did not exist until Day 9.
+
+  **The discipline this sits inside, written into ARCHITECTURE §8.1 and habit 0.** The measurement also showed that `fuzzyAutoConfirmThreshold` at 0.85 is the entire difference between the 442 auto-confirmed pairs and the 583 the engine actually found — lowering it would lift the headline overnight. **That change is forbidden and #47's is not**, and the distinction is the whole point: a scale that omits an inapplicable component and then compares against a full-scale bar is wrong on its own terms, arguable without any holdout number, and would be wrong if the holdout did not exist. A threshold change would be arguable only by pointing at the number. **If the argument for a change is "the holdout number goes up", the argument is the evidence against it.**
+
+  **Also settled today: the deploy posture (ADR-074).** Deploy moves to Day 10 not to tick it off but to meet the environment's unknowns while there is still time to absorb them — nothing here has ever run outside a laptop. Four P1s are open on the day it deploys and all of them land afterwards, so the deployment is judged on how cheaply it REDEPLOYS rather than on being finished. No CI/CD: one person, one branch, two `npm test` commands and a review gate that already exists. The cost is stated rather than hidden — without CI, "the tests passed" is a claim about what somebody ran, not a property of the commit.
+
+- **2026-08-30 (Day 10)** — **I filed a P1 that was not one, and the check that caught it was reading the ADR log before writing code.**
+
+  Day 10 opened by implementing #47 — renormalise the Tier 2 score over applicable weights, because an anchorless `bank↔ledger` pair caps at 0.35 against a 0.65 review floor and therefore cannot be matched. The arithmetic is real. The issue was still wrong, on two counts, and both were knowable before a line was written.
+
+  **It was already decided, deliberately, on Day 4.** `schema.md` §5.4 documents the behaviour and cites **ADR-064**, which found the same thing during the Day 4 self-audit, computed the *exact* figure I re-derived (`strong_weak: (0.30+0.20+0.15)/0.65 = 0.846`), and declined to change it — because *"rewiring a scoring weight unattended, before the project has produced its first measured accuracy run"* is precisely what ARCHITECTURE §7 asks to be flagged rather than decided alone. It left a revisit condition: bank↔ledger exceptions where **an anchor-matched** counterpart exists but never reached review.
+
+  **The revisit condition is measurably not met, and the fix recovers zero pairs.**
+
+  ```
+  TRUE bank<->ledger pairs .................. 244   reached 178   never reached 66
+    of the 66, anchor component > 0 .........   0
+    of the 66, sharing ANY reference value ..   0
+  every bank<->ledger pair scorePair accepts: 83,979 — anchor 0.00 on ALL of them
+  pairs renormalisation would lift to review:   0
+  ```
+
+  No bank↔ledger anchor exists anywhere in this dataset, so the 0.55 and 0.65 caps the issue is named after are theoretical. Every real pair maxes at `date 0.20 + counterparty 0.15 = 0.35`, and renormalised at 0.538 — both below 0.65. The 66 rows carry **disjoint identifier namespaces**: bank has `bank_ref_no` + `utr`, ledger has `entry_id` + `invoice_no`. There is no anchor to find, which also rules out #38 as their cause.
+
+  **So the engine was right and the issue was wrong.** Two rows sharing no identifier, with no comparable amount and only a date and a merchant name, are not a match anyone should assert. Refusing them is this project's entire thesis, and I had written it up as a catastrophe.
+
+  **What made it wrong is worth naming precisely.** Every prior defect this month lived in a seam between artifacts that were individually correct, and I had started treating "two documents that jointly imply something impossible" as the signature of a real bug. Here the two documents **agreed**, an ADR explained why, and I never opened it — I derived the arithmetic myself, found it damning, and filed. **A striking sum is a reason to search the decision log, not a substitute for having searched it.** The cost of not searching would have been a scoring change made after seeing a measurement, recovering nothing, raising bank↔ledger ceilings across the board, and risking the strongest number the project has — precision 1.0000, FP 0 — in exchange for zero.
+
+  **Recorded so it cannot recur:** ADR-075 states the condition was evaluated and declined, with the measurement, because `0.55 < 0.65` is exactly the kind of sum that looks like an obvious bug on a fresh reading. That is how it got filed the first time.
+
+  **One genuine finding did fall out of it** — [#48](https://github.com/flare19/payment-reconciliation-agent-platform/issues/48). §5.4 promises that a pair with no shared reference *"can reach the review band and ask a human, and that is all it can ever do."* For bank↔ledger the second half is false under either arithmetic, so a human is never asked and the record serialises as `needs_external_data` — *"the counterpart may exist outside these three files"* — about a counterpart sitting in the ledger file. A spec that lies about one of three source pairs, and a confidently wrong sentence in front of a reviewer.
+
+  **Corrected attribution of the 133 never-found pairs:** 48 are S10 unwired (#46, real, Day 10); **42 are the engine correctly refusing anchorless bank↔ledger pairs**; 43 are gateway-bearing and still unexplained, which is where the recall gap actually lives.
+
+  **Also Day 10 — the 43 gateway-bearing misses, diagnosed. The never-found population is now fully attributed, and it is mostly the engine being right.**
+
+  Every one of the 43 has the identical shape: **perfect amount (delta 0, exact to the paisa), in-window date, perfect counterparty trigram, and `anchor = 0`.** They score 0.50–0.60 against a 0.65 floor. One test splits them — do the two rows share a reference *value* under *different* keys?
+
+  ```
+  sharing a value under different keys (#38) ....... 11
+  sharing no reference value at all ................ 32
+  ```
+
+  The 11 are all `bank_ref_no == rrn`: a byte-identical 12-digit reference sitting on both rows, contributing nothing because `anchorAgreement`'s weak-key loop compares the *same* key on both sides and no bank row has an `rrn` field. That is #38, already a P1, and this raises its standing — those 11 are not merely under-scored, they are never surfaced to a human at all.
+
+  **Final attribution of the 133 never-found pairs: 48 S10 (#46), 11 #38, and 74 the engine correctly refusing pairs with no shared identifier.** Only **59 are actionable**. That is a much better result than "133 missing" implied, and it took two days of measurement to see.
+
+  **A second finding, folded into [#48](https://github.com/flare19/payment-reconciliation-agent-platform/issues/48) rather than filed fresh.** The date component is `0.20 × (1 − days_off / window_span)`, which is exactly zero when `days_off == window_span` — **on the SLA boundary, inside the window**. A T+3 card settlement, which ADR-009 defines as normal, scores the same date evidence as one thirty days late: none. Consequence: an anchorless pair with perfect amount and counterparty sits at 0.50 and needs three-quarters of the date weight to clear the floor, so **for every window the engine defines it reaches review only on a same-day match**. `schema.md` §5.4 and ADR-030 publish the opposite property — *"it can reach the review band and ask a human"* — and 20 of the 43 score zero on date while inside the window they were measured against.
+
+  **Folded rather than filed because it breaks the same sentence #48 already names.** After #47 — where I filed a P1 that an ADR had already decided — the instinct to open a new issue for every striking number is the thing to distrust. Two mechanisms, one false sentence, one fix conversation.
+
+  **And the same honesty applies to its yield:** correcting the date curve alone would recover approximately nothing. Those pairs are missing 0.30 of anchor weight; a plausible re-shaping moves them 0.50 → 0.55, still short. Recording it as a defect in the *published property* rather than as a recall opportunity is the accurate framing, and #48's recommended resolution is still to make the documentation true rather than to change the arithmetic.
+

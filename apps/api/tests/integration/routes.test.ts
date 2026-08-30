@@ -127,9 +127,17 @@ describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL
     assert.equal(c['reconcilable'], c['gateway'] + c['bank'] + c['ledger']
       - c['excluded']! - c['rejectedRows']! - c['nonPrimaryDuplicates']!);
     assert.match((r.json['inputFileHashes'] as Record<string, string>)['gateway']!, /^sha256:[0-9a-f]{64}$/);
-    // U8 has not run, so there is no headline yet. Null, not zeroes — an absent
-    // match rate and a 0.0% match rate are different claims.
-    assert.equal(r.json['headline'], null);
+    // S14 fills the headline. `falsePositiveMatches` stays null because it is a
+    // MEASURED figure and lives in score_reports (ADR-041) — the engine must
+    // never fill that slot with something it computed about itself.
+    const h = r.json['headline'] as Record<string, unknown>;
+    assert.equal(h['matchRatePct'], 67.85);
+    assert.equal(h['coldStartMatchRatePct'], 67.85);
+    assert.equal(h['exceptionCount'], 256);
+    assert.equal(h['falsePositiveMatches'], null);
+    // §11.5 rule 3: review burden travels WITH the match rate. This read named
+    // the wrong metrics block until U8 and silently resolved to null.
+    assert.equal(h['pendingReviewCount'], 58);
   });
 
   test('2 · an unknown configOverride is REJECTED, not silently ignored', async () => {

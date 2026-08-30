@@ -320,6 +320,35 @@ export async function aliasLineage(aliasId: string): Promise<Alias[]> {
 }
 
 /**
+ * How many aliases sit in each terminal state, for S14's `aliasLearning` block.
+ *
+ * One grouped query rather than three filtered `listAliases` calls: the metrics
+ * stage wants three integers, and paginating three result sets to count them
+ * would make a cheap aggregate look expensive at the 100k benchmark (see #39 for
+ * what that mistake costs on the audit path).
+ *
+ * Counts EVERY alias ever taught, including revoked ones. A revoked alias is
+ * still a correction a human made — it is the leverage ratio's denominator, and
+ * dropping it would flatter the ratio by hiding the corrections that turned out
+ * to be wrong.
+ */
+export async function aliasStatusCounts(
+  client?: TxClient,
+): Promise<{ active: number; superseded: number; revoked: number }> {
+  const c = client ?? getPool();
+  const { rows } = await c.query<{ status: string; count: number }>(
+    `SELECT status, count(*)::int AS count FROM learned_aliases GROUP BY status ORDER BY status`,
+  );
+  const out = { active: 0, superseded: 0, revoked: 0 };
+  for (const r of rows) {
+    if (r.status === 'active' || r.status === 'superseded' || r.status === 'revoked') {
+      out[r.status] = r.count;
+    }
+  }
+  return out;
+}
+
+/**
  * Bump the cached application counters after a run used an alias.
  *
  * `applied_count` is a CACHE, not the source of truth: the audit log's
