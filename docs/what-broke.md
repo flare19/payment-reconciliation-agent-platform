@@ -508,3 +508,26 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
   **And twice today a guard written against an over-claim became an under-claim** — the two-candidate batch floor, and the canonical tie-break that hides a category the engine gets right. Both times the correction was to go back to what the spec says the case IS. Neither time was it to move a number until it looked better.
 
+  **Last thing on Day 10 — #50 fixed, and the classification figures were wrong the whole time.**
+
+  §5.2 scores classification per EVENT; the engine raises exceptions per RECORD; 40 of ~72 exception events carry more than one category. The scorer had to pick one prediction and the rule for picking it had never been chosen — it was taking whichever exception came first in the answer key's `projections` array, i.e. generator output order. Replacing that with canonical row order was better but still arbitrary, and it read `UNSPLITTABLE_BATCH` as **0.000/0.000** for a category the engine raises on exactly the right credits.
+
+  **The rule was already written down, in `schema.md` §8.2**, and it names this exact case:
+
+  > *"**Unsplittable batch before presence,** for the same reason: its member payments would each otherwise be reported as `MISSING_IN_BANK`, turning one honest exception into five misleading ones."*
+
+  So the scorer now picks an event's prediction by the **engine's own precedence order**, applied across the event's records. It is the engine's stated rule rather than one I invented; it does not consult `expectedCategory`, so it cannot manufacture a hit; and it is order-independent, which the row-order rule only accidentally was.
+
+  ```
+                        row order   §8.2 precedence
+  macro precision        0.7891         0.9286
+  macro recall           0.8024         0.8738
+  UNSPLITTABLE_BATCH  0.000/0.000    1.000/0.500
+  MISSING_IN_BANK     0.700/0.933    1.000/0.933
+  MISSING_IN_LEDGER   0.824/0.933    1.000/0.933
+  ```
+
+  **The engine output is byte-identical across those two columns.** Every one of those numbers moved because the measurement changed, and the earlier ones were wrong. A multi-label view is now reported beside the matrix — a category counts if raised anywhere on the event — because the single-label reduction discards what the engine said on more than half its exception events, and hiding that was part of how the problem stayed invisible.
+
+  **What makes this the day's most uncomfortable finding.** Three separate scorer defects landed in one day, all in the module whose entire job is to be trustworthy, and all invisible until the engine produced output it had never produced before. The accuracy table published on Day 9 was not wrong about the engine, but it was wrong about the exception list, and nothing in the suite could have said so. `tools/score` needs the same treatment the engine got: an isolated audit, by someone who did not write it.
+

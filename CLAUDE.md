@@ -214,6 +214,8 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 
 ## 10. Current state
 
+**Classification figures were re-measured at the end of Day 10 (#50) and the earlier ones were WRONG — the scorer, not the engine. Picking an event's prediction by `schema.md` §8.2's precedence instead of by row order gives macro P 0.9286 / macro R 0.8738 (was 0.7891 / 0.8024) and `UNSPLITTABLE_BATCH` 1.000/0.500 (was 0.000/0.000), on byte-identical engine output.**
+
 **As of 2026-08-30 (Day 10): S10 is wired and the whole dependency chain #45 → #49 → #46 is closed. Re-scored: precision 1.0000, FP 0, recall 0.6089, review-queue precision 1.0000, unresolvable recall 1.0, zero build blockers. Match rate 66.48% against a 93% ceiling — DOWN 1.37 points from Day 9, and that is CORRECT: split legs are `pending_review` (ADR-038) and §10 rule 4 makes a group holding a proposal a proposal. Found-at-all rose 81.4% → 86.5%.**
 
 > **Report both figures or neither.** Two days running, the honest headline has moved opposite to the honest improvement. `matchRatePct` counts what the engine will confirm on its own; found-at-all counts what it located. ARCHITECTURE §8.1 has the framing.

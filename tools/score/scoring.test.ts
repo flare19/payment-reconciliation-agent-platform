@@ -263,6 +263,96 @@ describe('the S8 regression cells (§5.2)', () => {
   });
 });
 
+describe('the event-category choice (#50)', () => {
+  // An event can raise several true categories. §5.2 names one, so one must be
+  // chosen, and WHICH one is chosen must be a stated rule that does not consult
+  // the answer key. These assert the rule is §8.2's precedence and that it
+  // cannot be gamed.
+  const batchEvent: AnswerKey = {
+    ...KEY,
+    events: KEY.events.map((e) => (e.eventId === 'e3'
+      ? { ...e, expectedCategory: 'UNSPLITTABLE_BATCH' } : e)),
+  };
+  const exc = (id: string, category: string, tx: string, row: number, src: string) => ({
+    exceptionId: id, category, secondaryFlags: [],
+    primaryRecord: { transactionId: tx, sourceSystem: src, sourceRowNumber: row },
+    evidence: {},
+  });
+
+  test('a higher-precedence category wins over a lower one on another row (§8.2)', () => {
+    // The exact case §8.2 legislates: "Unsplittable batch before presence… its
+    // member payments would each otherwise be reported as MISSING_IN_BANK,
+    // turning one honest exception into five misleading ones."
+    const r = scoreClassification(batchEvent, snapshot([], [
+      exc('x1', 'MISSING_IN_BANK', 't-g3', 3, 'gateway'),
+      exc('x2', 'UNSPLITTABLE_BATCH', 't-b3', 3, 'bank'),
+    ]));
+    assert.equal(r.confusionMatrix['UNSPLITTABLE_BATCH']?.['UNSPLITTABLE_BATCH'], 1,
+      'the batch verdict must be the scored prediction, not the gateway presence one');
+    assert.equal(r.multiCategoryEvents, 1);
+  });
+
+  test('the result does not depend on the order the rows are listed in', () => {
+    // The property the old row-order rule only accidentally had.
+    const reversed: AnswerKey = {
+      ...batchEvent,
+      events: batchEvent.events.map((e) => (e.eventId === 'e3'
+        ? { ...e, projections: [...e.projections].reverse() } : e)),
+    };
+    const a = scoreClassification(batchEvent, snapshot([], [
+      exc('x1', 'MISSING_IN_BANK', 't-g3', 3, 'gateway'),
+      exc('x2', 'UNSPLITTABLE_BATCH', 't-b3', 3, 'bank'),
+    ]));
+    const b = scoreClassification(reversed, snapshot([], [
+      exc('x1', 'MISSING_IN_BANK', 't-g3', 3, 'gateway'),
+      exc('x2', 'UNSPLITTABLE_BATCH', 't-b3', 3, 'bank'),
+    ]));
+    assert.deepEqual(a.confusionMatrix, b.confusionMatrix);
+  });
+
+  test('the choice never consults the expected category', () => {
+    // If it did, an engine that raised the right thing on ANY row would always
+    // score a hit — unfalsifiable, and the flattering direction. Here the
+    // engine's highest-precedence verdict is WRONG for the event and must be
+    // scored as wrong even though a correct category sits on another row.
+    const r = scoreClassification(batchEvent, snapshot([], [
+      exc('x1', 'AMBIGUOUS_MATCH', 't-g3', 3, 'gateway'),
+      exc('x2', 'UNSPLITTABLE_BATCH', 't-b3', 3, 'bank'),
+    ]));
+    assert.equal(r.confusionMatrix['UNSPLITTABLE_BATCH']?.['AMBIGUOUS_MATCH'], 1,
+      'AMBIGUOUS_MATCH outranks UNSPLITTABLE_BATCH in §8.2, so it is the prediction');
+    assert.equal(r.confusionMatrix['UNSPLITTABLE_BATCH']?.['UNSPLITTABLE_BATCH'], undefined);
+  });
+
+  test('multi-label catches the engine that raises everything everywhere', () => {
+    // §5.2's stated purpose: "an engine that correctly declines to match but
+    // files everything as MISSING_IN_BANK has a perfect match rate and a useless
+    // exception list." Any-category recall alone would score that 1.0, so
+    // per-category precision has to collapse — and it does.
+    const all = ['DUPLICATE_RECORD', 'AMBIGUOUS_MATCH', 'UNSPLITTABLE_BATCH', 'AMOUNT_MISMATCH'];
+    const r = scoreClassification(batchEvent, snapshot([], [
+      ...all.map((c, i) => exc(`a${i}`, c, 't-b3', 3, 'bank')),
+    ]));
+    // Only one exception per row survives `raisedByRow`, so build the degenerate
+    // case across the event's three rows instead.
+    const spread = scoreClassification(batchEvent, snapshot([], [
+      exc('a', 'AMBIGUOUS_MATCH', 't-g3', 3, 'gateway'),
+      exc('b', 'UNSPLITTABLE_BATCH', 't-b3', 3, 'bank'),
+      exc('c', 'AMOUNT_MISMATCH', 't-l3', 3, 'ledger'),
+    ]));
+    // 0.5, not 1: the key holds two exception events (e2 and e3) and only e3 is
+    // given any exception here. The point is that e3 IS credited even though its
+    // primary prediction was wrong.
+    assert.equal(spread.multiLabel.anyCategoryRecall, 0.5,
+      'e3 said the right thing somewhere; e2 said nothing at all');
+    assert.equal(spread.multiLabel.perCategory['UNSPLITTABLE_BATCH']!.recall, 1,
+      'the multi-label view credits the batch verdict the primary matrix discards');
+    assert.ok(spread.multiLabel.perCategory['AMBIGUOUS_MATCH']!.precision < 1,
+      'and saying three things about one event costs precision');
+    void r;
+  });
+});
+
 describe('scoreClassification', () => {
   test('an exception event the engine raised nothing for is NONE, not a wrong category', () => {
     const r = scoreClassification(KEY, snapshot([]));
