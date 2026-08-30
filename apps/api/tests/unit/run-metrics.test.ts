@@ -167,9 +167,9 @@ describe('computeRunMetrics against the holdout', () => {
   const m = computeRunMetrics(input);
 
   test('the headline is ADR-040 exactly, with every denominator term recorded', () => {
-    assert.equal(m.matchRate.matchedRecords, 593);
+    assert.equal(m.matchRate.matchedRecords, 582);
     assert.equal(m.matchRate.reconcilableRecords, 874);
-    assert.equal(m.matchRate.matchRatePct, 67.85);
+    assert.equal(m.matchRate.matchRatePct, 66.59);
     // The terms have to be inspectable or the percentage is not a measurement.
     assert.equal(m.population.ingested, 920);
     assert.equal(
@@ -182,16 +182,16 @@ describe('computeRunMetrics against the holdout', () => {
 
   test('tierAttribution counts PAIRS, and they reconcile with the groups (ADR-072)', () => {
     // The quantity ADR-072 requires, and the reason it is not `matches.tier`:
-    // Tier 1 produced 203 pairs, but only 46 GROUPS are labelled `exact`
-    // because 157 of them also hold a fuzzy leg (§10 rule 5). A per-tier table
-    // built from group tiers would understate Tier 1 by 157.
+    // Tier 1 produced 203 pairs, but only 37 GROUPS are labelled `exact`
+    // because 166 of them also hold a fuzzy leg (§10 rule 5). A per-tier table
+    // built from group tiers would understate Tier 1 by 166.
     assert.equal(m.tierAttribution['exact'], 203);
-    assert.equal(m.tierAttribution['fuzzy'], 268);
+    assert.equal(m.tierAttribution['fuzzy'], 279);
     assert.equal(m.tierAttribution['alias'], 0);
-    assert.equal(m.tierAttribution['implied'], 187);
+    assert.equal(m.tierAttribution['implied'], 198);
     assert.equal(m.tierAttribution['unattributed'], 0,
       'a pair inside a group that no tier claims is a bug, not a rounding error');
-    assert.equal(assembled.matches.filter((x) => x.tier === 'exact').length, 46,
+    assert.equal(assembled.matches.filter((x) => x.tier === 'exact').length, 37,
       'the group-tier figure this metric deliberately is NOT');
 
     // Independent derivation: every internal pair of every group, counted from
@@ -201,7 +201,7 @@ describe('computeRunMetrics against the holdout', () => {
     const attributed = ['exact', 'alias', 'fuzzy', 'batch', 'manual', 'implied']
       .reduce((sum, k) => sum + (m.tierAttribution[k] ?? 0), 0);
     assert.equal(attributed, fromShapes);
-    assert.equal(attributed, 658);
+    assert.equal(attributed, 680);
   });
 
   test('identityEstablished counts what S8 CONTRIBUTED, not what it re-derived', () => {
@@ -251,9 +251,9 @@ describe('computeRunMetrics against the holdout', () => {
   });
 
   test('review burden is reported next to the rate, and is excluded from it', () => {
-    assert.equal(m.reviewBurden.pendingReviewCount, 58);
-    assert.equal(m.reviewBurden.pendingReviewRecords, 162);
-    assert.equal(m.matchRate.pendingReviewExcluded, 162);
+    assert.equal(m.reviewBurden.pendingReviewCount, 65);
+    assert.equal(m.reviewBurden.pendingReviewRecords, 184);
+    assert.equal(m.matchRate.pendingReviewExcluded, 184);
     // Not folded in: the two populations must not overlap.
     const matched = matchedRecordIds(assembled.matches);
     const pending = new Set(assembled.matches
@@ -269,7 +269,7 @@ describe('computeRunMetrics against the holdout', () => {
     const sevSum = Object.values(m.exceptions.bySeverity).reduce((a, b) => a + b, 0);
     assert.equal(catSum, m.exceptions.total);
     assert.equal(sevSum, m.exceptions.total);
-    assert.equal(m.exceptions.total, 256);
+    assert.equal(m.exceptions.total, 234);
   });
 
   test('no ground-truth-derived figure appears anywhere (ADR-041)', () => {

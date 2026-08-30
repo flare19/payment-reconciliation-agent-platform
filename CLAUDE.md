@@ -216,6 +216,10 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 
 **Classification figures were re-measured at the end of Day 10 (#50) and the earlier ones were WRONG — the scorer, not the engine. Picking an event's prediction by `schema.md` §8.2's precedence instead of by row order gives macro P 0.9286 / macro R 0.8738 (was 0.7891 / 0.8024) and `UNSPLITTABLE_BATCH` 1.000/0.500 (was 0.000/0.000), on byte-identical engine output.**
 
+**As of 2026-08-31 (Day 11): #38 is fixed — `anchorAgreement` now compares anchor keys ACROSS types, so a bank `bank_ref_no` byte-identical to a gateway `rrn` earns `strong_weak` instead of a literal zero. Re-scored: precision 1.0000, FP 0, review-queue precision 1.0000 over 206 judged, unresolvable recall 1.0, classification macro 0.9286 / 0.8738 unchanged in every cell, zero build blockers. Eleven never-found pairs recovered, 22 pairs found in total once groups close. Found-at-all 86.5% → 89.5%. Match rate 66.48% → 65.22%, and that is CORRECT for the third day running: seven of the eleven land in the review band and §10 rule 4 makes a group holding a proposal a proposal.**
+
+> **The last open P1 that costs recall is closed.** #43 remains open and must land before the frontend reads `countsTowardEngineMatchRate`. `tools/score` has still never had an adversarial pass — four defects in one day on Day 10, all in the module whose job is to be trustworthy.
+
 **As of 2026-08-30 (Day 10): S10 is wired and the whole dependency chain #45 → #49 → #46 is closed. Re-scored: precision 1.0000, FP 0, recall 0.6089, review-queue precision 1.0000, unresolvable recall 1.0, zero build blockers. Match rate 66.48% against a 93% ceiling — DOWN 1.37 points from Day 9, and that is CORRECT: split legs are `pending_review` (ADR-038) and §10 rule 4 makes a group holding a proposal a proposal. Found-at-all rose 81.4% → 86.5%.**
 
 > **Report both figures or neither.** Two days running, the honest headline has moved opposite to the honest improvement. `matchRatePct` counts what the engine will confirm on its own; found-at-all counts what it located. ARCHITECTURE §8.1 has the framing.
@@ -547,7 +551,7 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 | ~~#45~~ ✅ | Rule 3's cardinality exception, plus the cluster-merge pair loss it made reachable | ADR-077 | Day 10 |
 | ~~#49~~ ✅ | S10's pool is now role-scoped | ADR-077 | Day 10 |
 | ~~#46~~ ✅ | S10 wired and producing | pair recall **658 → 694**, `UNSPLITTABLE_BATCH` **0.000 → 1.000/0.500**, 7 `one_to_many` groups | Day 10 |
-| **[#38](https://github.com/flare19/payment-reconciliation-agent-platform/issues/38)** | `anchorAgreement` compares weak keys like-for-like | 17 pairs — and **11 of them are in the never-found set**, the entire actionable remainder once #46 is wired | **Day 11** |
+| ~~#38~~ ✅ | `anchorAgreement` compares anchor keys ACROSS types | **11 never-found pairs recovered, 22 pairs found once groups close.** Found-at-all 86.5% → 89.5%; match rate 66.48% → 65.22% (§10 rule 4). FP still 0 | Day 11 |
 | **[#43](https://github.com/flare19/payment-reconciliation-agent-platform/issues/43)** | `countsTowardEngineMatchRate` admits `pending_review` | Browse list implies 86.4% where the headline says 67.85% | **before the frontend reads it** |
 
 > **[#47](https://github.com/flare19/payment-reconciliation-agent-platform/issues/47) IS CLOSED AS NOT-A-DEFECT — do not re-open it from the arithmetic alone (ADR-075).**
@@ -565,6 +569,7 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 
 | # | Unit | Model | Why |
 |---|---|---|---|
+| **#38** ✅ | Cross-key anchor agreement in `scoring.ts` | **Opus / high** | **Done.** 11 never-found pairs recovered; 22 found once groups close; FP still 0; found-at-all 86.5% → 89.5%. `matching-engine.md` §7.1 now states that anchors are compared across key types. |
 | **U11** | Explain layer S13: signature, cache, LLM client, templates | **Sonnet / medium** | `schema.md` §10 is the most complete spec in the repo. Run must complete with the API unavailable (`explanation_source = 'template'`). Fills the last unwired stage, so `llmCost` and `stagesNotRun` stop being null. |
 
 ### Day 12 (Sep 1) — the Analyst
@@ -581,7 +586,7 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 |---|---|---|---|
 | **AUDIT-3** | Isolated audit of U11–U13 | **Opus / max** | Hallucination is a build blocker (ADR-053), not a metric |
 | **U16** | Scale benchmark 1k/10k/100k (ADR-045) | **Sonnet / medium** | Throughput is a judged axis and the curve is the evidence for ADR-033's O(n×k) claim. Generator is already parameterized. |
-| — | **#38** (P1, 17 pairs) and **#43** | **Sonnet / high** | #43 must land before the frontend reads `countsTowardEngineMatchRate` |
+| — | **#43** (#38 landed on Day 11) | **Sonnet / high** | #43 must land before the frontend reads `countsTowardEngineMatchRate` |
 | **U15** | Q&A loop | **Sonnet / medium** | Same loop, smaller budget, one tool removed. **First cut candidate if the day overruns.** |
 
 ### Day 14 (Sep 3) — frontend
@@ -606,7 +611,7 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 
 ### Open issues — status going into U8
 
-**P1, still open:** **#38** — `anchorAgreement` compares weak anchor keys like-for-like, so a bank `bank_ref_no` equal to a gateway `rrn` scores zero anchor. Re-measured after #40: the residual is **17 pairs**, 11 of them scoring a literal zero anchor (down from the "~24" it was filed at, because #40 recovered most of the same pairs by a different route). Comment on the issue carries the measurement.
+**~~#38~~ is CLOSED (Day 11).** `anchorAgreement` compares anchor keys across types; a structured strong anchor matching a structured weak one on the other side scores `strong_weak`. Recovered the 11 never-found pairs it was sized at. **No P1 that costs recall is open.**
 
 **Should land before the number is published:** **#43** (`countsTowardEngineMatchRate` admits `pending_review`, which ADR-040 excludes — the browse list implies 86.4% where the headline says 67.85%); **#41** (fee band inverted for bank→gateway; costs nothing today, scales with amount); **#32** and **#33** (both flagged for Day 9 since Day 6).
 
