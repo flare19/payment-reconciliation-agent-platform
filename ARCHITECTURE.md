@@ -245,7 +245,7 @@ The build is **13 working days**, Aug 23 → Sep 5. There is no Day for Aug 25 �
 | 8 | Aug 28 | Routes and run orchestration. **First end-to-end persisted run — done, Aug 28.** AUDIT-2 outstanding. |
 | 9 | **Aug 29** | AUDIT-2 and its P1 (#40). Metrics S14, scorer (`tools/score`), score-report endpoint. **First honest cold-run number — three calendar days early.** **Done.** |
 | 10 | Aug 30 | **Deploy the API to Railway** — an unknowns-flush, not a checkbox; redeployment stays manual and cheap, no CI/CD (ADR-061, ADR-074). Wire S10 (#46). |
-| 11 | Aug 31 | **#47 — the never-found P1.** Explain layer S13 + signature cache + templates. Re-score. |
+| 11 | Aug 31 | Explain layer S13 + signature cache + templates. Diagnose the 43 gateway-bearing misses. Re-score. |
 | 12 | Sep 1 | Agent tool registry and the investigation loop A1–A4. |
 | 13 | Sep 2 | **AUDIT-3.** Scale benchmark (ADR-045). The #38/#43 sweep. |
 | 14 | Sep 3 | Frontend: design direction + dashboard. |
@@ -285,13 +285,22 @@ engine match rate 67.85% against a computed ceiling of 93%
 
 **The 133, attributed:**
 
-| Cause | Pairs | Issue |
+| Cause | Pairs | Status |
 |---|---|---|
-| `viaTier: batch` — S10 built, tested, never called | **48** | [#46](https://github.com/flare19/payment-reconciliation-agent-platform/issues/46) P1 |
-| **bank↔ledger capped at 0.55 against a 0.65 bar** | **42** | [#47](https://github.com/flare19/payment-reconciliation-agent-platform/issues/47) P1 |
-| gateway-bearing, awaiting diagnosis (30 overlap #38) | 43 | tracked in #47 |
+| `viaTier: batch` — S10 built, tested, never called | **48** | [#46](https://github.com/flare19/payment-reconciliation-agent-platform/issues/46) P1 — **real, Day 10** |
+| bank↔ledger, genuinely anchorless | 42 | **correct refusal, not a defect** (ADR-075) |
+| gateway-bearing, awaiting diagnosis (30 overlap #38) | 43 | real; where the recall gap actually lives |
 
-**#47 is the one that cannot ship.** `schema.md` §4.3 gives bank and ledger no comparable amount basis, so `scorePair` contributes 0 for amount — but does not renormalise. The pair is scored on a 0.55-maximum scale and judged against a threshold calibrated for 1.00, so a bank↔ledger pair with a matching anchor, exact date and identical counterparty is refused. Measured: of **244** true bank↔ledger pairs the engine reaches 178, and **every one of those only as a three-way group's implied leg** — **zero** on their own merit.
+**The bank↔ledger 42 were filed as a P1 ([#47](https://github.com/flare19/payment-reconciliation-agent-platform/issues/47)) and that filing was wrong.** The arithmetic is real — §5.3.1 gives bank and ledger no comparable amount basis, so an anchorless pair caps at `date 0.20 + counterparty 0.15 = 0.35` against a `0.65` floor — but **ADR-064 decided this deliberately on Day 4**, with the same numbers, and set a revisit condition the first measurement does not meet:
+
+```
+every bank<->ledger pair scorePair accepts ....... 83,979
+  anchor 0.00 (none) ............................. 83,979   ← every single one
+pairs renormalisation would lift to >= review ....      0
+the 66 unreached pairs sharing ANY reference value:     0
+```
+
+No bank↔ledger anchor exists in this dataset, so the `0.55` and `0.65` caps are theoretical and renormalising recovers nothing. The 66 rows carry disjoint identifier namespaces (`bank_ref_no`/`utr` vs `entry_id`/`invoice_no`), which also rules out #38. **Two rows with no shared identifier, no comparable amount, and only a date and a merchant name are not a match anyone should assert — refusing them is the thesis, not a gap.** Of 244 true bank↔ledger pairs the engine reaches 178, every one through the gateway leg, which is the record that carries identity. See ADR-075; the residual finding is [#48](https://github.com/flare19/payment-reconciliation-agent-platform/issues/48).
 
 **What this does NOT justify: touching a threshold.** `fuzzyAutoConfirmThreshold` at 0.85 is the difference between the 442 and the 583, and lowering it would raise the headline overnight. **ADR-027 forbids exactly this** — the number above was measured on `HOLDOUT_SEED`, and tuning any parameter in response to it is tuning against the holdout, whatever the justification sounds like. The rule for every remaining engine change:
 

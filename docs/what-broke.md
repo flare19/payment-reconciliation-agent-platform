@@ -379,3 +379,32 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
   **The discipline this sits inside, written into ARCHITECTURE §8.1 and habit 0.** The measurement also showed that `fuzzyAutoConfirmThreshold` at 0.85 is the entire difference between the 442 auto-confirmed pairs and the 583 the engine actually found — lowering it would lift the headline overnight. **That change is forbidden and #47's is not**, and the distinction is the whole point: a scale that omits an inapplicable component and then compares against a full-scale bar is wrong on its own terms, arguable without any holdout number, and would be wrong if the holdout did not exist. A threshold change would be arguable only by pointing at the number. **If the argument for a change is "the holdout number goes up", the argument is the evidence against it.**
 
   **Also settled today: the deploy posture (ADR-074).** Deploy moves to Day 10 not to tick it off but to meet the environment's unknowns while there is still time to absorb them — nothing here has ever run outside a laptop. Four P1s are open on the day it deploys and all of them land afterwards, so the deployment is judged on how cheaply it REDEPLOYS rather than on being finished. No CI/CD: one person, one branch, two `npm test` commands and a review gate that already exists. The cost is stated rather than hidden — without CI, "the tests passed" is a claim about what somebody ran, not a property of the commit.
+
+- **2026-08-30 (Day 10)** — **I filed a P1 that was not one, and the check that caught it was reading the ADR log before writing code.**
+
+  Day 10 opened by implementing #47 — renormalise the Tier 2 score over applicable weights, because an anchorless `bank↔ledger` pair caps at 0.35 against a 0.65 review floor and therefore cannot be matched. The arithmetic is real. The issue was still wrong, on two counts, and both were knowable before a line was written.
+
+  **It was already decided, deliberately, on Day 4.** `schema.md` §5.4 documents the behaviour and cites **ADR-064**, which found the same thing during the Day 4 self-audit, computed the *exact* figure I re-derived (`strong_weak: (0.30+0.20+0.15)/0.65 = 0.846`), and declined to change it — because *"rewiring a scoring weight unattended, before the project has produced its first measured accuracy run"* is precisely what ARCHITECTURE §7 asks to be flagged rather than decided alone. It left a revisit condition: bank↔ledger exceptions where **an anchor-matched** counterpart exists but never reached review.
+
+  **The revisit condition is measurably not met, and the fix recovers zero pairs.**
+
+  ```
+  TRUE bank<->ledger pairs .................. 244   reached 178   never reached 66
+    of the 66, anchor component > 0 .........   0
+    of the 66, sharing ANY reference value ..   0
+  every bank<->ledger pair scorePair accepts: 83,979 — anchor 0.00 on ALL of them
+  pairs renormalisation would lift to review:   0
+  ```
+
+  No bank↔ledger anchor exists anywhere in this dataset, so the 0.55 and 0.65 caps the issue is named after are theoretical. Every real pair maxes at `date 0.20 + counterparty 0.15 = 0.35`, and renormalised at 0.538 — both below 0.65. The 66 rows carry **disjoint identifier namespaces**: bank has `bank_ref_no` + `utr`, ledger has `entry_id` + `invoice_no`. There is no anchor to find, which also rules out #38 as their cause.
+
+  **So the engine was right and the issue was wrong.** Two rows sharing no identifier, with no comparable amount and only a date and a merchant name, are not a match anyone should assert. Refusing them is this project's entire thesis, and I had written it up as a catastrophe.
+
+  **What made it wrong is worth naming precisely.** Every prior defect this month lived in a seam between artifacts that were individually correct, and I had started treating "two documents that jointly imply something impossible" as the signature of a real bug. Here the two documents **agreed**, an ADR explained why, and I never opened it — I derived the arithmetic myself, found it damning, and filed. **A striking sum is a reason to search the decision log, not a substitute for having searched it.** The cost of not searching would have been a scoring change made after seeing a measurement, recovering nothing, raising bank↔ledger ceilings across the board, and risking the strongest number the project has — precision 1.0000, FP 0 — in exchange for zero.
+
+  **Recorded so it cannot recur:** ADR-075 states the condition was evaluated and declined, with the measurement, because `0.55 < 0.65` is exactly the kind of sum that looks like an obvious bug on a fresh reading. That is how it got filed the first time.
+
+  **One genuine finding did fall out of it** — [#48](https://github.com/flare19/payment-reconciliation-agent-platform/issues/48). §5.4 promises that a pair with no shared reference *"can reach the review band and ask a human, and that is all it can ever do."* For bank↔ledger the second half is false under either arithmetic, so a human is never asked and the record serialises as `needs_external_data` — *"the counterpart may exist outside these three files"* — about a counterpart sitting in the ledger file. A spec that lies about one of three source pairs, and a confidently wrong sentence in front of a reviewer.
+
+  **Corrected attribution of the 133 never-found pairs:** 48 are S10 unwired (#46, real, Day 10); **42 are the engine correctly refusing anchorless bank↔ledger pairs**; 43 are gateway-bearing and still unexplained, which is where the recall gap actually lives.
+

@@ -50,7 +50,7 @@ Rationale for each is in [docs/adr-log.md](docs/adr-log.md). Don't re-litigate t
 | [docs/agent-design.md](docs/agent-design.md) | **The Analyst (Phase A).** The agentic layer downstream of S14: tool registry, investigation loop, grounding gate, self-correction, how the agent is measured. Read it before touching anything agent-related. |
 | [docs/api-contract.md](docs/api-contract.md) | Every endpoint. Frontend and backend are built on different days — **this contract is binding.** |
 | [docs/ui-spec.md](docs/ui-spec.md) | Screens, states, the demo path, and the pre-agreed degradation order if Day 12 overruns. |
-| [docs/adr-log.md](docs/adr-log.md) | Every locked decision with reasoning. Append-only. 74 entries. |
+| [docs/adr-log.md](docs/adr-log.md) | Every locked decision with reasoning. Append-only. 75 entries. |
 | [docs/validation-strategy.md](docs/validation-strategy.md) | Ground-truth generation, precision/recall scoring, the scale benchmark, the honesty protocols. |
 | [docs/testing-strategy.md](docs/testing-strategy.md) | What gets tested and what deliberately doesn't. |
 | [docs/deployment.md](docs/deployment.md) | Hosting, env vars, secrets, deploy steps. |
@@ -538,18 +538,25 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 
 | # | What | Cost, measured | When |
 |---|---|---|---|
-| **[#47](https://github.com/flare19/payment-reconciliation-agent-platform/issues/47)** | **bank↔ledger cannot reach the review threshold.** Dropping the inapplicable amount weight without renormalising caps the pair at **0.55** against a **0.65** bar — arithmetically unreachable with perfect evidence. | 42 pairs directly; caps independent reachability of all **244** true bank↔ledger pairs. 0 are reached on their own merit today. | **Day 11** — cannot ship |
 | **[#46](https://github.com/flare19/payment-reconciliation-agent-platform/issues/46)** | S10 built, tested, never called | 48 pairs · 6.7 recall points · an exception category at 0.000/0.000 | **Day 10** |
 | **[#38](https://github.com/flare19/payment-reconciliation-agent-platform/issues/38)** | `anchorAgreement` compares weak keys like-for-like | 17 pairs, 11 scoring a literal zero anchor. Overlaps #47's residual 30. | Day 13 |
 | **[#43](https://github.com/flare19/payment-reconciliation-agent-platform/issues/43)** | `countsTowardEngineMatchRate` admits `pending_review` | Browse list implies 86.4% where the headline says 67.85% | **before the frontend reads it** |
 
-**#47 is the one that must not ship.** An engine that structurally cannot reconcile two of its three sources against each other is a defect a judge can find by reading the accuracy table, and its failure mode is silent — the pairs arrive as `MISSING_IN_*` exceptions carrying a confident explanation.
+> **[#47](https://github.com/flare19/payment-reconciliation-agent-platform/issues/47) IS CLOSED AS NOT-A-DEFECT — do not re-open it from the arithmetic alone (ADR-075).**
+> It was filed as the P1 that "cannot ship", and it was wrong. The sum is real — an anchorless
+> bank↔ledger pair caps at `0.35` against a `0.65` floor — but ADR-064 decided this **deliberately on
+> Day 4**, with the same arithmetic, and set a revisit condition that the first measurement does not
+> meet: **all 83,979 scorable bank↔ledger pairs on the holdout score `anchor 0.00`**, so the caps are
+> theoretical and **renormalising recovers 0 pairs**. The 66 unreached pairs share no reference value
+> across any key — bank has `bank_ref_no`/`utr`, ledger has `entry_id`/`invoice_no` — so #38 is not
+> their cause either. Refusing them is the honesty property working. What DID come out of it is
+> [#48](https://github.com/flare19/payment-reconciliation-agent-platform/issues/48): §5.4 promises such
+> a pair "can reach the review band and ask a human", and for bank↔ledger that is false.
 
 ### Day 11 (Aug 31) — explain layer
 
 | # | Unit | Model | Why |
 |---|---|---|---|
-| **R2** | **[#47](https://github.com/flare19/payment-reconciliation-agent-platform/issues/47), P1** — renormalise the score over APPLICABLE weights | **Opus / high** | The never-found bug. Structural, not a threshold change: a score that omits a component because it is *inapplicable to this source pair*, then compares against a bar calibrated for the full set, is comparing two scales. **No threshold and no weight moves** — ADR-027 holds, and the fix is arguable without citing any holdout number. |
 | **U11** | Explain layer S13: signature, cache, LLM client, templates | **Sonnet / medium** | `schema.md` §10 is the most complete spec in the repo. Run must complete with the API unavailable (`explanation_source = 'template'`). Fills the last unwired stage, so `llmCost` and `stagesNotRun` stop being null. |
 
 ### Day 12 (Sep 1) — the Analyst

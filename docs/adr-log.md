@@ -536,3 +536,31 @@ The second is **treating deploy as a checkpoint that closes.** A deployment that
 The honesty cost is stated rather than hidden: **without CI, "the tests passed" is a claim about what somebody ran, not a property of the commit.** The mitigations are that both suites are one command each, daily habit 0 already requires a re-score before a day ends, and the pre-merge grep and audit passes are manual rituals that have caught more than a pipeline would have.
 **Rejected:** deploying on the last day (the original Day 11 slot — it makes every environment surprise a submission risk, and there is no reason to wait now that the local run is green); deploying only once and freezing the engine (four P1s are open, three of them measured — freezing would ship a known-wrong result to protect a deployment, which is exactly backwards); building GitHub Actions CI (hours spent on a mechanism for a team of one, and it competes for the same days as the frontend); auto-deploy on push to `main` (the working agreement is that Tejas reviews and merges, so a push-triggered deploy would put unreviewed work in front of a panelist).
 **Revisit if:** a second person joins the build, or the deploy stops being a single action — either would change the arithmetic that makes manual redeployment correct.
+
+### ADR-075 · ADR-064's revisit condition was evaluated against the first measurement and is NOT met; bank↔ledger renormalisation stays rejected
+**Decision:** The Tier 2 score is **not** renormalised over applicable weights. ADR-064's decision stands unchanged, now on measured evidence rather than on conservatism. Issue #47, which proposed the renormalisation as a P1, is closed as not-a-defect. This ADR exists so that the arithmetic — which is genuinely eye-catching and will be rediscovered — is recorded as **evaluated and declined**, not as pending.
+**Because:** ADR-064 deferred the question with a precise revisit condition: *"the holdout run shows bank↔ledger `MISSING_IN_*` exceptions where a genuine **anchor-matched** ledger counterpart exists but never reached the review band."* The first scored run (Day 9) supplies the evidence, and it says no.
+
+```
+TRUE bank<->ledger pairs (scorable) ............... 244
+  reached by the engine ........................... 178   (every one as a 3-way group's implied leg)
+  never reached at all ............................  66
+    of those, anchor component > 0 ................   0
+  pairs sharing ANY reference value across ANY key:   0 of 66
+
+every bank<->ledger pair scorePair accepts ....... 83,979
+  anchor 0.00 (none) ............................. 83,979
+  anchor 0.20 / 0.24 / 0.30 ......................      0
+
+pairs renormalisation would lift to >= review floor:  0
+```
+
+**Zero anchor-matched bank↔ledger pairs failed to reach the review band, because zero anchor-matched bank↔ledger pairs exist.** The `0.55` weak↔weak cap and the `0.65` strong↔weak knife-edge that ADR-064 and §5.4 both describe are *theoretical on this dataset*: no bank↔ledger anchor occurs at all, so every real pair is capped at `date 0.20 + counterparty 0.15 = 0.35`, and renormalising lifts that to `0.538` — still below the `0.65` floor. The change recovers **nothing**.
+
+The 66 unreached pairs carry **disjoint identifier namespaces** — bank has `bank_ref_no` + `utr`, ledger has `entry_id` + `invoice_no` — with no value in common across any key. That also rules out #38 as their cause: #38 is about comparing weak keys like-for-like, and these pairs share no *value* to compare.
+
+So the engine's behaviour is correct, and refusing these pairs is the honesty property working rather than a gap: two rows with no shared identifier, **no comparable amount** (§5.3.1), and only a date and a merchant name are not something any engine should assert a match on. The 178 that are reached come through the gateway leg, which is the record that actually carries identity.
+
+Making the change anyway would have raised bank↔ledger ceilings across the board, for zero measured gain, against a deliberate ADR whose condition was unmet — putting the strongest figure the project has (**precision 1.0000, false positives 0**) at risk in exchange for nothing.
+**Rejected:** renormalising on principle because the scale is "incoherent" (it is arguably incoherent, and it is also inert — a scale correction that cannot change any decision on any pair in the dataset is a refactor wearing a P1's clothing, and it would be made *after* seeing a measurement, which is the posture ADR-027 exists to prevent); leaving #47 open as a known-unfixed P1 (a P1 marked "cannot ship" that has been proven harmless distorts every plan that reads the issue list); silently closing #47 without recording the arithmetic (guarantees rediscovery — the `0.55 < 0.65` sum is exactly the kind of thing that looks like an obvious bug on a fresh reading, which is how it got filed in the first place).
+**Revisit if:** a dataset produces a bank↔ledger pair with a **shared anchor** that fails to reach the review band. That remains ADR-064's condition and it remains the right trigger. Note it is a property of the DATA, not of the code — a generator change that gives bank rows a ledger-comparable identifier would make it live immediately.
