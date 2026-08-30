@@ -80,6 +80,8 @@ export interface Env {
    * one is counted and enforced whether or not the key is billed.
    */
   agentMaxLlmRequestsPerRun: number;
+  /** Review-queue corroborations per run (ADR-081). Shares the request budget above. */
+  agentMaxQueueTriagesPerRun: number;
   agentQaEnabled: boolean;
   agentQaMaxQuestionsPerRun: number;
   agentQaMaxQuestionsPerHour: number;
@@ -117,6 +119,7 @@ export function loadEnv(): Env {
     agentMaxInvestigationsPerRun: int('AGENT_MAX_INVESTIGATIONS_PER_RUN', 20),
     agentMaxCostUsdPerRun: num('AGENT_MAX_COST_USD_PER_RUN', 1.0),
     agentMaxLlmRequestsPerRun: int('AGENT_MAX_LLM_REQUESTS_PER_RUN', 220),
+    agentMaxQueueTriagesPerRun: int('AGENT_MAX_QUEUE_TRIAGES_PER_RUN', 15),
     agentQaEnabled: bool('AGENT_QA_ENABLED', true),
     agentQaMaxQuestionsPerRun: int('AGENT_QA_MAX_QUESTIONS_PER_RUN', 50),
     agentQaMaxQuestionsPerHour: int('AGENT_QA_MAX_QUESTIONS_PER_HOUR', 100),

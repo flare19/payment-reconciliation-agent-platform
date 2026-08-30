@@ -69,8 +69,10 @@ This is also what makes the agent honest about the thing it is most tempted to l
 Engine stages are numbered `S`. Analyst stages are numbered `A`. The separation is deliberate and visual: nothing in `A` may appear in `S`.
 
 ```
-A1  TRIAGE      deterministic selection + ordering of exceptions to investigate
+A1  TRIAGE      deterministic selection + ordering of TWO work lists:
+              exceptions to investigate, and pending matches to corroborate
 A2  INVESTIGATE the agent loop — plan → tool call → observe → continue → verdict
+              two modes: INVESTIGATE (exceptions) and CORROBORATE (review queue)
 A3  VALIDATE    deterministic grounding gate: schema, citations, constraints
 A4  PROPOSE     persist verdicts; surface proposals into the human review queue
 ```
@@ -84,6 +86,44 @@ The Analyst does not investigate everything; investigation costs tokens and time
 - Capped at `AGENT_MAX_INVESTIGATIONS_PER_RUN` (default **20**).
 
 **The Analyst is never told which exceptions are designed-unresolvable.** It investigates them like any other, and is expected to conclude `CONFIRMED_UNRESOLVABLE`. That is the honesty test in §7.
+
+#### A1b — the review queue is a second work list (ADR-081)
+
+The exception list is not the only pile a human has to work. A run also leaves a **review queue** — matches the engine found, scored into the `0.65–0.849` band, and declined to auto-confirm (ADR-040). On the holdout that is **71 groups covering 214 records: 24.5 percentage points of the reconcilable population, sitting one human click away from confirmed.** The exception list is the graded feature; the review queue is the larger pile, and until this ADR nothing in Phase A looked at it.
+
+Selection is deterministic, on the same pattern:
+
+- Eligible: matches with `status = 'pending_review'`, any tier.
+- Ordered by `confidence ASC, amount_at_risk_paise DESC, (source_system, source_row_number) ASC` — **ascending** confidence, because the least certain proposal is where a reviewer most needs the work done for them. The exception list orders by severity; this one orders by doubt.
+- Capped at `AGENT_MAX_QUEUE_TRIAGES_PER_RUN` (default **15**), and both caps draw on the same `AGENT_MAX_LLM_REQUESTS_PER_RUN` budget (§8).
+- **Exceptions run first.** If the request budget binds, queue corroboration is what gets cut — the exception list is what the track grades, and this is the pre-agreed degradation rather than a decision made under pressure on the day.
+
+---
+
+### A2 CORROBORATE — the review-queue mode, and the line it must not cross
+
+**The Analyst does not recommend confirming or rejecting a match. It never says "confirm this".** That would be a language model influencing match/no-match, which is the exact thing ADR-017 forbids and the reason a measured accuracy number means anything here.
+
+What it does instead is the work a reviewer would otherwise do by hand before clicking: **assemble the case.** For one pending match it can ask whether there is evidence the *scorer does not use* —
+
+- a shared reference in `raw_payload` that normalization dropped, via `get_transaction`;
+- a competing candidate that scores as well, via `search_transactions` + `score_pair` — the engine's own ambiguity question, asked again with the agent choosing where to look;
+- what the engine itself recorded about the decision, via `get_audit_trail`;
+- whether a human has already resolved this exact discrepancy shape, via `find_similar_exceptions`.
+
+The verdict is a statement about **evidence**, never about the decision:
+
+| Verdict | Meaning |
+|---|---|
+| `CORROBORATED` | Independent supporting evidence beyond the score, cited. |
+| `CONTRADICTED` | Evidence *against* — a competing candidate scoring as well, or a contradicting reference in the raw payload. |
+| `NO_NEW_EVIDENCE` | The engine's score is all there is. The human decides on that alone, and now knows that is all there is. |
+
+`NO_NEW_EVIDENCE` earns its place for the same reason `NEEDS_EXTERNAL_DATA` does: without it, an agent asked 15 times whether there is more evidence will start finding some.
+
+**The human still clicks.** Confirmation goes through `PATCH /api/matches/:id` exactly as it does today; there is no new endpoint and no auto-apply. Bounded at **6 steps and 8 tool calls** — half an investigation — and `rerun_subset_search` is excluded, as it is for the Q&A loop.
+
+**Why this is worth doing at all, stated as the trade it is:** a corroborated proposal is a click a reviewer can make in seconds instead of minutes, and 214 records is the largest single block of value in the run. A confirmed pending match becomes `human_confirmed`, which **does** count toward the engine match rate — unlike a `manual` match created from an Analyst proposal, which ADR-043 excludes. **So this is the one Analyst surface that can move the headline, and it moves it only by making a human faster, never by deciding anything.** That distinction is the whole design.
 
 ### A2 — Investigate (agentic)
 
@@ -234,6 +274,8 @@ The Analyst *is* the next day's work, and the false-despair set is exactly its a
 | **Proposal precision** | Of all `RESOLUTION_PROPOSED` verdicts, how many does the key confirm? | Reported as a raw fraction, never rounded away. |
 | **Hallucinated resolutions** | Proposals on events the key marks `UNRESOLVABLE`. | **Must be 0. Build blocker, not a metric.** |
 | **Unresolvable agreement** | Of designed-`UNRESOLVABLE` exceptions investigated, how many got `CONFIRMED_UNRESOLVABLE`? | High is good; low means the agent is guessing under pressure. |
+| **Queue corroboration precision** | Of pending pairs marked `CORROBORATED`, how many does the key confirm? | Reported as a raw fraction (ADR-081). |
+| **False alarms on the queue** | `CONTRADICTED` verdicts on pairs the key confirms. | The queue's engine-side precision is currently **1.0000 over 213 judged pairs**, so every `CONTRADICTED` is measurably a false alarm. A rising count means the agent is manufacturing doubt to look useful. |
 
 **Why the hallucination bar is a build blocker.** The dataset contains ~21 events that are impossible to resolve for any correct engine *and any competent human* — verified by assertion during generation, not merely labelled (validation-strategy §4). An agent that proposes a resolution for one of them has invented evidence. That is strictly worse than the engine's silence, because it arrives wrapped in a confident reasoning chain. It is the single most damning failure available to this layer and it is treated exactly as the engine's equivalent is: as something that stops the build, not something that gets a percentage next to it.
 
@@ -277,6 +319,8 @@ An unbounded agent loop against a paid API on a public demo URL is a financial a
 **These bounds do not rest on any provider's prompt caching** (ADR-080 consequence 4). They are step, tool-call, wall-clock and request ceilings — enforced between turns by the loop itself — so they hold identically whether or not a static prefix is discounted. The prefix is still static and still small; it is simply not load-bearing.
 
 | **LLM requests per run (Phase A)** | `AGENT_MAX_LLM_REQUESTS_PER_RUN`, default 220 | phase stops, partial results retained |
+| Review-queue triages per run | `AGENT_MAX_QUEUE_TRIAGES_PER_RUN`, default 15 | remaining pending matches simply aren't corroborated; counted and reported |
+| Steps / tool calls per corroboration | 6 / 8 | `NO_NEW_EVIDENCE`, `budgetExhausted: true` |
 
 **On a free-tier key this last bound is the one that binds, and the cost ceiling is not** (ADR-080 consequence 2). `AGENT_MAX_COST_USD_PER_RUN` protects a credit card; a free tier has no bill to cap and its scarce resource is requests per day. A run that satisfies a $1.00 ceiling can still exhaust the day's quota and leave the demo dead — which, on submission day, is the failure that actually matters. Requests are counted and capped whether or not the key is billed.
 

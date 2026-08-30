@@ -34,7 +34,7 @@ const env = {
   geminiApiKey: null, explainModel: 'gemini-3.5-flash', agentModel: 'gemini-3.7-flash',
   llmExplainEnabled: false, llmMaxCallsPerRun: 8,
   agentEnabled: false, agentMaxInvestigationsPerRun: 5, agentMaxCostUsdPerRun: 1,
-  agentMaxLlmRequestsPerRun: 220,
+  agentMaxLlmRequestsPerRun: 220, agentMaxQueueTriagesPerRun: 15,
   agentQaEnabled: false, agentQaMaxQuestionsPerRun: 10,
 } as unknown as Env;
 
