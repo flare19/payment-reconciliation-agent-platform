@@ -125,7 +125,7 @@ describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL
     assert.deepEqual(r.json['progress'], { stage: 'completed', pct: 100 });
     assert.equal(r.json['referenceDate'], '2026-08-21');
     const c = r.json['recordCounts'] as Record<string, number>;
-    assert.equal(c['reconcilable'], c['gateway'] + c['bank'] + c['ledger']
+    assert.equal(c['reconcilable'], c['gateway']! + c['bank']! + c['ledger']!
       - c['excluded']! - c['rejectedRows']! - c['nonPrimaryDuplicates']!);
     assert.match((r.json['inputFileHashes'] as Record<string, string>)['gateway']!, /^sha256:[0-9a-f]{64}$/);
     // S14 fills the headline. `falsePositiveMatches` stays null because it is a

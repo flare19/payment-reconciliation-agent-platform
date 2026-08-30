@@ -76,7 +76,8 @@ describe('repositories (integration)', { skip: DB_URL === null ? 'no TEST_DATABA
   test('runs: create, read, ingest bookkeeping, metrics, finish', async () => {
     await runs.recordIngestion(runId, {
       referenceDate: '2026-08-21',
-      recordCounts: { gateway: 1, bank: 1, ledger: 1, excluded: 1, rejected: 0 },
+      recordCounts: { gateway: 1, bank: 1, ledger: 1, excluded: 1, rejected: 0,
+                      nonPrimaryDuplicates: 0, reconcilable: 2 },
       rejectedRows: [{ sourceSystem: 'bank', rowNumber: 7, rawLine: 'bad', error: 'boom' }],
       inputFileHashes: { gateway: 'a'.repeat(64) },
     });
