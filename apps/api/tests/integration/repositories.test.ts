@@ -389,13 +389,13 @@ describe('repositories (integration)', { skip: DB_URL === null ? 'no TEST_DATABA
   test('explanations: put, hit-counting get, peek and stats', async () => {
     const sig = 'c'.repeat(64);
     await explanations.putExplanation({
-      signatureHash: sig, promptVersion: 'p1', model: 'claude-sonnet-5',
+      signatureHash: sig, promptVersion: 'p1', model: 'gemini-3.5-flash',
       category: 'MISSING_IN_BANK', signatureInput: { shape: 'lag' },
       explanationText: 'text', suggestedAction: 'action', tokensIn: 100, tokensOut: 50,
     });
     // ON CONFLICT DO NOTHING: two concurrent misses must not race to overwrite.
     await explanations.putExplanation({
-      signatureHash: sig, promptVersion: 'p1', model: 'claude-sonnet-5',
+      signatureHash: sig, promptVersion: 'p1', model: 'gemini-3.5-flash',
       category: 'MISSING_IN_BANK', signatureInput: { shape: 'other' },
       explanationText: 'SECOND', suggestedAction: 'x',
     });
@@ -441,7 +441,7 @@ describe('repositories (integration)', { skip: DB_URL === null ? 'no TEST_DATABA
 
   test('investigations: start, conclude, dispose, and the metrics roll-up', async () => {
     const open = await investigations.startInvestigation({
-      runId, exceptionId, model: 'claude-sonnet-5', promptVersion: 'a1',
+      runId, exceptionId, model: 'gemini-3.5-flash', promptVersion: 'a1',
     });
     assert.equal(open.status, 'running');
     assert.equal(open.groundingPassed, false);

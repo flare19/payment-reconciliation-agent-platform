@@ -33,7 +33,7 @@ Three consequences that shape every decision in this repo:
 | API | Express 5 |
 | Database | PostgreSQL 16 — **no Redis, no ORM.** Raw SQL via `pg`, numbered migration files. |
 | Frontend | Next.js (App Router) + React |
-| LLM | Anthropic API, `claude-sonnet-5`, explain layer only |
+| LLM | **Gemini API** (free tier), `@google/genai`. `gemini-3.5-flash` explain · `gemini-3.7-flash` Analyst. One `GEMINI_API_KEY`. (ADR-080) |
 | Hosting | Vercel (web) + Railway (API + Postgres). **No Kubernetes, no containers we author.** |
 
 Rationale for each is in [docs/adr-log.md](docs/adr-log.md). Don't re-litigate these — if you think one is wrong, append an ADR rather than quietly changing it.
@@ -215,6 +215,12 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 ## 10. Current state
 
 **Classification figures were re-measured at the end of Day 10 (#50) and the earlier ones were WRONG — the scorer, not the engine. Picking an event's prediction by `schema.md` §8.2's precedence instead of by row order gives macro P 0.9286 / macro R 0.8738 (was 0.7891 / 0.8024) and `UNSPLITTABLE_BATCH` 1.000/0.500 (was 0.000/0.000), on byte-identical engine output.**
+
+**As of 2026-08-31 (Day 11), later: #51 is fixed and the LLM provider is now GEMINI (ADR-080).**
+
+**#51** was two defects. The split pass was gated on `!hasCounterpartIn(record, 'bank')` — a role-PRESENCE test on the one rule whose subject is having more than one leg — and, underneath it, **§8.1's anchor clause had never fired once**: it tested `sharedStrongAnchor`, and bank rows carry no structured strong anchor at all (AUDIT-1), so every leg was admitted on the date window alone and the subset search called two true splits ambiguous over a 2-paise leg. Fixed in three parts (ADR-079). Split events **7/9 → 9/9** by the rule (8/9 end to end), found-at-all **89.5% → 90.5%**, precision still 1.0000 with FP 0, classification unchanged in every cell.
+
+**Provider:** there is no Anthropic key for this build. Both LLM surfaces call **Gemini** via `@google/genai` on one `GEMINI_API_KEY` — `gemini-3.5-flash` for S13 explain, `gemini-3.7-flash` for Phase A. `apps/api/.env.example` is committed; `apps/api/.env` is gitignored and holds a placeholder for Tejas to fill in. **Two consequences that are not cosmetic:** ADR-018 already hashes `model` into the signature so the cache invalidates itself; and on a free tier the binding bound is **requests per day, not dollars**, so `AGENT_MAX_LLM_REQUESTS_PER_RUN` (220) is now the ceiling that matters and `AGENT_MAX_COST_USD_PER_RUN` is a secondary. **No design may assume prompt caching.** No RPM/RPD figure is written into any doc — Google's rate-limit page defers to AI Studio and third-party summaries disagree.
 
 **As of 2026-08-31 (Day 11): #38 is fixed — `anchorAgreement` now compares anchor keys ACROSS types, so a bank `bank_ref_no` byte-identical to a gateway `rrn` earns `strong_weak` instead of a literal zero. Re-scored: precision 1.0000, FP 0, review-queue precision 1.0000 over 206 judged, unresolvable recall 1.0, classification macro 0.9286 / 0.8738 unchanged in every cell, zero build blockers. Eleven never-found pairs recovered, 22 pairs found in total once groups close. Found-at-all 86.5% → 89.5%. Match rate 66.48% → 65.22%, and that is CORRECT for the third day running: seven of the eleven land in the review band and §10 rule 4 makes a group holding a proposal a proposal.**
 

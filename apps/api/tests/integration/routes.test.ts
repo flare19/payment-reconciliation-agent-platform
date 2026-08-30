@@ -31,9 +31,10 @@ const seed = (): RunSources => ({
 
 const env = {
   databaseUrl: DB_URL ?? '', corsOrigins: [],
-  anthropicApiKey: null, anthropicModel: 'claude-sonnet-5',
+  geminiApiKey: null, explainModel: 'gemini-3.5-flash', agentModel: 'gemini-3.7-flash',
   llmExplainEnabled: false, llmMaxCallsPerRun: 8,
   agentEnabled: false, agentMaxInvestigationsPerRun: 5, agentMaxCostUsdPerRun: 1,
+  agentMaxLlmRequestsPerRun: 220,
   agentQaEnabled: false, agentQaMaxQuestionsPerRun: 10,
 } as unknown as Env;
 

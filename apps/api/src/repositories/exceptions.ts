@@ -249,7 +249,7 @@ export async function exceptionFacets(runId: string): Promise<{
  * Attach S13's narration.
  *
  * `explanation_source` records WHICH path produced the text — `llm`, `llm_cache`
- * or `template`. The run must complete with the Anthropic API unavailable
+ * or `template`. The run must complete with the LLM API unavailable
  * (ADR-017), and a template-sourced explanation labelled as model output would
  * misrepresent what the system did.
  */

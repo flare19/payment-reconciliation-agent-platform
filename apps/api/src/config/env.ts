@@ -52,8 +52,12 @@ export interface Env {
   corsOrigins: string[];
   logLevel: string;
 
-  anthropicApiKey: string | null;
-  anthropicModel: string;
+  /** ONE key, both layers. Null is a legitimate state — see `llmConfigured`. */
+  geminiApiKey: string | null;
+  /** S13 explain (ADR-080). The signature hash includes it, so a change invalidates the cache. */
+  explainModel: string;
+  /** Phase A investigation and Q&A loops (ADR-080). */
+  agentModel: string;
   llmExplainEnabled: boolean;
   llmMaxCallsPerRun: number;
   promptVersion: string;
@@ -67,6 +71,15 @@ export interface Env {
   agentEnabled: boolean;
   agentMaxInvestigationsPerRun: number;
   agentMaxCostUsdPerRun: number;
+  /**
+   * The bound that actually binds on a free tier (ADR-080).
+   *
+   * `agentMaxCostUsdPerRun` protects a credit card. On a free-tier key there is
+   * no bill to cap and the scarce resource is REQUESTS PER DAY, so a cost
+   * ceiling of $1.00 is satisfied by a run that exhausts the day's quota. This
+   * one is counted and enforced whether or not the key is billed.
+   */
+  agentMaxLlmRequestsPerRun: number;
   agentQaEnabled: boolean;
   agentQaMaxQuestionsPerRun: number;
   agentQaMaxQuestionsPerHour: number;
@@ -77,7 +90,7 @@ export interface Env {
 }
 
 export function loadEnv(): Env {
-  const key = process.env['ANTHROPIC_API_KEY'];
+  const key = process.env['GEMINI_API_KEY'];
   return {
     nodeEnv: optional('NODE_ENV', 'development'),
     // Railway injects PORT. Binding a hardcoded port is the single most common
@@ -87,8 +100,9 @@ export function loadEnv(): Env {
     corsOrigins: required('CORS_ORIGIN').split(',').map((s) => s.trim()).filter(Boolean),
     logLevel: optional('LOG_LEVEL', 'info'),
 
-    anthropicApiKey: key === undefined || key === '' ? null : key,
-    anthropicModel: optional('ANTHROPIC_MODEL', 'claude-sonnet-5'),
+    geminiApiKey: key === undefined || key === '' ? null : key,
+    explainModel: optional('GEMINI_EXPLAIN_MODEL', 'gemini-3.5-flash'),
+    agentModel: optional('GEMINI_AGENT_MODEL', 'gemini-3.7-flash'),
     llmExplainEnabled: bool('LLM_EXPLAIN_ENABLED', true),
     llmMaxCallsPerRun: int('LLM_MAX_CALLS_PER_RUN', 8),
     promptVersion: optional('PROMPT_VERSION', 'v1'),
@@ -102,6 +116,7 @@ export function loadEnv(): Env {
     agentEnabled: bool('AGENT_ENABLED', true),
     agentMaxInvestigationsPerRun: int('AGENT_MAX_INVESTIGATIONS_PER_RUN', 20),
     agentMaxCostUsdPerRun: num('AGENT_MAX_COST_USD_PER_RUN', 1.0),
+    agentMaxLlmRequestsPerRun: int('AGENT_MAX_LLM_REQUESTS_PER_RUN', 220),
     agentQaEnabled: bool('AGENT_QA_ENABLED', true),
     agentQaMaxQuestionsPerRun: int('AGENT_QA_MAX_QUESTIONS_PER_RUN', 50),
     agentQaMaxQuestionsPerHour: int('AGENT_QA_MAX_QUESTIONS_PER_HOUR', 100),
@@ -114,5 +129,5 @@ export function loadEnv(): Env {
 
 /** Boolean only — never a prefix, never a masked fragment (deployment.md §4.6). */
 export function llmConfigured(env: Env): boolean {
-  return env.anthropicApiKey !== null;
+  return env.geminiApiKey !== null;
 }

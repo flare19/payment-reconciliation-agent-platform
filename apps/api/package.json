@@ -17,7 +17,7 @@
     "test:integration": "node --test --test-concurrency=1 --import tsx tests/integration/*.test.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.32.0",
+    "@google/genai": "^1.0.0",
     "csv-parse": "^5.6.0",
     "express": "^5.0.1",
     "multer": "^1.4.5-lts.1",

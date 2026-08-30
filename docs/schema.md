@@ -712,7 +712,7 @@ CREATE TABLE audit_log (
   transaction_id UUID REFERENCES transactions(id),     -- denormalized; NULL for alias/run-level events
 
   actor_type     TEXT NOT NULL CHECK (actor_type IN ('engine','human','llm','agent')),
-  actor_id       TEXT NOT NULL,                        -- 'matching-engine@v1', 'reviewer', 'claude-sonnet-5'
+  actor_id       TEXT NOT NULL,                        -- 'matching-engine@v1', 'reviewer', 'gemini-3.7-flash'
 
   tier           TEXT,        -- NULL for non-matching events
   rule_id        TEXT,        -- NULL for non-rule-driven events
@@ -797,7 +797,7 @@ ARCHITECTURE §6 folds prompt design into this doc. Here it is.
 
 **The LLM never decides anything.** It receives a decision already made by deterministic rules and writes a sentence about it. Match/no-match, category, and severity are all rule outputs. This is stated in the system prompt, enforced by the fact that the explain layer runs *after* `exceptions` rows are already committed, and is the reason a measured accuracy number means anything at all — accuracy is a property of the rules, and the rules are deterministic and reproducible from `config_snapshot`.
 
-If the Anthropic API is unavailable, the run **still completes**, with `explanation_source = 'template'`. The explain layer is never on the critical path.
+If the LLM API is unavailable, the run **still completes**, with `explanation_source = 'template'`. The explain layer is never on the critical path.
 
 ### 10.2 Discrepancy signatures — the cost mechanism
 
@@ -808,7 +808,7 @@ Instead, each exception is reduced to a **signature**: the structural shape of t
 ```
 signature = sha256(join('|', [
   prompt_version,            // 'v1'
-  model,                     // 'claude-sonnet-5' — a model change must invalidate the cache
+  model,                     // 'gemini-3.5-flash' — a model change must invalidate the cache
   category,                  // 'AMOUNT_MISMATCH'
   amount_delta_bucket,       // 'none' | 'lt_1pct' | '1_to_3pct' | '3_to_10pct' | 'gt_10pct' | 'sign_flip'
   date_delta_bucket,         // 'same_day' | 'within_window' | 'plus_1_3d' | 'plus_4_7d' | 'gt_7d' | 'negative'
@@ -828,7 +828,7 @@ The `model` name is part of the hashed input alongside `prompt_version` — swit
 CREATE TABLE explanation_cache (
   signature_hash   CHAR(64) PRIMARY KEY,
   prompt_version   TEXT NOT NULL,
-  model            TEXT NOT NULL,          -- 'claude-sonnet-5'
+  model            TEXT NOT NULL,          -- 'gemini-3.5-flash'
   category         TEXT NOT NULL,
   signature_input  JSONB NOT NULL,         -- the pre-hash components, for debugging and for the UI
   explanation_text TEXT NOT NULL,
@@ -852,9 +852,9 @@ Cache invalidation is by `prompt_version` — bump it and every signature re-res
 
 Why 10 per request: the output is ~90 tokens per signature, so 10 keeps the response near 1K output tokens — comfortably inside a single response with no truncation risk, while cutting request count 10×. Larger batches raise the cost of a single malformed-JSON retry.
 
-Model: **`claude-sonnet-5`**, `temperature: 0`. Per ARCHITECTURE §3, Sonnet is the default engine and this is exactly the kind of bounded generation task it's for. Opus is never called at runtime.
+Model: **`gemini-3.5-flash`** (`GEMINI_EXPLAIN_MODEL`), `temperature: 0`, structured output via `response_format: { type: 'text', mime_type: 'application/json', schema }` (ADR-080). This is a bounded, schema-constrained generation task and the model is chosen for prose quality at a volume of ≤8 requests per run, not for throughput.
 
-The static system prompt is a **cacheable prefix** (Anthropic prompt caching), so the instructions and taxonomy aren't re-billed at full rate on every batch.
+**The economy here is ADR-018's signature collapse, not any provider's prompt caching.** ~75 exceptions become 15–30 distinct signatures become ≤8 requests; that is a property of the batching and it holds on any provider. Earlier drafts of this section leaned on an Anthropic-specific cacheable prefix — **no design may depend on that now** (ADR-080 consequence 4). The static system prompt is still sent once per batch and is still small; it is simply not assumed to be discounted.
 
 ### 10.4 Prompt design
 

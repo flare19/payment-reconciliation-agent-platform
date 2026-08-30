@@ -32,7 +32,7 @@ export function investigationsRouter(env: Env): Router {
   const r = Router();
 
   const requireAgent = (): void => {
-    if (!env.agentEnabled || env.anthropicApiKey === null) {
+    if (!env.agentEnabled || env.geminiApiKey === null) {
       throw new ApiError(503, 'AGENT_DISABLED',
         'The Analyst is disabled: set AGENT_ENABLED=true and provide ANTHROPIC_API_KEY.');
     }
@@ -92,7 +92,7 @@ export function investigationsRouter(env: Env): Router {
     found(await runsRepo.findRun(runId), 'RUN_NOT_FOUND', `No run exists with id ${runId}`);
     requireString(req.body ?? {}, 'question');
 
-    if (!env.agentQaEnabled || env.anthropicApiKey === null) {
+    if (!env.agentQaEnabled || env.geminiApiKey === null) {
       throw new ApiError(503, 'AGENT_DISABLED',
         'Q&A is disabled: set AGENT_QA_ENABLED=true and provide ANTHROPIC_API_KEY.');
     }

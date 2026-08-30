@@ -2,7 +2,7 @@
  * Endpoint 1 — the deploy smoke check.
  *
  * Reports what is CONFIGURED, not what is desirable. `llmConfigured: false` is a
- * legitimate operating state (ADR-017: a run completes with the Anthropic API
+ * legitimate operating state (ADR-017: a run completes with the LLM API
  * unavailable, every explanation falls back to a template), so this reports it
  * as a fact rather than as a failure. A health check that goes red for a
  * deliberate configuration teaches its reader to ignore it.
@@ -29,7 +29,7 @@ export function healthRouter(env: Env, version: string): Router {
     res.status(dbConnected ? 200 : 503).json({
       status: dbConnected ? 'ok' : 'degraded',
       dbConnected,
-      llmConfigured: env.anthropicApiKey !== null && env.llmExplainEnabled,
+      llmConfigured: env.geminiApiKey !== null && env.llmExplainEnabled,
       version,
     });
   }));

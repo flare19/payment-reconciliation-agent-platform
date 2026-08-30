@@ -409,7 +409,7 @@ Precedence and secondary flags are exactly `schema.md` §8.2. Severity is comput
 | Process restart mid-run | On boot, any run in a non-terminal state older than 5 minutes is marked `failed` with `error_detail: 'interrupted by restart'`. Without this a crashed run sits at `matching` forever and the dashboard hangs on a poll loop during a demo. (ADR-046) |
 | Candidate cap hit | Recorded in evidence and surfaced, never silent (§3). |
 | Subset-sum budget exhausted | Recorded as `searchBoundExceeded`, distinct from `searchExhausted` (§8). |
-| Anthropic API down | Templates; run completes; `explanation_source = 'template'`. (ADR-017) |
+| LLM API down or out of quota | Templates; run completes; `explanation_source = 'template'`. (ADR-017) |
 
 ---
 

@@ -143,7 +143,7 @@ describe('schema invariants', { skip: DB_URL === null ? 'no TEST_DATABASE_URL' :
   test('a RESOLUTION_PROPOSED verdict must carry a proposed action', async () => {
     await rejects(
       `INSERT INTO agent_investigations (run_id,exception_id,status,verdict,confidence,model,prompt_version,finished_at)
-       VALUES ($1,$2,'concluded','RESOLUTION_PROPOSED','high','claude-sonnet-5','agent-v1',now())`,
+       VALUES ($1,$2,'concluded','RESOLUTION_PROPOSED','high','gemini-3.7-flash','agent-v1',now())`,
       /inv_proposal_paired/, [RUN, EXCEPTION]);
   });
 
@@ -152,7 +152,7 @@ describe('schema invariants', { skip: DB_URL === null ? 'no TEST_DATABASE_URL' :
     // Keeping them different types stops anyone averaging one into the other.
     await rejects(
       `INSERT INTO agent_investigations (run_id,exception_id,status,confidence,model,prompt_version)
-       VALUES ($1,$2,'running','0.87','claude-sonnet-5','agent-v1')`,
+       VALUES ($1,$2,'running','0.87','gemini-3.7-flash','agent-v1')`,
       /confidence_check/, [RUN, EXCEPTION]);
   });
 

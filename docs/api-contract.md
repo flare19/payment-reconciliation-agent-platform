@@ -229,7 +229,7 @@ This is the **only** path by which a ground-truth-derived number enters the data
   "citations": ["…","…"],
   "groundingPassed": true, "budgetExhausted": false,
   "steps": 5, "toolCalls": 7, "costUsd": 0.0312,
-  "model": "claude-sonnet-5", "promptVersion": "agent-v1",
+  "model": "gemini-3.7-flash", "promptVersion": "agent-v1",
   "humanDisposition": null, "resultingMatchId": null
 }
 ```
@@ -595,7 +595,7 @@ The honest-denominator surface. Every row removed from the reconcilable populati
     "groundingFailures": 2, "budgetExhaustions": 1,
     "tokensIn": 128400, "tokensOut": 9120, "costUsdTotal": 0.61,
     "promptCacheHitRatePct": 94.0,
-    "model": "claude-sonnet-5", "promptVersion": "agent-v1"
+    "model": "gemini-3.7-flash", "promptVersion": "agent-v1"
   },
   "pagination": { "page": 1, "pageSize": 25, "total": 20 }
 }

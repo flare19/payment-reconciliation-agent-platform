@@ -10,7 +10,7 @@ Companion docs: [ARCHITECTURE.md](../ARCHITECTURE.md) · [matching-engine.md](./
 
 The track says **"Build an agent that closes one finance-ops loop."**
 
-As designed through ADR-047, this system is an excellent deterministic rules engine with one LLM call bolted to the end that writes captions for decisions already finalized (S13, ADR-017). Fourteen of fifteen stages are arithmetic, tie-breaks and rule precedence. The single AI touchpoint has a no-op fallback: if the Anthropic API is down, the run completes identically with template strings.
+As designed through ADR-047, this system is an excellent deterministic rules engine with one LLM call bolted to the end that writes captions for decisions already finalized (S13, ADR-017). Fourteen of fifteen stages are arithmetic, tie-breaks and rule precedence. The single AI touchpoint has a no-op fallback: if the LLM API is down, the run completes identically with template strings.
 
 That is not an agent. Calling it one would be the same species of dishonesty this project is otherwise built to avoid — and a panel that reads the architecture will see it in about ninety seconds.
 
@@ -87,7 +87,9 @@ The Analyst does not investigate everything; investigation costs tokens and time
 
 ### A2 — Investigate (agentic)
 
-A tool-use loop over one exception. Anthropic SDK tool-use, `claude-sonnet-5`, `temperature: 0`, static cached system prefix (ADR-019 unchanged — Opus is still never called at runtime).
+A tool-use loop over one exception. **Gemini function calling via `@google/genai`, `gemini-3.7-flash` (`GEMINI_AGENT_MODEL`), `temperature: 0`** (ADR-080). Google describes that model as *"built for complex coding, agentic workflows, and reliable multi-step execution"*, which is this loop's job description.
+
+The loop is the Interactions API's tool cycle: the model returns a `function_call` step, the registry executes it against locked engine code, and the result goes back as a `function_result` on the next interaction. **No automatic tool-loop helper is used** — the loop is written out, because §8's step, tool-call, wall-clock and request bounds have to be enforced between turns and a helper that hides the turn boundary hides the place the bounds live.
 
 ```
   system prompt (static, cached: role, tool contract, verdict schema, honesty rules)
@@ -272,7 +274,11 @@ An unbounded agent loop against a paid API on a public demo URL is a financial a
 
 **Budget exhaustion is an honest verdict, never a fabricated conclusion.** This mirrors `searchBoundExceeded` exactly: the system says which bound stopped it. An agent that produces its best guess when it runs out of room is worse than one that says it ran out of room.
 
-The static system prefix — role, tool contract, verdict schema, honesty rules — is a **cacheable prefix** (Anthropic prompt caching), reused across every investigation in a run. That is the difference between an affordable phase and an expensive one.
+**These bounds do not rest on any provider's prompt caching** (ADR-080 consequence 4). They are step, tool-call, wall-clock and request ceilings — enforced between turns by the loop itself — so they hold identically whether or not a static prefix is discounted. The prefix is still static and still small; it is simply not load-bearing.
+
+| **LLM requests per run (Phase A)** | `AGENT_MAX_LLM_REQUESTS_PER_RUN`, default 220 | phase stops, partial results retained |
+
+**On a free-tier key this last bound is the one that binds, and the cost ceiling is not** (ADR-080 consequence 2). `AGENT_MAX_COST_USD_PER_RUN` protects a credit card; a free tier has no bill to cap and its scarce resource is requests per day. A run that satisfies a $1.00 ceiling can still exhaust the day's quota and leave the demo dead — which, on submission day, is the failure that actually matters. Requests are counted and capped whether or not the key is billed.
 
 ---
 
@@ -325,7 +331,7 @@ Deliberately small, because most of it already exists.
 | Piece | Notes |
 |---|---|
 | Tool registry (9 tools) | Thin wrappers over repository functions the engine needs anyway. Built Day 8 alongside the classifier, which needs the same repository queries. |
-| Investigation loop (A2) | One Anthropic tool-use loop. The SDK handles the turn cycle. |
+| Investigation loop (A2) | One Gemini function-calling loop, written out rather than delegated to a helper — §8's bounds are enforced between turns (ADR-080). |
 | Grounding gate (A3) | Pure functions. The highest-value tests in the suite (testing-strategy §1.6). |
 | Two tables | `agent_investigations`, `agent_questions`. Traces reuse `audit_log` (ADR-052). |
 | Four endpoints | 25–28. **No new write endpoints** — proposals route through 16, 20, 21. |

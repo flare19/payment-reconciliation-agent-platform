@@ -60,9 +60,9 @@ It never does arithmetic. To learn whether two records match it calls the same s
 
 It is scored against the same answer key as the engine, which neither can read. **A resolution proposed for a designed-unresolvable exception is a build blocker, not a metric.**
 
-**Stack:** TypeScript everywhere · Node 22 · Express 5 · PostgreSQL 16 (raw SQL, no ORM, no Redis) · Next.js · Anthropic `claude-sonnet-5` for the explain layer only · Vercel + Railway.
+**Stack:** TypeScript everywhere · Node 22 · Express 5 · PostgreSQL 16 (raw SQL, no ORM, no Redis) · Next.js · Google Gemini (`gemini-3.5-flash` explain, `gemini-3.7-flash` Analyst) · Vercel + Railway.
 
-**The LLM never decides anything inside the engine.** It receives a decision the deterministic rules have already made and writes a sentence about it. That is what makes a measured accuracy number mean anything — accuracy is a property of the rules, and the rules are deterministic and reproducible from a config snapshot. If the Anthropic API is down, the run still completes with template explanations.
+**The LLM never decides anything inside the engine.** It receives a decision the deterministic rules have already made and writes a sentence about it. That is what makes a measured accuracy number mean anything — accuracy is a property of the rules, and the rules are deterministic and reproducible from a config snapshot. If the LLM API is down, the run still completes with template explanations.
 
 Explanations are cached by **discrepancy signature** — the structural shape of a problem with all specifics stripped — so ~75 exceptions collapse to ~20 distinct shapes and cost stays `O(distinct shapes)` rather than `O(exceptions)`. Re-running the full batch is therefore free, which matters because the track disqualifies cherry-picking.
 

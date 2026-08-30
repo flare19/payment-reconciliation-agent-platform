@@ -310,7 +310,7 @@ Two figures, always labelled, never merged:
 - `records_per_sec_engine` — ingest + match + classify. The real engineering number.
 - `records_per_sec_wall_clock` — including LLM explain latency. The honest end-to-end number.
 
-Quoting only the first is misleading; quoting only the second measures Anthropic's API, not this engine.
+Quoting only the first is misleading; quoting only the second measures the LLM provider's API, not this engine.
 
 ### 5.6 The scale benchmark (ADR-045)
 
