@@ -193,10 +193,36 @@ describe('S10 — decomposition outcomes', () => {
     assert.equal(c.minPaise, 970_500);
     assert.equal(c.maxPaise, 976_400);
 
-    // A credit anywhere inside the band decomposes to that single payment.
-    const credit = txn('c', 'bank', 1, { amount: 973_000, date: '2026-08-16' });
-    const r = decomposeBatch(credit, [g], config);
+    // A credit anywhere inside the SUMMED band decomposes to those payments.
+    // Two payments, not one: a size-1 subset is an ordinary 1:1 match and no
+    // longer a batch verdict (see the test below).
+    const g2 = txn('g2', 'gateway', 2, { amount: 1_000_000, net: null });
+    const credit = txn('c', 'bank', 1, { amount: 1_946_000, date: '2026-08-16' });
+    const r = decomposeBatch(credit, [g, g2], config);
     assert.equal(r.kind, 'decomposed');
+    assert.equal(r.kind === 'decomposed' ? r.members.length : 0, 2);
+  });
+
+  test('a size-1 subset is NOT a batch verdict — that is a 1:1 match, and S9 owns it', () => {
+    // `searchSubsetsInBand`'s own docstring gives the reason for the split
+    // search: "a size-1 solution is an ordinary 1:1 match that belongs to the
+    // tiers, not to this stage." §8 is explicitly about a credit that nets MANY
+    // payments. The batch path did not apply it until S10 was wired (#46), and
+    // the consequence was S10 re-deciding pairs Tier 2 had already scored and
+    // declined — on strictly weaker evidence, since the batch pool requires no
+    // anchor at all.
+    const g = txn('g1', 'gateway', 1, { amount: 1_000_000, net: 973_000 });
+    const credit = txn('c', 'bank', 1, { amount: 973_000, date: '2026-08-16' });
+    const alone = decomposeBatch(credit, [g], config);
+    assert.equal(alone.kind, 'unsplittable',
+      'one payment that exactly equals the credit is a 1:1 match, not a decomposition');
+
+    // The same payment IS reported once it is genuinely part of a combination.
+    const g2 = txn('g2', 'gateway', 2, { amount: 500_000, net: 400_000 });
+    const bigger = txn('c2', 'bank', 2, { amount: 1_373_000, date: '2026-08-16' });
+    const together = decomposeBatch(bigger, [g, g2], config);
+    assert.equal(together.kind, 'decomposed');
+    assert.equal(together.kind === 'decomposed' ? together.members.length : 0, 2);
   });
 
   test('the subset-size cap is recorded as a qualifier, never silently applied', () => {

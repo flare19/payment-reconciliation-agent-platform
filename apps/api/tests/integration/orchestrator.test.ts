@@ -52,17 +52,17 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
     assert.equal(out.status, 'completed', out.errorDetail ?? '');
     assert.equal(out.referenceDate, '2026-08-21');
     assert.equal(out.matches, 284);
-    assert.equal(out.exceptions, 256);
+    assert.equal(out.exceptions, 236);
 
     assert.equal(await count(`SELECT count(*)::int c FROM transactions WHERE run_id=$1`), 920);
     assert.equal(await count(`SELECT count(*)::int c FROM matches WHERE run_id=$1`), 284);
-    assert.equal(await count(`SELECT count(*)::int c FROM exceptions WHERE run_id=$1`), 256);
+    assert.equal(await count(`SELECT count(*)::int c FROM exceptions WHERE run_id=$1`), 236);
     // 755, not 598: issue #40 let a gateway matched at Tier 1 keep looking for
     // its bank leg, so 157 two-way groups became three-way. The GROUP count is
     // unchanged at 284 — the same events, more completely assembled.
     assert.equal(await count(
       `SELECT count(*)::int c FROM match_members mm JOIN matches m ON m.id=mm.match_id
-        WHERE m.run_id=$1`), 755);
+        WHERE m.run_id=$1`), 773);
   });
 
   test('ADR-040: every term of the match-rate denominator is recorded', async () => {
@@ -114,7 +114,7 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
     assert.equal(v.firstDivergenceSequenceNo, null);
     // Pinned exactly. A loose floor here would hide the thing this test is for:
     // the chain covering every decision the run made, and no more.
-    assert.equal(v.entriesChecked, 635);
+    assert.equal(v.entriesChecked, 615);
   });
 
   test('the audit trail records DECISIONS, and is not drowned by transcription', async () => {
@@ -135,11 +135,11 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
     // hold a fuzzy bank leg, and "group tier is the WEAKEST tier used" reports
     // those as fuzzy. 203 - 157 = 46. Reporting them as exact would overstate the
     // evidence for the leg a reader is most likely to check.
-    assert.equal(by['MATCH_CONFIRMED_EXACT'], 46);
-    assert.equal(by['MATCH_CONFIRMED_FUZZY'], 180);
-    assert.equal(by['MATCH_FLAGGED_FOR_REVIEW'], 58);
+    assert.equal(by['MATCH_CONFIRMED_EXACT'], 41);
+    assert.equal(by['MATCH_CONFIRMED_FUZZY'], 179);
+    assert.equal(by['MATCH_FLAGGED_FOR_REVIEW'], 64);
     assert.equal(by['MATCH_CANDIDATE_DISPLACED'], 35);
-    assert.equal(by['EXCEPTION_RAISED'], 256);
+    assert.equal(by['EXCEPTION_RAISED'], 236);
 
     // S8 re-derives every pair S6 already claimed and reports outcome 'match'
     // "for completeness". Logging those would put a second entry beside every
@@ -185,8 +185,8 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
     // from the stored object, not only inside the function that computed it.
     const run = await findRun(runId);
     const m = run!.metrics as Record<string, Record<string, number>>;
-    assert.equal(m['matchRate']!['matchRatePct'], 67.85);
-    assert.equal(m['matchRate']!['matchedRecords'], 593);
+    assert.equal(m['matchRate']!['matchRatePct'], 66.48);
+    assert.equal(m['matchRate']!['matchedRecords'], 581);
     assert.equal(m['matchRate']!['reconcilableRecords'], 874);
     const p = m['population']!;
     assert.equal(
@@ -197,10 +197,15 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
   test('S14 reports what it did NOT compute, rather than zeroing it', async () => {
     const run = await findRun(runId);
     const m = run!.metrics as Record<string, unknown>;
-    assert.deepEqual(m['stagesNotRun'], ['S10_BATCH', 'S13_EXPLAIN']);
+    assert.deepEqual(m['stagesNotRun'], ['S13_EXPLAIN']);
     assert.equal(m['llmCost'], null);
+    // S10 runs since #46, so these are counts. On this dataset every unmatched
+    // settlement credit has a candidate pool below the batch-shaped floor, so
+    // no batch verdict reaches S12 and both counts are 0 — a real zero from a
+    // stage that ran, which is a different claim from `null`.
     const e = m['exceptions'] as Record<string, unknown>;
-    assert.equal(e['batchSearchExhausted'], null, '0 would claim a search that never ran');
+    assert.equal(e['batchSearchExhausted'], 3);
+    assert.equal(e['batchSearchBoundExceeded'], 0);
   });
 
   test('tierAttribution survives the jsonb round trip as PAIR counts (ADR-072)', async () => {
@@ -211,7 +216,8 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
     const t = (run!.metrics as Record<string, Record<string, number>>)['tierAttribution']!;
     assert.equal(t['exact'], 203);
     assert.equal(t['fuzzy'], 268);
-    assert.equal(t['implied'], 187);
+    assert.equal(t['implied'], 220);
+    assert.equal(t['batch'], 18, 'S10 split legs, attributed to their own tier (ADR-072)');
     assert.equal(t['unattributed'], 0);
     assert.equal(t['identityEstablished'], 9, 'what S8 contributed, not what it re-derived');
     assert.notEqual(t['exact'], 46, 'this is the GROUP-tier count, not the pair count');
@@ -225,9 +231,9 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
     const out = await executeRun(second.id, sources, ENGINE_DEFAULTS);
     assert.equal(out.status, 'completed');
     assert.equal(out.matches, 284);
-    assert.equal(out.exceptions, 256);
+    assert.equal(out.exceptions, 236);
     assert.equal(out.referenceDate, '2026-08-21');
-    assert.equal(out.auditEntries, 635, 'the same inputs must produce the same trail');
+    assert.equal(out.auditEntries, 615, 'the same inputs must produce the same trail');
   });
 
   test('a failed run says so, and its committed phases stay visible (ADR-046)', async () => {

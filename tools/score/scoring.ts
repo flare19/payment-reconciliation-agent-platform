@@ -102,7 +102,11 @@ export interface EngineException {
   secondaryFlags: string[];
   /** `RecordPreview` — carries `sourceRowNumber` since ADR-073. */
   primaryRecord: EngineRecord | null;
-  evidence: Record<string, unknown>;
+  /**
+   * Present on `ExceptionDetail` (endpoint 7), ABSENT on `ExceptionSummary`
+   * (endpoint 6, which this scorer walks). Optional so the type says so.
+   */
+  evidence?: Record<string, unknown>;
 }
 
 export interface EngineSnapshot {
@@ -123,13 +127,62 @@ export function pairKey(a: string, b: string): string {
   return a < b ? `${a}|${b}` : `${b}|${a}`;
 }
 
+/** Canonical order over row keys: gateway < bank < ledger, then row number. */
+export function compareRowKeys(a: string, b: string): number {
+  const rank = (k: string): number =>
+    ({ gateway: 0, bank: 1, ledger: 2 }[k.split(':')[0] ?? ''] ?? 3);
+  const r = rank(a) - rank(b);
+  if (r !== 0) return r;
+  return Number(a.split(':')[1] ?? 0) - Number(b.split(':')[1] ?? 0);
+}
+
+/** `gateway:12|gateway:44` — both halves from the same source file. */
+export function isSameSource(k: string): boolean {
+  const [a, b] = k.split('|') as [string, string];
+  return a.split(':')[0] === b.split(':')[0];
+}
+
+/**
+ * Is a same-source pair the engine produced something the key can judge?
+ *
+ * The key models CROSS-SOURCE pairs. Its only same-source entries are the nine
+ * `IDENTITY_DESTROYED` gateway↔gateway DENIALS — the case where three
+ * indistinguishable rows are planted and matching any two of them is the single
+ * most damning failure available. Those must stay scoreable, and stay false
+ * positives.
+ *
+ * Every other same-source pair comes from a legitimate `one_to_many` /
+ * `many_to_one` group: two bank legs of one split settlement are both members of
+ * one economic event, and the key never enumerates that relationship because it
+ * is not a claim that the two rows are each other's counterpart. `scorePair`'s
+ * `GATE_SAME_SOURCE_V1` means such a pair can only ever arise from a cardinality
+ * rule, never from a similarity score, so there is no way for a wrong match to
+ * hide here.
+ *
+ * Scoring them as false positives would have penalised the engine for the exact
+ * shape §8.1 exists to produce — it appeared the moment S10's splits started
+ * forming groups (#46/#49), and it is a defect in the SCORER, not the engine.
+ */
+export function isJudgeableSameSourcePair(key: AnswerKey, k: string): boolean {
+  return key.expectedPairs.some(
+    (p) => p.a.sourceSystem === p.b.sourceSystem
+      && pairKey(rowKey(p.a), rowKey(p.b)) === k);
+}
+
 export interface MatchingScore {
   precision: number; recall: number; f1: number;
   truePositives: number; falsePositives: number; falseNegatives: number;
   /** Pairs excluded from BOTH sides because their event is an EXCEPTION (ADR-072). */
   excludedExceptionEventPairs: number;
+  /**
+   * Same-source legs of a `one_to_many` / `many_to_one` group, which the key does
+   * not model. Excluded and COUNTED, never silently dropped.
+   */
+  excludedSameSourceLegs: number;
   /** Pairs the engine proposed but has not confirmed. Scored separately (§5.1.1). */
   pendingPairs: number;
+  /** Pending pairs the pairing key does not judge — same exclusions as TP/FP. */
+  pendingExcludedFromQueuePrecision: number;
   reviewQueuePrecision: number | null;
   /** The raw integer §5.1 insists travels with every percentage (ADR-020). */
   falsePositivePairs: { a: string; b: string }[];
@@ -190,8 +243,15 @@ export function scoreMatching(key: AnswerKey, engine: EngineSnapshot): MatchingS
   }
 
   let tp = 0;
+  let excludedSameSourceLegs = 0;
   const fps: { a: string; b: string }[] = [];
   for (const k of confirmed) {
+    // A same-source pair the key does not mention is a cardinality leg, not a
+    // counterpart claim. One the key DENIES stays fully scoreable.
+    if (isSameSource(k) && !isJudgeableSameSourcePair(key, k)) {
+      excludedSameSourceLegs += 1;
+      continue;
+    }
     if (exceptionEvents.size > 0 && !shouldMatch.has(k) && !shouldNotMatch.has(k)) {
       // Either an exception-event pair (excluded by design, not an error) or a
       // pair the key does not mention at all. The second IS a false positive:
@@ -213,8 +273,24 @@ export function scoreMatching(key: AnswerKey, engine: EngineSnapshot): MatchingS
   const recall = shouldMatch.size === 0 ? 0 : tp / shouldMatch.size;
 
   // "When this engine asks a human, is it asking about the right things?"
+  //
+  // The SAME exclusions as the primary metric, or the two disagree about what
+  // counts as a wrong question. A pending pair on an EXCEPTION event (ADR-072)
+  // is not a bad proposal — it is a pair the pairing key does not judge — and a
+  // same-source cardinality leg is not a proposal at all. Counting either as
+  // incorrect reported 24 "wrong" proposals on a run whose genuinely wrong count
+  // is zero, and dragged the queue's precision from 1.0 to 0.88.
   let pendingCorrect = 0;
-  for (const k of pending) if (shouldMatch.has(k)) pendingCorrect += 1;
+  let pendingExcluded = 0;
+  for (const k of pending) {
+    if (isSameSource(k) && !isJudgeableSameSourcePair(key, k)) { pendingExcluded += 1; continue; }
+    if (shouldMatch.has(k)) { pendingCorrect += 1; continue; }
+    if (shouldNotMatch.has(k)) continue;                       // a genuinely wrong ask
+    const onExceptionEvent = key.expectedPairs.some(
+      (p) => pairKey(rowKey(p.a), rowKey(p.b)) === k && exceptionEvents.has(p.eventId));
+    if (onExceptionEvent) pendingExcluded += 1;
+  }
+  const pendingJudged = pending.size - pendingExcluded;
 
   return {
     precision: round4(precision),
@@ -224,8 +300,10 @@ export function scoreMatching(key: AnswerKey, engine: EngineSnapshot): MatchingS
     falsePositives: fp,
     falseNegatives: fn,
     excludedExceptionEventPairs: excluded,
+    excludedSameSourceLegs,
     pendingPairs: pending.size,
-    reviewQueuePrecision: pending.size === 0 ? null : round4(pendingCorrect / pending.size),
+    pendingExcludedFromQueuePrecision: pendingExcluded,
+    reviewQueuePrecision: pendingJudged === 0 ? null : round4(pendingCorrect / pendingJudged),
     falsePositivePairs: fps.sort((x, y) => (x.a + x.b < y.a + y.b ? -1 : 1)),
   };
 }
@@ -238,6 +316,13 @@ export interface ClassificationScore {
   secondaryFlagJaccard: number | null;
   /** §5.2's two watch cells. Non-zero means S8 is not running where it should. */
   s8RegressionCells: { amountMismatchScoredAsPendingMatch: number; timingDriftAutoConfirmed: number };
+  /**
+   * Exception events where the engine raised MORE THAN ONE category across the
+   * event's rows. The key names one, so exactly one of them is scored and the
+   * rest are invisible — this counts how often that reduction happened, so the
+   * confusion matrix is read knowing how much it is flattening.
+   */
+  multiCategoryEvents: number;
 }
 
 /**
@@ -275,13 +360,27 @@ export function scoreClassification(
 
   let amountMismatchScoredAsPendingMatch = 0;
   let timingDriftAutoConfirmed = 0;
+  let multiCategoryEvents = 0;
 
   for (const ev of key.events) {
     if (ev.expectedOutcome !== 'EXCEPTION' || ev.expectedCategory === null) continue;
     const rows = ev.projections.map(rowKey);
 
-    const raised = rows.map((r) => raisedByRow.get(r)).find((x) => x !== undefined);
+    // An event can carry several exceptions — a net batch raises
+    // UNSPLITTABLE_BATCH on the credit AND MISSING_IN_BANK on the gateway and
+    // ledger rows, and all three are true statements. The key names ONE
+    // expectedCategory, so the scorer must pick one prediction, and WHICH one it
+    // picks must be a stated rule rather than the order the generator happened
+    // to write `projections` in (ADR-032 rule 3).
+    //
+    // Canonical row order — gateway < bank < ledger, then row number. It does
+    // NOT peek at the expected category: choosing "whichever row agrees with the
+    // key" would manufacture a true positive whenever any row happened to be
+    // right, which is the flattering direction and unfalsifiable.
+    const orderedRows = [...rows].sort(compareRowKeys);
+    const raised = orderedRows.map((r) => raisedByRow.get(r)).find((x) => x !== undefined);
     bump(ev.expectedCategory, raised?.category ?? 'NONE');
+    if (orderedRows.filter((r) => raisedByRow.has(r)).length > 1) multiCategoryEvents += 1;
 
     if (raised !== undefined) {
       jaccards.push(jaccard(new Set(ev.expectedSecondaryFlags), new Set(raised.secondaryFlags)));
@@ -346,6 +445,7 @@ export function scoreClassification(
     perCategory,
     secondaryFlagJaccard: jaccards.length === 0 ? null : round4(mean(jaccards)),
     s8RegressionCells: { amountMismatchScoredAsPendingMatch, timingDriftAutoConfirmed },
+    multiCategoryEvents,
   };
 }
 
@@ -405,6 +505,8 @@ export function scoreResolvability(key: AnswerKey, engine: EngineSnapshot): Reso
   const inventedSet = new Set<string>();
   for (const k of confirmed.keys()) {
     if (affirmed.has(k)) continue;                      // the key agrees with this pair
+    // A cardinality leg is not an invented match — see `isJudgeableSameSourcePair`.
+    if (isSameSource(k) && !isJudgeableSameSourcePair(key, k)) continue;
     const [a, b] = k.split('|') as [string, string];
     for (const half of [a, b]) {
       const owner = eventOfRow.get(half);
@@ -428,15 +530,21 @@ export function scoreResolvability(key: AnswerKey, engine: EngineSnapshot): Reso
 
   // ADR-038: "I proved no combination works" and "I ran out of budget" are
   // different claims and only one of them is a finding.
-  let exhausted = 0;
-  let boundExceeded = 0;
-  for (const e of engine.exceptions) {
-    if (e.category !== 'UNSPLITTABLE_BATCH') continue;
-    if (e.evidence['searchExhausted'] === true) exhausted += 1;
-    if (e.evidence['searchBoundExceeded'] !== undefined
-      && e.evidence['searchBoundExceeded'] !== null
-      && e.evidence['searchBoundExceeded'] !== false) boundExceeded += 1;
-  }
+  //
+  // Read from `runs.metrics`, NOT from exception evidence. `ExceptionSummary`
+  // (endpoint 6, the list this scorer walks) deliberately does not carry
+  // `evidence` — only `ExceptionDetail` (endpoint 7) does. The original code
+  // read `e.evidence['searchExhausted']` and never crashed only because S10 was
+  // unwired and the `UNSPLITTABLE_BATCH` guard above always skipped: the first
+  // run that produced one threw `Cannot read properties of undefined`.
+  //
+  // S14 already computes both counts from the verdicts themselves, which is a
+  // better source than re-deriving them from a serialised subset — and it means
+  // the scorer and the engine cannot disagree about what the search concluded.
+  const batchStats = (engine.metrics?.['exceptions'] ?? {}) as Record<string, unknown>;
+  const asCount = (v: unknown): number => (typeof v === 'number' ? v : 0);
+  const exhausted = asCount(batchStats['batchSearchExhausted']);
+  const boundExceeded = asCount(batchStats['batchSearchBoundExceeded']);
 
   return {
     unresolvableDesigned: unresolvable.length,

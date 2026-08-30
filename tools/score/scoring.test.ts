@@ -153,6 +153,54 @@ describe('scoreMatching', () => {
   });
 });
 
+describe('same-source cardinality legs (#46/#49)', () => {
+  // A one_to_many group's two bank legs are members of one economic event, not
+  // each other's counterpart. The key never enumerates that relationship, so
+  // scoring it as invention would penalise the engine for the exact shape §8.1
+  // exists to produce. But the key's nine IDENTITY_DESTROYED gateway<->gateway
+  // DENIALS must stay fully scoreable — matching two of those is the single most
+  // damning failure available here.
+  const KEY_WITH_DENIAL: AnswerKey = {
+    ...KEY,
+    expectedPairs: [
+      ...KEY.expectedPairs,
+      { eventId: 'e1', a: G(1), b: G(2), shouldMatch: false, viaTier: 'fuzzy' },
+    ],
+  };
+
+  test('a split group\'s bank legs are excluded and COUNTED, never silently dropped', () => {
+    // A genuine one_to_many: gateway:1 settled across bank:1 and bank:2, both
+    // affirmed cross-source. The bank:1 <-> bank:2 leg is the pair under test.
+    const splitKey: AnswerKey = {
+      ...KEY,
+      expectedPairs: [
+        ...KEY.expectedPairs,
+        { eventId: 'e1', a: G(1), b: B(2), shouldMatch: true, viaTier: 'batch' },
+      ],
+    };
+    const r = scoreMatching(splitKey, snapshot([
+      group('m', 'auto_confirmed', ['t-g1', 't-b1', 't-b2'])]));
+    assert.equal(r.excludedSameSourceLegs, 1, 'bank:1 <-> bank:2 is a leg, not a claim');
+    assert.equal(r.falsePositives, 0, 'and it must not be scored as invention');
+    assert.equal(r.truePositives, 2, 'both cross-source legs still count');
+  });
+
+  test('a same-source pair the key DENIES is still a false positive', () => {
+    // The IDENTITY_DESTROYED guard. If this ever stops firing, the engine can
+    // match two of three indistinguishable rows and the scorer will not say so.
+    const r = scoreMatching(KEY_WITH_DENIAL, snapshot([
+      group('m', 'auto_confirmed', ['t-g1', 't-g2'])]));
+    assert.equal(r.falsePositives, 1);
+    assert.equal(r.excludedSameSourceLegs, 0, 'a denial is judgeable, not a leg');
+  });
+
+  test('the exclusion does not leak into the unresolvable build blocker', () => {
+    const r = scoreResolvability(KEY, snapshot([
+      group('m', 'auto_confirmed', ['t-b3', 't-b1'])]));
+    assert.equal(r.unresolvableRecall, 1, 'two bank legs are not an invented match');
+  });
+});
+
 describe('scoreResolvability — the build blocker', () => {
   // This gate was WRONG on its first run and reported 5 invented matches on a
   // holdout where the engine had invented nothing. §4's sub-classes are

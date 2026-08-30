@@ -61,6 +61,7 @@ import { runTier2, pairKeyOf } from '../matching/tier2-fuzzy.js';
 import {
   assembleGroups, fromTier1, fromTier2, type GroupPair, type RefusedPair,
 } from '../matching/group-assembly.js';
+import { runBatchStage } from '../matching/batch-stage.js';
 import { runClassification } from '../classification/collect.js';
 import { computeRunMetrics, type StageTimings } from '../metrics/run-metrics.js';
 
@@ -326,15 +327,26 @@ async function runPhases(
   // that reports having considered nothing.
   const tier2 = stage.time('tier2', () => runTier2(blocks, config, exactPairs, settled));
 
-  // S10 batch decomposition is NOT wired yet — see the note at the bottom of
-  // this file. Passing an empty list keeps S11's contract honest rather than
-  // pretending the stage ran.
+  // ── S10 BATCH (issue #46) ───────────────────────────────────────────────────
+  // Sees only what S6-S9 left unmatched, so it can extend the engine's output
+  // but never contradict it. The two decisions U6 declined to make alone — which
+  // records enter the pool, and how a decomposition interacts with S11's
+  // role-collision rule — are argued in `batch-stage.ts`'s header.
   const byId = new Map<string, NormalizedTransaction>(t15.pool.map((t) => [t.id, t]));
-  const groupPairs: GroupPair[] = [
+  const tierPairs: GroupPair[] = [
     ...exactPairs.map((m) => fromTier1(m, byId)).filter((p): p is GroupPair => p !== null),
     ...tier2.accepted.map(fromTier2),
   ];
-  const assembled = stage.time('group', () => assembleGroups(groupPairs, []));
+  // S10 reads counterparts PER ROLE from these pairs (#49). "Has this gateway a
+  // BANK leg?" is the question; "is it in any group?" is the one that emptied
+  // the pool and is the #40 error one stage later.
+  const batch = stage.time('batch', () => runBatchStage(t15.pool, tierPairs, config));
+
+  const groupPairs: GroupPair[] = [...tierPairs, ...batch.splitPairs];
+  // S10's verdicts arrive as pre-formed GROUPS, not pairs: a decomposition is
+  // already a group, and `assembleGroups` marks their members `inBatch` so no
+  // pairwise pair can claim one of them (§10 rule 3).
+  const assembled = stage.time('group', () => assembleGroups(groupPairs, batch.groups));
 
   const appliedAliasIds = [...new Set(exactPairs.flatMap((m) => m.aliasIds))];
 
@@ -411,7 +423,12 @@ async function runPhases(
 
   const exceptions = stage.time('classify', () => runClassification({
     pool: t15.pool, duplicates: deduped.findings, identity, tier2,
-    batches: [], groups: assembled.matches, refused: assembled.refused, config,
+    // Every credit S10 examined, verdict included (§11 entry 3). `decomposed`
+    // outcomes are skipped by the classifier — they became groups above; the
+    // `unsplittable` and `ambiguous` ones are what raise UNSPLITTABLE_BATCH and
+    // AMBIGUOUS_MATCH, carrying the bound that stopped the search (ADR-038).
+    batches: batch.batches,
+    groups: assembled.matches, refused: assembled.refused, config,
   }));
 
   await withTransaction(async (c) => {
@@ -467,6 +484,8 @@ async function runPhases(
     // included — see `aliasStatusCounts`. Dropping the revoked ones would
     // flatter the leverage ratio by hiding the corrections that were wrong.
     humanCorrectionsToDate: aliasCounts.active + aliasCounts.superseded + aliasCounts.revoked,
+    batchOutcomes: batch.batches.map((b) => ({ stats: b.outcome.stats })),
+    batchPairs: batch.splitPairs,
     timings: stage.finish(startedAt),
     config,
   });
@@ -542,7 +561,7 @@ class StageClock {
       tier15: this.get('tier15'),
       identity: this.get('identity'),
       tier2: this.get('tier2'),
-      batch: null,      // S10 unwired
+      batch: this.get('batch'),
       group: this.get('group'),
       classify: this.get('classify'),
       explain: null,    // S13 unwired
@@ -581,20 +600,20 @@ function reasonForException(e: ClassifiedException): string {
 }
 
 /**
- * ── Two stages this orchestrator does NOT run, and why that is stated rather
- * than hidden ──
+ * ── The one stage this orchestrator does NOT run, stated rather than hidden ──
  *
- * S10 (batch decomposition) is built and unit-tested in
- * `matching/batch-decomposition.ts`, but wiring it needs a decision this unit
- * should not make alone: which unmatched bank credits enter the pool, and how a
- * decomposition's members interact with S11's role-collision rule. Until it is
- * wired, `UNSPLITTABLE_BATCH` is never raised and those records fall into the
- * presence categories — visible in the exception counts, and NOT silently
- * absorbed.
+ * S13 (explain) is U11. Its status transition and its call site are here; it
+ * fabricates no value it cannot compute, so every exception keeps
+ * `explanation_text = NULL`, which the UI renders as "not yet explained" rather
+ * than as an empty explanation. `metrics.llmCost` stays `null` for the same
+ * reason — a stage that did not run must not report a cost of zero, which reads
+ * as a warm cache.
  *
- * S13 (explain) and S14 (metrics) are U11 and U8. Both have their status
- * transitions and their call sites here; neither fabricates a value it cannot
- * compute. `runs.metrics` stays NULL until U8 fills it, which endpoint 5 already
- * renders as `409 RUN_NOT_COMPLETE` rather than as zeroes.
+ * S10 (batch decomposition) and S14 (metrics) were both on this list and are
+ * now wired — S14 on Day 9, S10 on Day 10 (issue #46). `UNSPLITTABLE_BATCH` is
+ * therefore raised by a search that actually ran, which is the whole of ADR-038:
+ * the engine may only call a batch unsplittable after genuinely trying to split
+ * it, and `evidence.searchExhausted` vs `evidence.searchBoundExceeded` says
+ * which claim it is making.
  */
-export const UNWIRED_STAGES = ['S10_BATCH', 'S13_EXPLAIN', 'S14_METRICS'] as const;
+export const UNWIRED_STAGES = ['S13_EXPLAIN'] as const;

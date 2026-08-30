@@ -50,7 +50,7 @@ Rationale for each is in [docs/adr-log.md](docs/adr-log.md). Don't re-litigate t
 | [docs/agent-design.md](docs/agent-design.md) | **The Analyst (Phase A).** The agentic layer downstream of S14: tool registry, investigation loop, grounding gate, self-correction, how the agent is measured. Read it before touching anything agent-related. |
 | [docs/api-contract.md](docs/api-contract.md) | Every endpoint. Frontend and backend are built on different days — **this contract is binding.** |
 | [docs/ui-spec.md](docs/ui-spec.md) | Screens, states, the demo path, and the pre-agreed degradation order if Day 12 overruns. |
-| [docs/adr-log.md](docs/adr-log.md) | Every locked decision with reasoning. Append-only. 75 entries. |
+| [docs/adr-log.md](docs/adr-log.md) | Every locked decision with reasoning. Append-only. 78 entries. |
 | [docs/validation-strategy.md](docs/validation-strategy.md) | Ground-truth generation, precision/recall scoring, the scale benchmark, the honesty protocols. |
 | [docs/testing-strategy.md](docs/testing-strategy.md) | What gets tested and what deliberately doesn't. |
 | [docs/deployment.md](docs/deployment.md) | Hosting, env vars, secrets, deploy steps. |
@@ -213,6 +213,10 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 ---
 
 ## 10. Current state
+
+**As of 2026-08-30 (Day 10): S10 is wired and the whole dependency chain #45 → #49 → #46 is closed. Re-scored: precision 1.0000, FP 0, recall 0.6089, review-queue precision 1.0000, unresolvable recall 1.0, zero build blockers. Match rate 66.48% against a 93% ceiling — DOWN 1.37 points from Day 9, and that is CORRECT: split legs are `pending_review` (ADR-038) and §10 rule 4 makes a group holding a proposal a proposal. Found-at-all rose 81.4% → 86.5%.**
+
+> **Report both figures or neither.** Two days running, the honest headline has moved opposite to the honest improvement. `matchRatePct` counts what the engine will confirm on its own; found-at-all counts what it located. ARCHITECTURE §8.1 has the framing.
 
 **As of 2026-08-29 (Day 9): AUDIT-2 is done and its P1 is fixed. A full holdout run takes 859 ms and produces 920 transactions, 284 matches (755 members), 256 exceptions and a 635-entry audit chain that verifies and is anchored. Pair-level recall against the answer key is 658/872 with ZERO false positives, and the engine's own match rate is 67.85% against a computed ceiling of 93.0%.**
 
@@ -531,14 +535,16 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 | # | Unit | Model | Why |
 |---|---|---|---|
 | **U14** | Deploy API to Railway (ADR-061, ADR-074) | **Opus / high** | Moved up a day. Nothing has ever run outside a laptop. `deployment.md` §5. Acceptance is *"a second deploy is one command"*, not *"it is live"*. |
-| **R1** | Wire S10 batch decomposition — **[#46](https://github.com/flare19/payment-reconciliation-agent-platform/issues/46), P1** | **Opus / high** | Built and tested Day 4, never called. **48 false negatives (6.7 recall points)** and `UNSPLITTABLE_BATCH` at **0.000/0.000** sit behind it. Both blockers U6 named are now decidable — #40 made "unmatched after S9" mean something, and `assembleGroups` already takes `batchGroups` as a passthrough. |
+| **R1** ✅ | Wire S10 — **#46**, **#45**, **#49** | **Opus / high** | **Done.** Pair recall **658 → 694**, `UNSPLITTABLE_BATCH` **0.000/0.000 → 1.000/0.500**, 7 `one_to_many` groups, cross-source invented pairs still **0**. Match rate 67.85% → **66.48%** and that is CORRECT — split legs are `pending_review` (ADR-038), and §10 rule 4 makes a group holding a proposal a proposal. ADR-076/077/078. |
 | — | Re-score, record the number | — | `npm run score -- --run <id>`. Every day from here ends with a re-score (habit 0). |
 
 ### The four open P1s, and when each lands
 
 | # | What | Cost, measured | When |
 |---|---|---|---|
-| **[#46](https://github.com/flare19/payment-reconciliation-agent-platform/issues/46)** | S10 built, tested, never called | 48 pairs · 6.7 recall points · an exception category at 0.000/0.000 | **Day 10** |
+| ~~#45~~ ✅ | Rule 3's cardinality exception, plus the cluster-merge pair loss it made reachable | ADR-077 | Day 10 |
+| ~~#49~~ ✅ | S10's pool is now role-scoped | ADR-077 | Day 10 |
+| ~~#46~~ ✅ | S10 wired and producing | pair recall **658 → 694**, `UNSPLITTABLE_BATCH` **0.000 → 1.000/0.500**, 7 `one_to_many` groups | Day 10 |
 | **[#38](https://github.com/flare19/payment-reconciliation-agent-platform/issues/38)** | `anchorAgreement` compares weak keys like-for-like | 17 pairs — and **11 of them are in the never-found set**, the entire actionable remainder once #46 is wired | **Day 11** |
 | **[#43](https://github.com/flare19/payment-reconciliation-agent-platform/issues/43)** | `countsTowardEngineMatchRate` admits `pending_review` | Browse list implies 86.4% where the headline says 67.85% | **before the frontend reads it** |
 

@@ -427,3 +427,84 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
   **And the same honesty applies to its yield:** correcting the date curve alone would recover approximately nothing. Those pairs are missing 0.30 of anchor weight; a plausible re-shaping moves them 0.50 → 0.55, still short. Recording it as a defect in the *published property* rather than as a recall opportunity is the accurate framing, and #48's recommended resolution is still to make the documentation true rather than to change the arithmetic.
 
+  **Also Day 10 — S10 wired (#46). It runs, it is honest, and it recovers nothing, and the reason is the #40 error in a new stage.**
+
+  `batch-stage.ts` is the caller `batch-decomposition.ts` had been waiting for since Day 4. Splits (§8.1) run first because their evidence is identity-bearing; batches (§8) follow over what splits left. Four decisions the docs never made are argued in ADR-076.
+
+  **Two over-claims the wiring surfaced, both caught before they shipped.**
+
+  The first wired run produced a `decomposed` verdict containing **one** gateway payment — a 1:1 pair Tier 2 had already scored and declined, re-decided by S10 on strictly weaker evidence, since the batch pool requires no anchor at all. `searchSubsetsInBand`'s own docstring already states the rule for the split path — *"a size-1 solution is an ordinary 1:1 match that belongs to the tiers, not to this stage"* — and the batch path had never passed the minimum. **A rule written down in one branch of a module and not applied in the neighbouring branch**, invisible until something called it.
+
+  The second would have been worse. Without a pool-shape floor, wiring S10 relabels **all 69** unmatched settlement credits as `UNSPLITTABLE_BATCH`, replacing accurate `MISSING_IN_GATEWAY` exceptions with a proof the engine had not performed. ADR-038's entire content is that unsplittability may be claimed only after genuinely trying; a search over fewer than two candidates is not a genuine attempt at a *batch*. That would have looked like progress — a category moving off 0.000 — while being a straight downgrade in honesty.
+
+  **And then the real finding.** With both guards in place S10 produces **zero** verdicts, because its candidate pool has a maximum size of **1**:
+
+  ```
+  gateway rows with NO bank counterpart:
+    in a group, matched to ledger only ....... 58   <- EXCLUDED from the pool
+    in no group at all ....................... 10   <- the ENTIRE pool today
+  ```
+
+  Every one of the six designed `UNSPLITTABLE_NET_BATCH` events has its gateway matched to its **ledger** row, so none can enter the pool. The predicate asks *"is this record in any group?"* where the domain question is *"does it have a **bank** counterpart?"* — **the same record-versus-role error as #40, in a different stage, four days after #40 was fixed and written up at length.** Filed as [#49](https://github.com/flare19/payment-reconciliation-agent-platform/issues/49); it is blocked on #45, because a widened pool means batch findings must merge into existing groups and `roleConflict` refuses multi-role merges unconditionally.
+
+  **What that says about the failure mode.** #40's lesson was recorded as *"two facts in different documents, never composed."* That framing was too narrow. The reusable shape is **record-level reasoning where the domain is role-level** — a category error that has now appeared in Tier 2's pool, in S10's pool, and (as #45) in `roleConflict`'s refusal rule. Writing up an instance is not the same as recognising the class, and the cost of the difference was finding it again by hand.
+
+  **The honest outcome of a wiring day is a stage that runs and a number that did not move.** #46 stays open with four of eight criteria met, and its recall arrives with #49.
+
+  **Day 10, continued — #45 and #49 landed, and S10 finally does something. Two over-claims and one arithmetic slip were caught on the way, all three by measuring rather than by reading.**
+
+  **#45 — rule 3's cardinality exception.** §10 rule 3 has always said `many_to_one` and `one_to_many` groups are *"the sole exception: multiple members of one role are legitimate there, and only there"*, and `roleConflict` never implemented it. The exception is now **declared by the rule that asserts the cardinality** (`mayDuplicateRole`), never inferred from the resulting shape — inferring it would make rule 3 toothless, because every ambiguous second candidate would quietly become a "many_to_one group" instead of an `AMBIGUOUS_MATCH`. Making same-role merges legal also made the cluster-merge branch reachable for the first time, so #45's second half — that branch silently dropping `cb.pairs` — had to land in the same commit. Left alone it would have let a weak `pending_review` pair absorbed into a strong cluster vanish from the merged group's confidence, tier and status.
+
+  **#49 — the pool predicate.** Role-scoped now: *"does this gateway have a **bank** counterpart?"* rather than *"is it in any group?"*. That is the #40 category error, and this was its third appearance.
+
+  **Then three things the measurement caught that reading would not have.**
+
+  1. **A same-source scoring artefact.** A `one_to_many` group's two bank legs produce a `bank↔bank` pair, and `tools/score` counted 15 of them as invented matches — precision would have dropped from 1.0000 for the exact shape §8.1 exists to produce. The key models cross-source pairs; its only same-source entries are the nine `IDENTITY_DESTROYED` gateway↔gateway **denials**, which must stay fully scoreable. So the scorer now excludes unaffirmed same-source legs and **counts the exclusion**, and a test asserts the denials still fire. **A scorer defect that only becomes reachable when the engine starts producing a shape it never produced before.**
+
+  2. **`UNSPLITTABLE_BATCH` at precision 0.067.** With only a pool-size floor, wiring S10 relabelled 17 credits across 15 events as unsplittable batches — one of them a designed batch, fourteen of them ordinary `TIMING_LAG_NORMAL` settlements. **A category moving off 0.000 looked like progress and was a straight downgrade in honesty.** §8 says a batch is *"the net of MANY payments"*, so the discriminator is that the credit must exceed the largest available candidate; with that, precision is **1.000** and recall **0.500**, with the three misses named.
+
+  3. **And the first version of that fix was wrong in a way worth recording.** I required **two** present candidates. §4's `UNSPLITTABLE_NET_BATCH` is a credit netting payments *"with no breakup file provided"*, and the generator proves unresolvability over the payments that ARE available — often one. **The floor demanded the very evidence whose absence defines the scenario**, and it took the six designed batches to 0/6 before the measurement said so. Twice in one day, a guard written to prevent an over-claim became an under-claim; both times the fix was to go back to what the spec says the case IS, not to move a number until it looked right.
+
+  **Where the holdout landed:**
+
+  ```
+                      before S10    after
+  pair recall           658/872    694/872     +36
+  cross-source invented     0          0
+  one_to_many groups        0          7
+  match members           755        773
+  exceptions              256        236
+  UNSPLITTABLE_BATCH  0.000/0.000  1.000/0.500
+  match rate            67.85%     66.48%      -1.37
+  ```
+
+  **The match rate went DOWN and that is correct.** A split settlement is `pending_review` (ADR-038: a decomposition is a strong inference, never a certainty), and §10 rule 4 says a group containing a proposal IS a proposal — so seven groups that had been auto-confirmed became pending when their bank legs arrived. **The pairs were found; they are just not confirmed.** That is the found-versus-auto-confirmed distinction ARCHITECTURE §8.1 already documents, showing up in the headline for the first time, and it is the honest direction for it to move.
+
+  **End of Day 10 — the re-score, and three more scorer defects that only S10's new output could reach.**
+
+  ```
+                        Day 9      Day 10
+  precision            1.0000     1.0000
+  recall (confirmed)   0.6173     0.6089
+  TP / FP / FN        442/0/274  436/0/280
+  pending pairs          150        207
+  review-queue prec     0.94       1.0000  (over 183 judged)
+  FOUND AT ALL       583 = 81.4%  619 = 86.5%
+  unresolvable recall    1.0        1.0
+  false-despair         0.78       0.80
+  match rate           67.85%     66.48%   ceiling 93%
+  build blockers          0          0
+  ```
+
+  **The headline fell and the engine got better, and both halves of that are true.** Split legs are `pending_review` (ADR-038), §10 rule 4 makes a group holding a proposal a proposal, so six pairs moved from confirmed to pending — while 51 more pairs were found. Auto-confirmed recall −0.008; **found-at-all +5.1 points**. This is the second day running where the honest headline moves opposite to the honest improvement, and it is the strongest argument yet for publishing both figures side by side rather than one.
+
+  **Three scorer defects, all latent until the engine produced a shape it never had before.**
+
+  1. **A crash.** `scoreResolvability` read `e.evidence['searchExhausted']` from `ExceptionSummary`, which does not carry `evidence` — only `ExceptionDetail` does. It never threw because S10 was unwired and the `UNSPLITTABLE_BATCH` guard always skipped. The first run to produce one died with `Cannot read properties of undefined`. Now read from `runs.metrics`, which S14 computes from the verdicts themselves.
+  2. **Review-queue precision applied different exclusions from the primary metric.** Pending pairs on EXCEPTION events counted as wrong asks, reporting **24 bad proposals on a run whose genuinely wrong count is zero** and dragging the queue from 1.0 to 0.88. The queue's exclusions must match TP/FP's exactly, or the two disagree about what a wrong question is. **Correct figure: 1.0000 over 183 judged.**
+  3. **A tie-break nobody had chosen.** §5.2 scores classification per EVENT; the engine raises exceptions per RECORD; **40 of ~72 exception events carry more than one category.** The scorer was picking whichever came first in the key's `projections` array — generator output order. Replacing it with canonical row order moved macro precision by 0.08 and took `UNSPLITTABLE_BATCH` from **1.000/0.167 to 0.000/0.000 on identical engine output**. Filed as [#50](https://github.com/flare19/payment-reconciliation-agent-platform/issues/50), P1: it is ADR-072's unit mismatch — the key describes events, the engine reports records — in its other half.
+
+  **The pattern for the day, stated plainly.** Every defect found today lived in a consumer that had never been fed real input: `roleConflict`'s cardinality exception, S10's pool predicate, the scorer's evidence read, its queue exclusions, its category tie-break. **A stage that produces nothing validates every consumer downstream of it, and validates none of them.** Wiring S10 was worth doing for what it broke as much as for the 51 pairs it found.
+
+  **And twice today a guard written against an over-claim became an under-claim** — the two-candidate batch floor, and the canonical tie-break that hides a category the engine gets right. Both times the correction was to go back to what the spec says the case IS. Neither time was it to move a number until it looked better.
+
