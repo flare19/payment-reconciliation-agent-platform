@@ -1,9 +1,23 @@
 /**
  * Domain vocabulary — the closed sets the whole system agrees on.
  *
- * Every union here mirrors a Postgres CHECK constraint in `migrations/`.
- * If you add a value, add it in BOTH places, in the same commit.
- * See docs/schema.md §0 (why CHECK and not native enum types).
+ * Most unions here mirror a Postgres CHECK constraint in `migrations/` — if you
+ * add a value to one of those, add it in BOTH places, in the same commit. See
+ * docs/schema.md §0 (why CHECK and not native enum types).
+ *
+ * Two are DELIBERATELY unconstrained at the database level (see #13):
+ * `PaymentMethod` and `BankTxnType` back `transactions.method` / `.txn_type`,
+ * both declared as plain TEXT with no CHECK in migrations/003 and in
+ * schema.md §3 — the doc and the migration agree, so this file's header used
+ * to be the only place claiming otherwise. `method` is load-bearing
+ * (`tolerance.ts`'s `dateWindowFor` branches on it) and `txn_type` gates the
+ * ADR-036 FEE exclusion, so a value outside the TS union is still a real risk;
+ * it just is not one the database will catch.
+ *
+ * The reverse direction also has three exceptions with no TS union at all —
+ * `exceptions.explanation_source`, `agent_investigations.status` and
+ * `agent_investigations.human_disposition` — defensible omissions rather than
+ * drift, since nothing outside their own repository reads those columns.
  */
 
 export type SourceSystem = 'gateway' | 'bank' | 'ledger';
