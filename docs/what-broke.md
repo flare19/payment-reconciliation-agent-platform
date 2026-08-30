@@ -427,3 +427,27 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
   **And the same honesty applies to its yield:** correcting the date curve alone would recover approximately nothing. Those pairs are missing 0.30 of anchor weight; a plausible re-shaping moves them 0.50 → 0.55, still short. Recording it as a defect in the *published property* rather than as a recall opportunity is the accurate framing, and #48's recommended resolution is still to make the documentation true rather than to change the arithmetic.
 
+  **Also Day 10 — S10 wired (#46). It runs, it is honest, and it recovers nothing, and the reason is the #40 error in a new stage.**
+
+  `batch-stage.ts` is the caller `batch-decomposition.ts` had been waiting for since Day 4. Splits (§8.1) run first because their evidence is identity-bearing; batches (§8) follow over what splits left. Four decisions the docs never made are argued in ADR-076.
+
+  **Two over-claims the wiring surfaced, both caught before they shipped.**
+
+  The first wired run produced a `decomposed` verdict containing **one** gateway payment — a 1:1 pair Tier 2 had already scored and declined, re-decided by S10 on strictly weaker evidence, since the batch pool requires no anchor at all. `searchSubsetsInBand`'s own docstring already states the rule for the split path — *"a size-1 solution is an ordinary 1:1 match that belongs to the tiers, not to this stage"* — and the batch path had never passed the minimum. **A rule written down in one branch of a module and not applied in the neighbouring branch**, invisible until something called it.
+
+  The second would have been worse. Without a pool-shape floor, wiring S10 relabels **all 69** unmatched settlement credits as `UNSPLITTABLE_BATCH`, replacing accurate `MISSING_IN_GATEWAY` exceptions with a proof the engine had not performed. ADR-038's entire content is that unsplittability may be claimed only after genuinely trying; a search over fewer than two candidates is not a genuine attempt at a *batch*. That would have looked like progress — a category moving off 0.000 — while being a straight downgrade in honesty.
+
+  **And then the real finding.** With both guards in place S10 produces **zero** verdicts, because its candidate pool has a maximum size of **1**:
+
+  ```
+  gateway rows with NO bank counterpart:
+    in a group, matched to ledger only ....... 58   <- EXCLUDED from the pool
+    in no group at all ....................... 10   <- the ENTIRE pool today
+  ```
+
+  Every one of the six designed `UNSPLITTABLE_NET_BATCH` events has its gateway matched to its **ledger** row, so none can enter the pool. The predicate asks *"is this record in any group?"* where the domain question is *"does it have a **bank** counterpart?"* — **the same record-versus-role error as #40, in a different stage, four days after #40 was fixed and written up at length.** Filed as [#49](https://github.com/flare19/payment-reconciliation-agent-platform/issues/49); it is blocked on #45, because a widened pool means batch findings must merge into existing groups and `roleConflict` refuses multi-role merges unconditionally.
+
+  **What that says about the failure mode.** #40's lesson was recorded as *"two facts in different documents, never composed."* That framing was too narrow. The reusable shape is **record-level reasoning where the domain is role-level** — a category error that has now appeared in Tier 2's pool, in S10's pool, and (as #45) in `roleConflict`'s refusal rule. Writing up an instance is not the same as recognising the class, and the cost of the difference was finding it again by hand.
+
+  **The honest outcome of a wiring day is a stage that runs and a number that did not move.** #46 stays open with four of eight criteria met, and its recall arrives with #49.
+

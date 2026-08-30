@@ -197,10 +197,15 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
   test('S14 reports what it did NOT compute, rather than zeroing it', async () => {
     const run = await findRun(runId);
     const m = run!.metrics as Record<string, unknown>;
-    assert.deepEqual(m['stagesNotRun'], ['S10_BATCH', 'S13_EXPLAIN']);
+    assert.deepEqual(m['stagesNotRun'], ['S13_EXPLAIN']);
     assert.equal(m['llmCost'], null);
+    // S10 runs since #46, so these are counts. On this dataset every unmatched
+    // settlement credit has a candidate pool below the batch-shaped floor, so
+    // no batch verdict reaches S12 and both counts are 0 — a real zero from a
+    // stage that ran, which is a different claim from `null`.
     const e = m['exceptions'] as Record<string, unknown>;
-    assert.equal(e['batchSearchExhausted'], null, '0 would claim a search that never ran');
+    assert.equal(e['batchSearchExhausted'], 0);
+    assert.equal(e['batchSearchBoundExceeded'], 0);
   });
 
   test('tierAttribution survives the jsonb round trip as PAIR counts (ADR-072)', async () => {

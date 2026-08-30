@@ -157,6 +157,7 @@ describe('computeRunMetrics against the holdout', () => {
       nonPrimaryDuplicates: ing.transactions.length - d.pool.length,
     },
     pool: t15.pool, exactPairs, tier2, identity, groups: assembled.matches, exceptions,
+    batchOutcomes: [],
     aliasCountAtStart: 0,
     aliasCounts: { active: 0, superseded: 0, revoked: 0 },
     humanCorrectionsToDate: 0,
@@ -213,14 +214,30 @@ describe('computeRunMetrics against the holdout', () => {
   });
 
   test('an unrun stage reports null, never zero, and says which stages those are', () => {
-    // `0` is a performance claim. "The batch searcher exhausted 0 subsets" says
-    // it searched; `llmCost: {apiCalls: 0}` says the cache served everything.
-    assert.equal(m.exceptions.batchSearchExhausted, null);
-    assert.equal(m.exceptions.batchSearchBoundExceeded, null);
+    // `0` is a performance claim: `llmCost: {apiCalls: 0}` says the cache served
+    // everything rather than "there is no explain layer yet".
     assert.equal(m.llmCost, null);
-    assert.equal(m.throughput.stageMs['batch'], null);
     assert.equal(m.throughput.stageMs['explain'], null);
-    assert.deepEqual(m.stagesNotRun, ['S10_BATCH', 'S13_EXPLAIN']);
+    assert.deepEqual(m.stagesNotRun, ['S13_EXPLAIN']);
+  });
+
+  test('a stage that DID run reports counts, not null — the same rule in reverse (#46)', () => {
+    // S10 is wired, so reporting its search figures as `null` would claim an
+    // absence for work the engine actually did. ADR-038's two claims stay
+    // separate: proving no combination works is a finding, running out of
+    // budget is a statement about the engine's own bounds.
+    const withBatches = computeRunMetrics({
+      ...input,
+      batchOutcomes: [
+        { stats: { exhaustive: true, boundHit: null } },
+        { stats: { exhaustive: true, boundHit: null } },
+        { stats: { exhaustive: false, boundHit: { bound: 'nodes', value: 1 } } },
+      ],
+    });
+    assert.equal(withBatches.exceptions.batchSearchExhausted, 2);
+    assert.equal(withBatches.exceptions.batchSearchBoundExceeded, 1);
+    assert.notEqual(withBatches.exceptions.batchSearchExhausted, null,
+      'S10 ran; null would be an absence claimed for work that happened');
   });
 
   test('cold and warm are both labelled, and leverage is null rather than zero', () => {

@@ -149,9 +149,11 @@ export function searchSubsets(
   tolerancePaise: Paise,
   config: RunConfig,
   poolCapped: boolean,
+  minSubsetSize = 1,
 ): { solutions: Contribution[][]; stats: SearchStats } {
   return searchSubsetsInBand(
-    contributions, targetPaise - tolerancePaise, targetPaise + tolerancePaise, config, poolCapped);
+    contributions, targetPaise - tolerancePaise, targetPaise + tolerancePaise, config,
+    poolCapped, minSubsetSize);
 }
 
 /**
@@ -276,8 +278,18 @@ export function decomposeBatch(
   const contributions = pool.map((g) => contributionOf(g, config));
   const tolerance = amountToleranceBand(credit.amountPaise, config);
 
+  // minSubsetSize 2, for the reason `searchSubsetsInBand` already gives about
+  // the split search: a size-1 "solution" is an ordinary 1:1 match and belongs
+  // to the tiers, not to this stage. §8 is explicitly about a credit that nets
+  // MANY payments.
+  //
+  // This only became visible when S10 was wired (#46): with size 1 allowed, the
+  // stage produced a one-gateway "decomposition" for a pair Tier 2 had already
+  // scored and declined — S10 overruling S9 on strictly weaker evidence, since
+  // the batch pool requires no anchor at all. A stage that can only extend the
+  // engine's output must not be able to re-decide it.
   const { solutions, stats } = searchSubsets(
-    contributions, credit.amountPaise, tolerance, config, capped);
+    contributions, credit.amountPaise, tolerance, config, capped, 2);
 
   if (solutions.length === 1) {
     const members = solutions[0]!.map((c) => c.transaction).sort(compareCanonical);

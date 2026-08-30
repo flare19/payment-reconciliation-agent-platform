@@ -50,7 +50,7 @@ Rationale for each is in [docs/adr-log.md](docs/adr-log.md). Don't re-litigate t
 | [docs/agent-design.md](docs/agent-design.md) | **The Analyst (Phase A).** The agentic layer downstream of S14: tool registry, investigation loop, grounding gate, self-correction, how the agent is measured. Read it before touching anything agent-related. |
 | [docs/api-contract.md](docs/api-contract.md) | Every endpoint. Frontend and backend are built on different days — **this contract is binding.** |
 | [docs/ui-spec.md](docs/ui-spec.md) | Screens, states, the demo path, and the pre-agreed degradation order if Day 12 overruns. |
-| [docs/adr-log.md](docs/adr-log.md) | Every locked decision with reasoning. Append-only. 75 entries. |
+| [docs/adr-log.md](docs/adr-log.md) | Every locked decision with reasoning. Append-only. 76 entries. |
 | [docs/validation-strategy.md](docs/validation-strategy.md) | Ground-truth generation, precision/recall scoring, the scale benchmark, the honesty protocols. |
 | [docs/testing-strategy.md](docs/testing-strategy.md) | What gets tested and what deliberately doesn't. |
 | [docs/deployment.md](docs/deployment.md) | Hosting, env vars, secrets, deploy steps. |
@@ -531,14 +531,15 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 | # | Unit | Model | Why |
 |---|---|---|---|
 | **U14** | Deploy API to Railway (ADR-061, ADR-074) | **Opus / high** | Moved up a day. Nothing has ever run outside a laptop. `deployment.md` §5. Acceptance is *"a second deploy is one command"*, not *"it is live"*. |
-| **R1** | Wire S10 batch decomposition — **[#46](https://github.com/flare19/payment-reconciliation-agent-platform/issues/46), P1** | **Opus / high** | Built and tested Day 4, never called. **48 false negatives (6.7 recall points)** and `UNSPLITTABLE_BATCH` at **0.000/0.000** sit behind it. Both blockers U6 named are now decidable — #40 made "unmatched after S9" mean something, and `assembleGroups` already takes `batchGroups` as a passthrough. |
+| **R1** ✅ | Wire S10 batch decomposition — **[#46](https://github.com/flare19/payment-reconciliation-agent-platform/issues/46)** | **Opus / high** | **Wired; recovers nothing yet.** The stage runs and is honest, but its candidate pool maxes at 1 because the pool predicate is record-level where the question is role-level — [#49](https://github.com/flare19/payment-reconciliation-agent-platform/issues/49), the #40 error in a new stage. Blocked on #45. ADR-076 records four wiring decisions. |
 | — | Re-score, record the number | — | `npm run score -- --run <id>`. Every day from here ends with a re-score (habit 0). |
 
 ### The four open P1s, and when each lands
 
 | # | What | Cost, measured | When |
 |---|---|---|---|
-| **[#46](https://github.com/flare19/payment-reconciliation-agent-platform/issues/46)** | S10 built, tested, never called | 48 pairs · 6.7 recall points · an exception category at 0.000/0.000 | **Day 10** |
+| **[#49](https://github.com/flare19/payment-reconciliation-agent-platform/issues/49)** | **S10's pool is record-level where the question is role-level** — 58 of 68 eligible payments excluded, max pool size 1 | unlocks #46's 48 pairs; **blocked on #45** | Day 11 |
+| **[#46](https://github.com/flare19/payment-reconciliation-agent-platform/issues/46)** | S10 wired ✅ — recall still blocked on #49 | 48 pairs · an exception category at 0.000/0.000 | wiring done Day 10 |
 | **[#38](https://github.com/flare19/payment-reconciliation-agent-platform/issues/38)** | `anchorAgreement` compares weak keys like-for-like | 17 pairs — and **11 of them are in the never-found set**, the entire actionable remainder once #46 is wired | **Day 11** |
 | **[#43](https://github.com/flare19/payment-reconciliation-agent-platform/issues/43)** | `countsTowardEngineMatchRate` admits `pending_review` | Browse list implies 86.4% where the headline says 67.85% | **before the frontend reads it** |
 

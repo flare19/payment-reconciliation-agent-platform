@@ -45,13 +45,16 @@
  * is binding for anything a frontend reads (ADR-072 note in CLAUDE.md §3).
  *
  * ── WHAT IS NOT COMPUTED, AND WHY IT IS ABSENT RATHER THAN ZERO ──
- * S10, S13 and S14's LLM accounting are unwired (`UNWIRED_STAGES` in
- * `services/run/orchestrator.ts`). A stage that did not run reports `null`, not
- * `0`: "the batch searcher exhausted 0 subsets" is a claim that it searched,
- * and `llmCost.apiCalls: 0` reads as "the cache served everything" rather than
- * "there is no explain layer yet". `stagesNotRun` names them, so a reader of the
- * metrics object never has to consult the source to find out which figures are
- * findings and which are absences.
+ * S13 is unwired (`UNWIRED_STAGES` in `services/run/orchestrator.ts`). A stage
+ * that did not run reports `null`, not `0`: `llmCost.apiCalls: 0` reads as "the
+ * cache served everything" rather than "there is no explain layer yet".
+ * `stagesNotRun` names it, so a reader never has to consult the source to find
+ * out which figures are findings and which are absences.
+ *
+ * The rule cuts both ways, and S10 is why it is worth stating: since #46 wired
+ * the batch stage, `batchSearchExhausted` and `batchSearchBoundExceeded` are
+ * real counts and reporting them as `null` would be the same dishonesty in
+ * reverse — claiming an absence for work the engine actually did.
  */
 
 import type { MatchTier, Severity } from '../../types/domain.js';
@@ -103,12 +106,18 @@ export interface MetricsInput {
   aliasCounts: { active: number; superseded: number; revoked: number };
   /** Human corrections made to date — the denominator of the leverage ratio. */
   humanCorrectionsToDate: number;
+  /**
+   * S10's verdicts (issue #46). ADR-038's two claims are DIFFERENT and the
+   * metrics must keep them apart: "I proved no combination works" is a finding,
+   * "I ran out of budget" is a statement about the engine's own bounds.
+   */
+  batchOutcomes: readonly { stats: { exhaustive: boolean; boundHit: unknown } }[];
   timings: StageTimings;
   config: RunConfig;
 }
 
 /** Every stage whose figures are absent rather than zero. */
-export type UnrunStage = 'S10_BATCH' | 'S13_EXPLAIN';
+export type UnrunStage = 'S13_EXPLAIN';
 
 export interface RunMetrics {
   [k: string]: unknown;
@@ -275,7 +284,7 @@ export function tierPairCounts(
 export function computeRunMetrics(input: MetricsInput): RunMetrics {
   const {
     population, pool, exactPairs, tier2, identity, groups, exceptions,
-    aliasCountAtStart, aliasCounts, humanCorrectionsToDate, timings,
+    aliasCountAtStart, aliasCounts, humanCorrectionsToDate, timings, batchOutcomes,
   } = input;
 
   const reconcilable = pool.filter((t) => t.statusNorm === 'reconcilable').length;
@@ -318,7 +327,7 @@ export function computeRunMetrics(input: MetricsInput): RunMetrics {
   return {
     schemaVersion: 1,
     // Named, not inferred. Every null below is explained by this list.
-    stagesNotRun: ['S10_BATCH', 'S13_EXPLAIN'],
+    stagesNotRun: ['S13_EXPLAIN'],
 
     matchRate: {
       matchRatePct: pct(matched.size, reconcilable),
@@ -362,9 +371,12 @@ export function computeRunMetrics(input: MetricsInput): RunMetrics {
       byCategory,
       bySeverity,
       candidateCapHits: tier2.candidateStats.filter((s) => s.candidateCapHit).length,
-      // S10 did not run. `0` would claim a search that never happened.
-      batchSearchExhausted: null,
-      batchSearchBoundExceeded: null,
+      // S10 runs since #46, so these are real counts rather than `null`. They
+      // stay SEPARATE because ADR-038 says they are separate claims: a run where
+      // every batch reports `boundExceeded` has proved something about its own
+      // bounds, not about the data.
+      batchSearchExhausted: batchOutcomes.filter((b) => b.stats.exhaustive).length,
+      batchSearchBoundExceeded: batchOutcomes.filter((b) => b.stats.boundHit !== null).length,
     },
 
     population: {
