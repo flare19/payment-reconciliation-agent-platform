@@ -74,7 +74,7 @@ Per ARCHITECTURE §7, this is a lightweight table — **not** an OpenAPI/Swagger
 | 19 | `/api/runs/:runId/export` | GET | `?format=csv&scope=exceptions\|matches` | `text/csv` | Download for the pitch/demo. |
 | 20 | `/api/exceptions/:exceptionId/resolve` | POST | `{ resolvedBy, resolution, note }` | `{ exception, auditEntryIds[] }` | Mark an exception `human_resolved` or `wont_fix`. (ADR-043) |
 | 21 | `/api/runs/:runId/matches` | POST | `{ createdBy, reason, members[], aliasProposals?[] }` | `201` `{ match, auditEntryIds[] }` | **Manual match** — a human asserting records are the same. (ADR-043) |
-| 22 | `/api/runs/:runId/audit/verify` | GET | — | `{ valid, entriesChecked, firstDivergenceSequenceNo }` | Recompute the audit hash chain. (ADR-042) |
+| 22 | `/api/runs/:runId/audit/verify` | GET | — | `{ valid, entriesChecked, firstDivergenceSequenceNo, divergenceKind, chainHead, anchored, expectedEntryCount, expectedChainHead }` | Recompute the audit hash chain. (ADR-042) |
 | 23 | `/api/runs/:runId/score-report` | POST | `ScoreReport` (from `tools/score`) | `201` `{ scoreReportId }` | Offline scorer posts a measurement. (ADR-041) |
 | 24 | `/api/runs/:runId/population` | GET | `?kind=excluded\|rejected\|duplicates` | `{ items: PopulationItem[], counts, pagination }` | Rows outside the reconcilable denominator, with the reason for each. |
 | 25 | `/api/runs/:runId/investigations` | POST | `{ maxInvestigations?, categories?[] }` | `202` `{ phaseId, status }` | Start Phase A on a completed run. (ADR-048) |
@@ -189,10 +189,19 @@ Creates a match with `tier: 'manual'`, `confidence: 1.0000`, `status: 'human_con
 
 ```json
 { "valid": true, "entriesChecked": 4412, "firstDivergenceSequenceNo": null,
-  "chainHead": "9f2c…", "verifiedAt": "2026-09-04T11:02:00.000Z" }
+  "divergenceKind": null, "chainHead": "9f2c…", "anchored": true,
+  "expectedEntryCount": 4412, "expectedChainHead": "9f2c…" }
 ```
 
-Recomputes the hash chain (`schema.md` §9.0) and reports the first entry whose recomputed hash disagrees. `valid: false` with a `firstDivergenceSequenceNo` means the log was altered outside the application. Read-only, safe to run at any time, and fast enough to run live during the pitch — which is the point of it existing (ADR-042).
+Recomputes the hash chain (`schema.md` §9.0) and reports the first entry whose recomputed hash disagrees. `valid: false` with a `firstDivergenceSequenceNo` means the log was altered outside the application; `divergenceKind` names WHICH kind (`entry_altered`, `chain_broken` or `chain_truncated` — see `hash-chain.ts`), because "a row was edited" and "a row was removed" are different claims about what happened (issue #28).
+
+`anchored` is the reason this has eight fields rather than the five originally documented here. A hash chain proves the entries you HOLD are internally consistent — it cannot prove you hold all of them, since deleting the tail of an otherwise-untouched chain still verifies as clean. `anchored: true` means `audit_chain_heads` recorded an independent count and terminal hash to compare against (`expectedEntryCount`, `expectedChainHead`); `anchored: false` is the weaker claim "the entries present are consistent" with no guarantee none are missing from the end.
+
+There is no `verifiedAt` field — the endpoint does not timestamp itself; the client already has the response time if it needs one.
+
+`firstDivergenceSequenceNo` names where to LOOK, not a proven location of the tamper: `sequence_no` is deliberately outside the hash (schema.md §9.0, ADR-042 — it is DB-assigned at INSERT and the append-only trigger forbids patching it in afterward), so under this threat model — an attacker with database access — it can be renumbered along with everything else. The divergence itself is still detected reliably; the sequence number pointing at it is not.
+
+Read-only, safe to run at any time, and fast enough to run live during the pitch — which is the point of it existing (ADR-042).
 
 ### 23 · `POST /api/runs/:runId/score-report`
 

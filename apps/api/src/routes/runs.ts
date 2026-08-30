@@ -259,7 +259,7 @@ export function runsRouter(env: Env, readSeedDataset: () => RunSources): Router 
   r.get('/:runId/audit/verify', handler(async (req, res) => {
     const runId = pathParam(req, 'runId');
     found(await runsRepo.findRun(runId), 'RUN_NOT_FOUND', `No run exists with id ${runId}`);
-    // Nine fields, not §22's five (issue #28). `anchored` is the important
+    // Eight fields, not §22's original five (issue #28). `anchored` is the important
     // addition: a hash chain proves the entries you HOLD are consistent, and
     // cannot prove you hold all of them. Without the anchor, deleting the tail
     // reads as clean — the cheapest tamper available, certified valid in front
