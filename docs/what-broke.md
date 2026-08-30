@@ -609,3 +609,47 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
   ```
 
   Each time a presence test stood in for a more specific question; each time it removed records from a stage's domain silently rather than erroring. **And each was found only by attributing misses against the answer key, never by a test.** The scorer is the only instrument in this project that can say "there are five relationships here you did not find".
+
+  **Still Day 11 — #51 fixed, and §8.1's anchor clause turned out never to have fired at all.**
+
+  Filed as "the split pass is gated on a role-PRESENCE test". That was true and it was half the defect. The other half only appeared once the gate was opened: the two events still refused, now with all their legs in the pool.
+
+  ```
+  gateway:250   net 19,386   settlement_id setl_X6oDB8pVLveGk2   rrn 579481974116
+    bank:290 = 4,076   bank:39 = 5,485   bank:238 = 9,823   bank:296 = 2
+    every leg: bank_ref_no = 579481974116, description carries setl_X6oDB8pVLveGk2
+    sum = 19,386  — EXACTLY the expected net
+    verdict before: none  ("at least two combinations sum to this credit")
+  ```
+
+  The second combination is the same four legs minus the **2-paise** one: 19,384, also inside a ±100 paise band. **The tolerance that exists to absorb fee rounding was deciding membership**, while a settlement id sitting on all four rows went unread.
+
+  **Why it went unread is the finding.** §8.1 says *"group unmatched bank credits **sharing an anchor with the gateway record**"*, and the implementation tested `sharedStrongAnchor` — structured strong keys, like-for-like. AUDIT-1 established on Day 6 that **bank rows carry no structured strong anchor at all.** So that test was always `null` on real data, every leg was admitted on the date window alone, and **§8.1's anchor clause had never fired once since the day it was written.** Same blindness as #38, one module over, found the same way: by asking why a specific true pair was missing.
+
+  **Fixed in three parts, all of which are needed — any one alone leaves the events half-assembled:**
+
+  1. **The gate.** A gateway record is offered to the split pass while its bank role is *open* — empty, **or** filled by legs that sum short of the payment. Presence was the wrong test for the one rule whose subject is having more than one leg. Already-matched legs join the search pool, and the accepted solution must contain them.
+  2. **Admission.** `sharedStrongAnchor` **or** `sharedReferenceValue` — the cross-key notion #38 established, now extracted into `anchors.ts` with a warning block so S9 and S10 cannot drift and S4/S6/S7/S8 cannot call it. Where ≥2 reference-bearing legs sum into the band, **that set is the split**; arithmetic proves the sum instead of choosing the members. The subset search is untouched for legs carrying no reference.
+  3. **Emission.** Every leg is emitted as a split pair, including one a tier already matched, and that tier pair is superseded. §10 rule 3 admits several members of one role only through pairs that DECLARE the exception (ADR-077) — so a non-declaring fuzzy pair beside three declaring ones is refused as `AMBIGUOUS_MATCH` and **its leg is thrown out of the group the stage just proved.** That is exactly what happened to `bank:290` and `bank:253` on the first attempt, and it is why 7/9 became 8/9 and not 9/9 until this landed.
+
+  ```
+                        before #51   after
+  split events assembled     7/9      9/9 by the rule, 8/9 end to end
+  match members              784      789
+  FOUND AT ALL         641 = 89.5%  648 = 90.5%
+  pending pairs              230      246
+  review-queue precision  1.0 (206) 1.0 (213)
+  precision / FP          1.0000 / 0  1.0000 / 0
+  exceptions                 214      212
+  MISSING_IN_GATEWAY          58       53
+  MISSING_IN_LEDGER           63       66
+  tierAttribution batch       18       25
+  match rate               65.22%   65.22%
+  classification    macro 0.9286 / 0.8738 — unchanged in every cell
+  ```
+
+  The ninth split is short one **ledger** row that no tier ever matched — a gateway↔ledger miss, not a split one. `MISSING_IN_LEDGER` rising by 3 is the five newly-grouped bank rows correctly changing which role they are missing.
+
+  **The pattern, now at four instances and worth stating as a rule.** #40, #49, #51's gate and #51's admission are all the same mistake: **a cheap test standing in for the question actually being asked, and failing SILENTLY by removing things from a stage's domain rather than erroring.** Records vs pairs; any group vs this role; a counterpart in this role vs this role being complete; a strong key vs a shared reference value. In every case the code was defensible line by line, the tests passed, and the only instrument that could see the loss was the answer key.
+
+  **And a rule for the next one:** when a predicate names a *property of a record* but the rule around it is about a *relationship between records*, that is the smell. All four were that.

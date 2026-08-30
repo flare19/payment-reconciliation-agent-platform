@@ -6,6 +6,7 @@ import type { SourceSystem } from '../../src/types/domain.js';
 import {
   decomposeBatch, findSplitSettlement, buildBatchPool, contributionOf, searchSubsets,
 } from '../../src/services/matching/batch-decomposition.js';
+import { runBatchStage } from '../../src/services/matching/batch-stage.js';
 
 const config: RunConfig = { ...ENGINE_DEFAULTS, referenceDate: '2026-08-31', aliasCountAtStart: 0 };
 
@@ -388,5 +389,100 @@ describe('S10.1 — split settlements (the mirror case)', () => {
       txn('b2', 'bank', 2, { amount: 20_000, date: '2026-08-15' }),
     ], config);
     assert.equal(r.kind, 'none');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #51 / ADR-079 — identity inside the split rule, and a role that is OPEN rather
+// than merely EMPTY. Both halves are needed: either one alone leaves the two
+// holdout splits partially assembled.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('S10.1 — identity before arithmetic (#51, ADR-079)', () => {
+  // The exact shape of holdout evt_000262: four legs, each carrying the
+  // gateway's own reference, summing EXACTLY to its expected net — and a 2-paise
+  // leg whose presence or absence both land inside the tolerance band.
+  const SETL = 'setl_X6oDB8pVLveGk2';
+  const RRN = '579481974116';
+  const gateway = txn('g1', 'gateway', 1, {
+    amount: 19_900, net: 19_386, date: '2026-07-30',
+    refs: { payment_id: 'pay_pnREpHhavyd0Jf', rrn: RRN, settlement_id: SETL },
+  });
+  const leg = (id: string, row: number, amount: number) => txn(id, 'bank', row, {
+    amount, date: '2026-07-31',
+    refs: { bank_ref_no: RRN, extracted_from_description: [RRN, SETL] },
+  });
+  const legs = [leg('b1', 1, 4_076), leg('b2', 2, 5_485), leg('b3', 3, 9_823), leg('b4', 4, 2)];
+
+  test('legs carrying the payment\'s own reference are the split, ambiguity notwithstanding', () => {
+    // 4076+5485+9823+2 = 19386 exactly; 4076+5485+9823 = 19384 is ALSO inside the
+    // +/-100 band. Arithmetic alone cannot choose, and before this it did not
+    // try to — it returned `none` and three true legs became exceptions. The
+    // reference numbers already named the members; the sum only has to check them.
+    const r = findSplitSettlement(gateway, legs, config);
+    assert.equal(r.kind, 'split');
+    assert.ok(r.kind === 'split');
+    assert.deepEqual(r.legs.map((l) => l.id), ['b1', 'b2', 'b3', 'b4']);
+    assert.match(r.reason, /established by the shared reference/);
+  });
+
+  test('the arithmetic proof is NOT waived — anchored legs that do not sum are refused', () => {
+    // The half that makes this safe. Shared references admit and ORDER the
+    // evidence; they never excuse it. Drop a leg from the pool and the anchored
+    // set no longer reaches the band, so the identity path declines.
+    const short = [legs[0]!, legs[1]!];   // 9,561 against an expected net of 19,386
+    const r = findSplitSettlement(gateway, short, config);
+    assert.equal(r.kind, 'none');
+  });
+
+  test('window-admitted legs with no shared reference still face the subset search', () => {
+    // Nothing about the old path changed for legs that carry no reference: the
+    // ambiguity that identity resolves above is still fatal without it.
+    const bare = (id: string, row: number, amount: number) =>
+      txn(id, 'bank', row, { amount, date: '2026-07-31' });
+    const r = findSplitSettlement(gateway, [
+      bare('b1', 1, 4_076), bare('b2', 2, 5_485), bare('b3', 3, 9_823), bare('b4', 4, 2),
+    ], config);
+    assert.equal(r.kind, 'none', 'without references, two subsets in band is still undecidable');
+  });
+
+  test('a gateway whose bank role is PARTLY filled still gets its remaining legs', () => {
+    // The regression this issue is named for. `b1` is already paired by S9, so
+    // `!hasCounterpartIn(gateway, 'bank')` used to remove this payment from the
+    // split pass entirely and b2/b3/b4 were never searched for.
+    const pool = [gateway, ...legs];
+    const r = runBatchStage(pool, [{ a: gateway, b: legs[0]! }], config);
+    assert.equal(r.splits.length, 1, 'the split must still be found');
+    assert.deepEqual(r.splits[0]!.legs.map((l) => l.id), ['b1', 'b2', 'b3', 'b4']);
+
+    // EVERY leg is emitted, including the one S9 found, and that tier pair is
+    // named as superseded. Rule 3 admits several members of one role only
+    // through pairs that DECLARE the exception, so leaving the fuzzy pair beside
+    // three declaring ones gets its leg refused out of the group.
+    assert.deepEqual(r.splitPairs.map((p) => p.b.id), ['b1', 'b2', 'b3', 'b4']);
+    assert.ok(r.splitPairs.every((p) => p.mayDuplicateRole === 'bank'));
+    assert.deepEqual(r.supersededTierPairs, [{ aId: 'g1', bId: 'b1' }]);
+  });
+
+  test('a bank role already CLOSED by a 1:1 match is not reopened', () => {
+    // The guard on the gate. An ordinary gateway<->bank match whose leg accounts
+    // for the payment is complete, and this pass must not go looking for more —
+    // otherwise every 1:1 in the run becomes a split candidate.
+    const solo = txn('g2', 'gateway', 2, { amount: 19_900, net: 19_386, date: '2026-07-30' });
+    const whole = txn('b9', 'bank', 9, { amount: 19_386, date: '2026-07-31' });
+    const distractor = txn('b8', 'bank', 8, { amount: 5_000, date: '2026-07-31' });
+    const r = runBatchStage([solo, whole, distractor], [{ a: solo, b: whole }], config);
+    assert.deepEqual(r.splits, []);
+    assert.deepEqual(r.splitPairs, []);
+    assert.deepEqual(r.supersededTierPairs, []);
+  });
+
+  test('a solution that routes AROUND a leg S9 matched is refused, not preferred', () => {
+    // S10 may extend the engine's output, never contradict it (ADR-076 point 3).
+    // Here b9 is matched by S9 but is not in the anchored set, and the anchored
+    // set sums on its own — accepting it would be S10 quietly dropping S9's leg.
+    const stray = txn('b9', 'bank', 9, { amount: 7_000, date: '2026-07-31' });
+    const r = runBatchStage([gateway, ...legs, stray], [{ a: gateway, b: stray }], config);
+    assert.deepEqual(r.splits, [], 'a split that excludes an already-matched leg is not this payment\'s');
   });
 });

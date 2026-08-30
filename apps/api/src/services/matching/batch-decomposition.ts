@@ -25,7 +25,7 @@
 import { compareCanonical, type Paise } from '../../types/domain.js';
 import type { NormalizedTransaction, RunConfig } from '../../types/engine.js';
 import { addDays, dayDelta } from '../ingestion/dates.js';
-import { sharedStrongAnchor } from './anchors.js';
+import { sharedReferenceValue, sharedStrongAnchor } from './anchors.js';
 import { amountToleranceBand, expectedNetBand } from './tolerance.js';
 
 /** How much a gateway payment is expected to contribute to a bank credit. */
@@ -369,10 +369,23 @@ export function findSplitSettlement(
   const window = gateway.method === 'upi' || gateway.method === 'wallet'
     ? config.dateWindowUpiDays : config.dateWindowCardDays;
 
+  //  Admission is by SHARED REFERENCE or by window+counterparty, per §8.1. The
+  //  reference test is `sharedStrongAnchor` OR `sharedReferenceValue`. The
+  //  strict test alone is what shipped, and bank rows carry no structured strong
+  //  anchor at all (AUDIT-1), so it was ALWAYS null here and every real leg was
+  //  admitted on the window alone. The bank states its reference in
+  //  `bank_ref_no` and in its description blob, and ignoring both is the same
+  //  blindness #38 fixed one module over. The strict test is kept because it is
+  //  the stronger of the two and a ledger-shaped source could satisfy it.
+  const anchored = new Set<string>();
   const legs = unmatchedBank.filter((b) => {
     if (b.sourceSystem !== 'bank' || b.direction !== 'credit') return false;
     if (b.statusNorm !== 'reconcilable') return false;
-    if (sharedStrongAnchor(gateway.referenceIds, b.referenceIds) !== null) return true;
+    if (sharedStrongAnchor(gateway.referenceIds, b.referenceIds) !== null
+        || sharedReferenceValue(gateway.referenceIds, b.referenceIds) !== null) {
+      anchored.add(b.id);
+      return true;
+    }
     const delta = dayDelta(gateway.txnDate, b.txnDate);
     if (delta < window[0] || delta > window[1]) return false;
     const party = b.counterpartyKey ?? b.counterpartyNorm;
@@ -381,6 +394,44 @@ export function findSplitSettlement(
   }).sort(compareCanonical);
 
   if (legs.length < 2) return { kind: 'none' };
+
+  // ── Identity before similarity, inside this rule (#51, ADR-079) ────────────
+  //
+  // §8.1 in its own words: *"group unmatched bank credits SHARING AN ANCHOR with
+  // the gateway record (or falling in its window with the same counterparty), and
+  // accept when THEIR SUM lands in the expected net band."* Where legs carry the
+  // payment's own settlement reference, that sentence is the whole rule and the
+  // subset search is not merely unnecessary, it is harmful: it re-opens a
+  // question identity has already answered, and the answer it gives back is
+  // "ambiguous".
+  //
+  // Measured, and it is not a hypothetical. Both split settlements the engine
+  // failed to assemble had FOUR and THREE legs each carrying the gateway's
+  // `settlement_id` in their description and its `rrn` in `bank_ref_no`, summing
+  // EXACTLY to the expected net — and both were refused, because dropping a
+  // 2-paise leg (or adding an unrelated credit) also lands inside a ±100 paise
+  // tolerance band. The tolerance that exists to absorb fee rounding was deciding
+  // membership.
+  //
+  // The arithmetic proof is NOT waived: the anchored set must still sum into the
+  // band. What changes is that arithmetic no longer gets to CHOOSE the members
+  // when a reference number already named them.
+  const anchoredLegs = legs.filter((b) => anchored.has(b.id));
+  if (anchoredLegs.length >= 2) {
+    const anchoredSum = anchoredLegs.reduce((total, b) => total + b.amountPaise, 0);
+    if (anchoredSum >= expected.minPaise - tolerance && anchoredSum <= expected.maxPaise + tolerance) {
+      return {
+        kind: 'split',
+        legs: anchoredLegs,
+        ruleId: 'SPLIT_SETTLEMENT_V1',
+        reason:
+          `${anchoredLegs.length} bank credits each carry this payment's own reference and ` +
+          `together sum to its expected net within ${tolerance} paise; membership is ` +
+          `established by the shared reference rather than chosen by arithmetic, and the ` +
+          `sum is then proved. Proposed for review as a split settlement`,
+      };
+    }
+  }
 
   const contributions: Contribution[] = legs.map((b) => (
     { transaction: b, minPaise: b.amountPaise, maxPaise: b.amountPaise, inferred: false }));

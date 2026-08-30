@@ -23,7 +23,8 @@ import { STRONG_ANCHOR_KEYS } from '../../types/engine.js';
 // Anchor semantics live in one module so S4, S6, S7, S8 and S9 cannot disagree
 // about what counts as identity (see anchors.ts).
 import {
-  WEAK_ANCHOR_KEYS, contradictingStrongAnchor, isWellFormedAnchor as isWellFormed, structuredValue,
+  WEAK_ANCHOR_KEYS, contradictingStrongAnchor, isWellFormedAnchor as isWellFormed,
+  sharedReferenceValue, structuredValue,
 } from './anchors.js';
 import {
   directionAgrees, evaluateAmount, evaluateDate,
@@ -130,42 +131,6 @@ export type AnchorAgreement =
 const WEAK_KEYS = new Set<string>(WEAK_ANCHOR_KEYS);
 
 /**
- * A value one record states in a structured STRONG field and the other states in a
- * structured WEAK field — the SAME value under DIFFERENT key names (#38).
- *
- * `bank_ref_no` exists on bank rows and on no other source, so a like-for-like
- * comparison of weak keys can never fire across sources: a bank `bank_ref_no`
- * byte-identical to a gateway `rrn` scored a literal zero anchor while a matching
- * 12-digit reference sat on both rows. schema.md §2.2 calls that field "worth
- * trying, never worth trusting alone"; trying it is this function.
- *
- * It lives HERE and not in anchors.ts on purpose. S4, S6, S7 and S8 must never
- * treat a weak key as identity — a `bank_ref_no` is "sometimes equal to the RRN,
- * sometimes not" — so this is a Tier 2 scoring notion, not shared anchor
- * vocabulary, and putting it beside `sharedStrongAnchor` would invite dedupe and
- * the exact tiers to call it.
- *
- * Returns the STRONG key, which is the one that names the evidence. Iteration is
- * `STRONG_ANCHOR_KEYS` order, then direction, then `WEAK_ANCHOR_KEYS` order, so a
- * record agreeing under two keys always reports the same one (ADR-032).
- */
-function crossKeyStrongWeakAnchor(
-  a: NormalizedTransaction, b: NormalizedTransaction,
-): string | null {
-  for (const strongKey of STRONG_ANCHOR_KEYS) {
-    for (const [x, y] of [[a, b], [b, a]] as const) {
-      const sv = structuredValue(x.referenceIds, strongKey);
-      if (sv === undefined || !isWellFormed(strongKey, sv)) continue;
-      for (const weakKey of WEAK_ANCHOR_KEYS) {
-        const wv = structuredValue(y.referenceIds, weakKey);
-        if (wv !== undefined && wv === sv && isWellFormed(weakKey, wv)) return strongKey;
-      }
-    }
-  }
-  return null;
-}
-
-/**
  * Compare two records' anchors.
  *
  * Order matters and is deliberate: exact agreement, then near-anchor, then
@@ -221,9 +186,9 @@ export function anchorAgreement(
   // measurable: bank rows carry no structured strong anchor (AUDIT-1), so a
   // gateway<->bank pair has nothing to contradict with, and zero holdout pairs
   // exercise the interaction.
-  const crossKey = crossKeyStrongWeakAnchor(a, b);
+  const crossKey = sharedReferenceValue(a.referenceIds, b.referenceIds);
   if (crossKey !== null && contradictingStrongAnchor(a.referenceIds, b.referenceIds) === null) {
-    return { kind: 'exact', key: crossKey, strength: 'strong_weak' };
+    return { kind: 'exact', key: crossKey.key, strength: 'strong_weak' };
   }
 
   for (const key of WEAK_KEYS) {

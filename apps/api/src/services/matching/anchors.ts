@@ -76,6 +76,53 @@ export function sharedStrongAnchor(a: ReferenceIds, b: ReferenceIds): AnchorEntr
 }
 
 /**
+ * The same reference VALUE stated by both records under keys of DIFFERENT types —
+ * a gateway `rrn` against a bank `bank_ref_no`, or a gateway `settlement_id`
+ * against a value regex'd out of a bank description blob (#38, #51).
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * THIS IS NOT IDENTITY AND MAY NEVER BE USED AS IDENTITY.
+ *
+ * `sharedStrongAnchor` above answers "are these the same payment?" and S4, S6,
+ * S7 and S8 rest on its answer. This function answers something much weaker:
+ * "do these two rows mention the same reference number anywhere?" `bank_ref_no`
+ * is documented as *sometimes* equal to the RRN and description-extracted values
+ * are always weak (schema.md §2.2, §3.1), so a hit here is EVIDENCE, never proof.
+ *
+ * Its only legitimate callers are the two stages that weigh evidence rather than
+ * assert identity: `scoring.ts`'s `anchorAgreement` (S9, where it earns the
+ * `strong_weak` band and never more) and `findSplitSettlement` (S10, where it
+ * admits a candidate leg that must still survive an arithmetic proof). Calling
+ * it from dedupe or the exact tiers would let a coincidental `bank_ref_no`
+ * collapse two different payments into one.
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
+ * Returns the STRONG key, which is the one that names the evidence. Iteration is
+ * `STRONG_ANCHOR_KEYS` order, then direction, then weak-key order, so a pair
+ * agreeing under two keys always reports the same one (ADR-032).
+ */
+export function sharedReferenceValue(
+  a: ReferenceIds, b: ReferenceIds,
+): AnchorEntry | null {
+  const extracted = (refs: ReferenceIds): readonly string[] =>
+    refs.extracted_from_description ?? [];
+  for (const strongKey of STRONG_ANCHOR_KEYS) {
+    for (const [x, y] of [[a, b], [b, a]] as const) {
+      const value = structuredValue(x, strongKey);
+      if (value === undefined || !isWellFormedAnchor(strongKey, value)) continue;
+      for (const weakKey of WEAK_ANCHOR_KEYS) {
+        const wv = structuredValue(y, weakKey);
+        if (wv !== undefined && wv === value && isWellFormedAnchor(weakKey, wv)) {
+          return { key: strongKey, value };
+        }
+      }
+      if (extracted(y).includes(value)) return { key: strongKey, value };
+    }
+  }
+  return null;
+}
+
+/**
  * A strong anchor of the same type present on both sides with DIFFERENT values.
  *
  * Positive evidence that two records are different things, not merely an absence

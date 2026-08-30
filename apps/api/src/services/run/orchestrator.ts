@@ -342,7 +342,15 @@ async function runPhases(
   // the pool and is the #40 error one stage later.
   const batch = stage.time('batch', () => runBatchStage(t15.pool, tierPairs, config));
 
-  const groupPairs: GroupPair[] = [...tierPairs, ...batch.splitPairs];
+  // A tier pair a split absorbed is dropped, not kept beside it (#51, ADR-079):
+  // rule 3 admits multiple members of one role only through pairs that DECLARE
+  // the exception, so a non-declaring fuzzy pair beside three declaring ones is
+  // refused and its leg falls out of the group the stage just proved.
+  const superseded = new Set(batch.supersededTierPairs.map((p) => pairKeyOf(p.aId, p.bId)));
+  const groupPairs: GroupPair[] = [
+    ...tierPairs.filter((p) => !superseded.has(pairKeyOf(p.a.id, p.b.id))),
+    ...batch.splitPairs,
+  ];
   // S10's verdicts arrive as pre-formed GROUPS, not pairs: a decomposition is
   // already a group, and `assembleGroups` marks their members `inBatch` so no
   // pairwise pair can claim one of them (§10 rule 3).

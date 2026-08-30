@@ -345,6 +345,12 @@ A bank `SETTLEMENT` credit may be the net of many gateway payments minus fees, w
 
 One gateway payment settled across two bank credits is `one_to_many`, already supported by `matches.cardinality`, and previously had no rule. It is detected in the same stage and is far cheaper than the batch case: group unmatched bank credits sharing an anchor with the gateway record (or falling in its window with the same counterparty), and accept when their sum lands in the expected net band. Capped at 4 legs. Rule `SPLIT_SETTLEMENT_V1`, status `pending_review`.
 
+**Two clarifications, both of which the first implementation got wrong (#51, ADR-079).**
+
+**"Sharing an anchor" means sharing a reference VALUE, not a like-for-like strong key.** Bank rows carry no structured strong anchor at all — their RRN lives in `bank_ref_no` (weak) and in the free-text description (§3.1) — so a `sharedStrongAnchor` test is always null here and this clause could never fire. Admission tests `sharedStrongAnchor` **or** `sharedReferenceValue` (the cross-key notion of §7.1). And where two or more admitted legs are reference-bearing and their sum lands in the expected-net band, **that set is the split**: identity names the members and arithmetic then proves the sum. The subset search runs only when references did not settle it. Ordering arithmetic ahead of a reference number here would invert the engine's identity-before-similarity ordering inside one stage — and measurably did: both of the holdout's unassembled splits had legs carrying the payment's own `settlement_id` and summing exactly to its net, refused as ambiguous because a 2-paise leg also fits inside a ±100 paise tolerance band.
+
+**"Unmatched" means a bank role that is not yet ACCOUNTED FOR, not one that is empty.** A split is one payment across N credits, so testing "does this payment already have a bank leg?" excludes exactly the payments the rule exists for as soon as S9 finds any one of them. A gateway record is offered to this pass while its matched bank legs sum SHORT of its expected net; legs already matched are included in the search pool, and the accepted solution must contain them. Every leg is then emitted as a pair — including one a tier already found, whose pair is superseded — because §10 rule 3 admits multiple members of one role only through pairs that declare the exception, and a non-declaring pair beside declaring ones is refused out of the group.
+
 ---
 
 ## 9. Refunds, chargebacks and direction (ADR-035)

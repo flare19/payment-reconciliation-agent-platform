@@ -72,6 +72,7 @@ import {
   buildBatchPool, contributionOf, decomposeBatch, findSplitSettlement,
   type BatchOutcome,
 } from './batch-decomposition.js';
+import { amountToleranceBand } from './tolerance.js';
 
 /**
  * §8's outcome table says `tier = fuzzy`; the `matches.tier` CHECK constraint,
@@ -139,6 +140,17 @@ export interface BatchStageResult {
   batches: { credit: NormalizedTransaction; outcome: BatchOutcome }[];
   /** Split settlements found, for the audit trail. */
   splits: { gateway: NormalizedTransaction; legs: NormalizedTransaction[]; reason: string }[];
+  /**
+   * Tier pairs a split ABSORBED — the same two records, re-asserted by
+   * `SPLIT_SETTLEMENT_V1` as one leg of a proved settlement (#51, ADR-079).
+   *
+   * The caller must drop these from the pair list it assembles. Not a
+   * re-decision: the relationship survives unchanged and only its rule id and
+   * tier move. Keeping both would double-count the pair in `tierAttribution` and
+   * would make §10 rule 5 report the group at the fuzzy tier of one leg rather
+   * than at the batch tier of the proof that covers all of them.
+   */
+  supersededTierPairs: { aId: string; bId: string }[];
   /** Every SETTLEMENT credit S10 looked at, including the ones it declined to opine on. */
   creditsExamined: number;
   /** Credits whose candidate pool was too small to be a batch question. */
@@ -162,15 +174,21 @@ export function runBatchStage(
   // Role-scoped counterpart index. `hasCounterpartIn(x, 'bank')` is the question
   // this stage actually asks; "is x in any group at all" is the one that emptied
   // the pool (#49).
-  const counterpartRoles = new Map<string, Set<string>>();
+  // The RECORDS, not just the role names: #51 needs to ask whether the legs a
+  // record already has ACCOUNT for it, which a set of role names cannot answer.
+  const counterpartRoles = new Map<string, Map<string, NormalizedTransaction[]>>();
   const note = (x: NormalizedTransaction, y: NormalizedTransaction): void => {
-    const set = counterpartRoles.get(x.id) ?? new Set<string>();
-    set.add(y.sourceSystem);
-    counterpartRoles.set(x.id, set);
+    const roles = counterpartRoles.get(x.id) ?? new Map<string, NormalizedTransaction[]>();
+    const list = roles.get(y.sourceSystem) ?? [];
+    if (!list.some((z) => z.id === y.id)) list.push(y);
+    roles.set(y.sourceSystem, list);
+    counterpartRoles.set(x.id, roles);
   };
   for (const p of priorPairs) { note(p.a, p.b); note(p.b, p.a); }
+  const counterpartsIn = (x: NormalizedTransaction, role: MemberRole): NormalizedTransaction[] =>
+    [...(counterpartRoles.get(x.id)?.get(role) ?? [])].sort(compareCanonical);
   const hasCounterpartIn = (x: NormalizedTransaction, role: MemberRole): boolean =>
-    counterpartRoles.get(x.id)?.has(role) === true;
+    (counterpartRoles.get(x.id)?.get(role)?.length ?? 0) > 0;
 
   // Records S10 itself has claimed. A record cannot appear in both a split and a
   // batch, and a payment consumed by one decomposition is not offered to another.
@@ -187,6 +205,37 @@ export function runBatchStage(
         && !hasCounterpartIn(t, role))
       .sort(compareCanonical);
 
+  /**
+   * Is this gateway payment's BANK role still open (#51)?
+   *
+   * Empty is open. So is a role whose legs SUM SHORT of what the payment should
+   * have settled for — that is a partially assembled split, and it is the case
+   * `!hasCounterpartIn` silently excluded. A role whose legs already reach the
+   * expected-net band is CLOSED: an ordinary 1:1 gateway<->bank match lands
+   * there by definition, so this pass does not reopen settled work.
+   *
+   * Short, not merely different. If the legs OVERSHOOT the payment, adding more
+   * cannot fix it and something else is wrong — that is an `AMOUNT_MISMATCH`
+   * question, not a split one.
+   */
+  const bankRoleOpen = (gateway: NormalizedTransaction): boolean => {
+    const legs = counterpartsIn(gateway, 'bank');
+    if (legs.length === 0) return true;
+    const expected = contributionOf(gateway, config);
+    const tolerance = amountToleranceBand(gateway.amountPaise, config);
+    const sum = legs.reduce((total, leg) => total + leg.amountPaise, 0);
+    return sum < expected.minPaise - tolerance;
+  };
+
+  /** Gateway records the split pass may consider. Canonical order (ADR-032). */
+  const openForSplit = (): NormalizedTransaction[] =>
+    pool
+      .filter((t) => t.sourceSystem === 'gateway'
+        && t.statusNorm === 'reconcilable'
+        && !consumed.has(t.id)
+        && bankRoleOpen(t))
+      .sort(compareCanonical);
+
   /** Records in no group at all — the conservative set batch GROUPS may use. */
   const whollyUnclaimed = (source: NormalizedTransaction['sourceSystem']): Set<string> =>
     new Set(pool
@@ -199,14 +248,30 @@ export function runBatchStage(
   const groups: ProposedMatch[] = [];
   const splitPairs: GroupPair[] = [];
   const splits: BatchStageResult['splits'] = [];
+  const supersededTierPairs: BatchStageResult['supersededTierPairs'] = [];
 
   // ── §8.1 SPLIT SETTLEMENTS — identity-bearing, so first ────────────────────
-  // A gateway with no BANK counterpart, against bank credits with no GATEWAY
-  // counterpart. Whether either is already matched to a ledger row is irrelevant
-  // to whether this payment was settled across several credits.
-  for (const gateway of openIn('gateway', 'bank')) {
-    const outcome = findSplitSettlement(gateway, openIn('bank', 'gateway'), config);
+  // Offered every gateway record whose BANK role is still OPEN — empty, or
+  // filled by legs that fall short of the payment (#51, ADR-079). Presence in a
+  // role is the wrong test for the one rule whose entire subject is having MORE
+  // THAN ONE counterpart in that role: the moment S9 accepted any single leg of
+  // a split, `!hasCounterpartIn(t, 'bank')` removed the payment from this pass
+  // and the remaining legs were never searched for. Whether either side is
+  // already matched to a LEDGER row remains irrelevant.
+  for (const gateway of openForSplit()) {
+    // The legs S9 already found are part of the settlement, so they are part of
+    // the SUM the search has to reach — searching for the remainder alone would
+    // assume the existing leg belongs to this split instead of proving it.
+    const existing = counterpartsIn(gateway, 'bank').filter((l) => !consumed.has(l.id));
+    const searchPool = [...openIn('bank', 'gateway'), ...existing];
+    const outcome = findSplitSettlement(gateway, searchPool, config);
     if (outcome.kind !== 'split') continue;
+    // ...and the one solution must ACCOUNT FOR every leg already matched. A
+    // decomposition that routes around a leg S9 confirmed is not this payment's
+    // settlement; it is a second, competing claim about the same record, which
+    // is exactly what a stage that may only EXTEND the engine's output must not
+    // make (ADR-076 point 3).
+    if (!existing.every((l) => outcome.legs.some((x) => x.id === l.id))) continue;
 
     consumed.add(gateway.id);
     for (const leg of outcome.legs) consumed.add(leg.id);
@@ -215,7 +280,18 @@ export function runBatchStage(
     // Emitted as pairs, not a group: the gateway may already sit in a
     // [gateway+ledger] group, and these legs belong in THAT group rather than a
     // competing one. `mayDuplicateRole: 'bank'` is rule 3's declared exception.
+    //
+    // EVERY leg is emitted, including one a tier already matched, and the tier's
+    // pair is superseded rather than left beside it. Rule 3 admits several
+    // members of one role only through pairs that DECLARE the exception, so a
+    // fuzzy gateway<->bank pair sitting next to three declaring ones is refused
+    // as an `AMBIGUOUS_MATCH` and its leg is thrown out of the very group it
+    // belongs to. Measured: that dropped `bank:290` and `bank:253` from the two
+    // splits this stage had just proved.
     for (const leg of outcome.legs) {
+      if (existing.some((l) => l.id === leg.id)) {
+        supersededTierPairs.push({ aId: gateway.id, bId: leg.id });
+      }
       splitPairs.push({
         a: gateway, b: leg, tier: BATCH_TIER, status: 'pending_review',
         confidence: BATCH_CONFIDENCE, ruleId: outcome.ruleId,
@@ -275,7 +351,7 @@ export function runBatchStage(
   }
 
   return {
-    splitPairs, groups, batches, splits,
+    splitPairs, groups, batches, splits, supersededTierPairs,
     creditsExamined, creditsBelowPoolFloor, decompositionsRefusedAsAlreadyGrouped,
   };
 }
