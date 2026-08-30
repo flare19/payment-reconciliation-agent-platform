@@ -573,3 +573,39 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
   **Why 486 passing tests never caught this.** The same shape as #30, #31 and #40: `scoring.ts` was correct against every worked example in `schema.md` and had a guard test protecting the ADR-030 ceiling, and the ceiling was never what was wrong. The defect was in a comparison that *doesn't happen*, and no test can assert the absence of a comparison nobody thought to write. What made it findable at all was the answer key — the pair recall figure is the only artifact in this project that can say "there are eleven relationships here that you did not find", and the only reason it could name them was that #46 had already cleared the other 48 out of the way.
 
   **Fourteen pinned test literals moved, across five files.** Every one was checked against a before/after run rather than pasted from a failure message, and each delta reconciles arithmetically with the eleven pairs: +11 match members, +11 three-way groups, +22 implied pairs, −22 exceptions, −22 audit entries, −9 `MATCH_CONFIRMED_EXACT` (§10 rule 5 reporting a group at its weakest tier), +7 `MATCH_FLAGGED_FOR_REVIEW`. **A pin updated to whatever the run printed is not a passing test, it is a recording.** The three new positive assertions in `scoring.test.ts` were verified to FAIL with the fix reverted before they were kept.
+
+  **Later on Day 11 — attributing the residual gap, and what it says about "65% against a 93% ceiling".**
+
+  The headline invites the wrong reading, so here is the decomposition, measured rather than asserted:
+
+  ```
+  reconcilable records          874
+  auto/human confirmed          570 = 65.22%   <- the headline
+  pending_review                214 = 24.49%   <- found, correct, awaiting a human
+  IN A GROUP AT ALL             784 = 89.70%
+  ceiling (93%)                 813
+  genuinely not located          29 =  3.32 pts
+  ```
+
+  **Of the 27.78-point gap between the headline and the ceiling, 24.49 points is the review queue** — records the engine located, whose proposals are correct at **1.0000 precision over 206 judged pairs**, and which ADR-040 deliberately keeps out of the headline because a human has not confirmed them. **3.3 points is the engine actually failing to find something.** The headline is not a measure of how much the engine found; it is a measure of how much it will assert on its own, and those are different numbers by design.
+
+  At pair level: 716 scorable true pairs, 435 confirmed, 206 pending, **75 never found**. Attributed one by one:
+
+  ```
+  no shared reference value, bank<->ledger ....... 37   correct refusal (ADR-064/075, see #48)
+  no shared reference value, gateway<->bank ...... 20   correct refusal (ADR-030 ceiling)
+  no shared reference value, gateway<->ledger .... 13   correct refusal
+  share a reference value, NOT matched ............ 5   ACTIONABLE -> #51
+  ```
+
+  **70 of 75 are the engine declining pairs that share no identifier at all**, which is the ADR-030 honesty property doing exactly what it exists for. Matching them would require guessing from amount, date and name — the coincidence generators — and a run that did so would raise the match rate and lower the thing the rate is supposed to stand for.
+
+  **The remaining 5 are one defect, filed as [#51](https://github.com/flare19/payment-reconciliation-agent-platform/issues/51), and it is the third instance of one family.** `batch-stage.ts` offers the split pass only gateway records with *no* bank counterpart (`openIn('gateway','bank')`). A split settlement is one gateway payment across N bank credits — so the moment S9 accepts any single leg, the record leaves the pool and `findSplitSettlement` is never asked about the rest. **7 of 9 split events assemble fully; the 2 that do not are exactly the 2 where S9 found a leg first.** Which of the nine assemble is decided by a race between S9 and S10 rather than by evidence.
+
+  ```
+  #40  Tier 2 excluded whole RECORDS where §6.3 excludes PAIRS
+  #49  S10 asked "is this in any group?" where the question is "a counterpart in this ROLE?"
+  #51  S10's SPLIT pass asks "a counterpart in this role?" where the question is "is this role COMPLETE?"
+  ```
+
+  Each time a presence test stood in for a more specific question; each time it removed records from a stage's domain silently rather than erroring. **And each was found only by attributing misses against the answer key, never by a test.** The scorer is the only instrument in this project that can say "there are five relationships here you did not find".
