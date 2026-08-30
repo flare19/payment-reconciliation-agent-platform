@@ -203,7 +203,7 @@ describe('S12 over the full pipeline (holdout)', () => {
 
     // Non-vacuous by construction: if this ever reaches 0 the assertions below
     // stop meaning anything, and the test would pass by examining nothing.
-    assert.equal(examined, 207, 'every reconcilable MISSING_IN_* primary, counted');
+    assert.equal(examined, 185, 'every reconcilable MISSING_IN_* primary, counted');
     assert.deepEqual(neverSearched, [],
       'a record reported missing a counterpart that Tier 2 was never allowed to ' +
       'search for — this is issue #40, and it fabricates 200 such exceptions');
@@ -279,14 +279,14 @@ describe('S12 over the full pipeline (holdout)', () => {
     const byCategory: Record<string, number> = {};
     for (const e of exceptions) byCategory[e.category] = (byCategory[e.category] ?? 0) + 1;
     assert.deepEqual(byCategory, {
-      MISSING_IN_GATEWAY: 90,
-      MISSING_IN_BANK: 54,
+      MISSING_IN_GATEWAY: 79,
+      MISSING_IN_BANK: 43,
       MISSING_IN_LEDGER: 63,
       AMBIGUOUS_MATCH: 22,
       AMOUNT_MISMATCH: 18,
       DUPLICATE_RECORD: 9,
     });
-    assert.equal(exceptions.length, 256);
+    assert.equal(exceptions.length, 234);
   });
 });
 

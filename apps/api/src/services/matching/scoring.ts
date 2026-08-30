@@ -23,7 +23,7 @@ import { STRONG_ANCHOR_KEYS } from '../../types/engine.js';
 // Anchor semantics live in one module so S4, S6, S7, S8 and S9 cannot disagree
 // about what counts as identity (see anchors.ts).
 import {
-  WEAK_ANCHOR_KEYS, isWellFormedAnchor as isWellFormed, structuredValue,
+  WEAK_ANCHOR_KEYS, contradictingStrongAnchor, isWellFormedAnchor as isWellFormed, structuredValue,
 } from './anchors.js';
 import {
   directionAgrees, evaluateAmount, evaluateDate,
@@ -130,6 +130,42 @@ export type AnchorAgreement =
 const WEAK_KEYS = new Set<string>(WEAK_ANCHOR_KEYS);
 
 /**
+ * A value one record states in a structured STRONG field and the other states in a
+ * structured WEAK field — the SAME value under DIFFERENT key names (#38).
+ *
+ * `bank_ref_no` exists on bank rows and on no other source, so a like-for-like
+ * comparison of weak keys can never fire across sources: a bank `bank_ref_no`
+ * byte-identical to a gateway `rrn` scored a literal zero anchor while a matching
+ * 12-digit reference sat on both rows. schema.md §2.2 calls that field "worth
+ * trying, never worth trusting alone"; trying it is this function.
+ *
+ * It lives HERE and not in anchors.ts on purpose. S4, S6, S7 and S8 must never
+ * treat a weak key as identity — a `bank_ref_no` is "sometimes equal to the RRN,
+ * sometimes not" — so this is a Tier 2 scoring notion, not shared anchor
+ * vocabulary, and putting it beside `sharedStrongAnchor` would invite dedupe and
+ * the exact tiers to call it.
+ *
+ * Returns the STRONG key, which is the one that names the evidence. Iteration is
+ * `STRONG_ANCHOR_KEYS` order, then direction, then `WEAK_ANCHOR_KEYS` order, so a
+ * record agreeing under two keys always reports the same one (ADR-032).
+ */
+function crossKeyStrongWeakAnchor(
+  a: NormalizedTransaction, b: NormalizedTransaction,
+): string | null {
+  for (const strongKey of STRONG_ANCHOR_KEYS) {
+    for (const [x, y] of [[a, b], [b, a]] as const) {
+      const sv = structuredValue(x.referenceIds, strongKey);
+      if (sv === undefined || !isWellFormed(strongKey, sv)) continue;
+      for (const weakKey of WEAK_ANCHOR_KEYS) {
+        const wv = structuredValue(y.referenceIds, weakKey);
+        if (wv !== undefined && wv === sv && isWellFormed(weakKey, wv)) return strongKey;
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Compare two records' anchors.
  *
  * Order matters and is deliberate: exact agreement, then near-anchor, then
@@ -163,6 +199,31 @@ export function anchorAgreement(
     if (bv !== undefined && isWellFormed(key, bv) && aExtracted.includes(bv)) {
       return { kind: 'exact', key, strength: 'strong_weak' };
     }
+  }
+
+  // The same reference stated under two different key names is also strong-weak
+  // (#38). It is scored strong-weak rather than weak-weak because the block above
+  // already grants strong-weak when a structured anchor matches a value recovered
+  // by regex from a free-text description blob. A value the source stated in a
+  // structured column of its OWN is strictly better evidence than that, so paying
+  // it less would invert the ordering; paying it nothing, as this did until now,
+  // inverted it completely.
+  //
+  // Guarded by the contradiction check, which the like-for-like loops below are
+  // not: this path is new, and `bank_ref_no` is documented as only SOMETIMES equal
+  // to the RRN (schema.md §2.2), so a coincidental agreement must not rescue a
+  // pair whose `payment_id`s positively disagree. The existing loops keep their
+  // own behaviour rather than acquiring a guard this issue did not ask for.
+  //
+  // The guard also stands the block down wherever a NEAR-anchor is available — a
+  // near-anchor is two values of the same strong key that differ, so it is always
+  // a contradiction candidate too. That is deliberate and it costs nothing
+  // measurable: bank rows carry no structured strong anchor (AUDIT-1), so a
+  // gateway<->bank pair has nothing to contradict with, and zero holdout pairs
+  // exercise the interaction.
+  const crossKey = crossKeyStrongWeakAnchor(a, b);
+  if (crossKey !== null && contradictingStrongAnchor(a.referenceIds, b.referenceIds) === null) {
+    return { kind: 'exact', key: crossKey, strength: 'strong_weak' };
   }
 
   for (const key of WEAK_KEYS) {

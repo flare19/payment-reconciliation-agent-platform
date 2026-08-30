@@ -432,9 +432,9 @@ describe('S9 + S11 against the holdout', () => {
       }
       if (hasExact && hasFuzzy) for (const id of ids) inBoth.add(id);
     }
-    // Exact, not a floor: 157 of Tier 1's 203 groups gain a bank leg.
+    // Exact, not a floor: 166 of Tier 1's 203 groups gain a bank leg.
     assert.equal(
-      groups.matches.filter((m) => m.members.length === 3).length, 187,
+      groups.matches.filter((m) => m.members.length === 3).length, 198,
       'three-way groups: rule 2 firing, counted');
     assert.ok(inBoth.size > 0,
       'no record appears in both an exact pair and a Tier 2 pair — Tier 2 has ' +
@@ -495,7 +495,7 @@ describe('S9 + S11 against the holdout', () => {
     const hit = expected.filter((k) => produced.has(k)).length;
 
     assert.equal(expected.length, 872);
-    assert.equal(hit, 658,
+    assert.equal(hit, 680,
       `pair recall changed. If this is an improvement, raise the number and say why in ` +
       `the commit; if it is a regression, something upstream stopped generating candidates.`);
     // Precision must stay perfect while recall moves.
@@ -544,7 +544,7 @@ describe('S9 + S11 against the holdout', () => {
     assert.deepEqual(Object.fromEntries([...causes].sort()), {
       'no candidate generated (S10 batch legs)': 6,
       'outside the reconcilable pool': 18,
-      'scored below threshold or displaced': 181,
+      'scored below threshold or displaced': 159,
       'settled by S8 identity': 9,
     });
     assert.equal([...causes.values()].reduce((x, y) => x + y, 0), expected.length - hit,

@@ -531,3 +531,45 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
   **What makes this the day's most uncomfortable finding.** Three separate scorer defects landed in one day, all in the module whose entire job is to be trustworthy, and all invisible until the engine produced output it had never produced before. The accuracy table published on Day 9 was not wrong about the engine, but it was wrong about the exception list, and nothing in the suite could have said so. `tools/score` needs the same treatment the engine got: an isolated audit, by someone who did not write it.
 
+
+- **2026-08-31** — **Day 11: #38 fixed. Anchor agreement had never been compared across key types, so a byte-identical reference sitting on both rows scored zero.**
+
+  `anchorAgreement` in `scoring.ts` compared weak anchor keys **like-for-like only** — `structuredValue(a, key)` against `structuredValue(b, key)` for the *same* key. `bank_ref_no` exists on bank rows and on no other source, so that branch could never fire across sources. A bank row whose `bank_ref_no` was byte-identical to a gateway `rrn` scored `anchor: none` — a literal zero — with a perfect amount, an in-window date and a perfect counterparty trigram, landing at 0.50–0.60 against the 0.65 review floor. Eleven true pairs on the holdout, every one of them in the never-found set: not scored low, never surfaced to a human at all.
+
+  **Recovered by:** a cross-key comparison block in `anchorAgreement` — every structured STRONG anchor on one side against every structured WEAK anchor on the other, both directions, scored `strong_weak` (0.30). No weight changed. `strong_weak` and not `weak_weak` because the block immediately above already grants 0.30 when a structured anchor matches a value **regex'd out of a free-text description blob**, and a value the source stated in a structured column of its own is strictly better evidence than that. Paying it less would have inverted the ordering; paying it nothing, as it did, inverted it completely.
+
+  **The measurement, on byte-identical inputs:**
+
+  ```
+                        Day 10     Day 11
+  precision            1.0000     1.0000
+  false positives          0          0
+  recall (confirmed)   0.6089     0.6075
+  TP / FP / FN        436/0/280  435/0/281
+  pending pairs          207        230
+  review-queue prec  1.0 (n=183) 1.0 (n=206)
+  FOUND AT ALL       619 = 86.5% 641 = 89.5%     +3.1 pts
+  match rate           66.48%     65.22%         -1.26
+  match members          773        784
+  exceptions             236        214
+  audit entries          615        593
+  MISSING_IN_BANK         51         40
+  MISSING_IN_GATEWAY      70         58
+  unresolvable recall    1.0        1.0
+  false-despair         0.800      0.816
+  classification    macro 0.9286 / 0.8738 — unchanged in every cell
+  build blockers           0          0
+  ```
+
+  **Third day running that the headline moves opposite to the improvement, and the reason is the same one both previous times.** Seven of the eleven recovered pairs score in the 0.65–0.849 review band; §10 rule 4 makes a group holding a proposal a proposal, so seven groups that had been auto-confirmed became `pending_review` and took their already-counted legs out of the headline with them. One pair moved from confirmed to pending, which is the whole of the −0.0014 in auto-confirmed recall. **Twenty-two more pairs are located and every one of them is correct** — review-queue precision is still 1.0000 over 23 more judged proposals. If ARCHITECTURE §8.1's found-versus-confirmed framing needed a third witness, this is it.
+
+  **A second-order effect worth naming, because it looks like a regression and is not.** `UNSPLITTABLE_BATCH` went 3 → 4 and `batchSearchExhausted` 3 → 4. One bank credit (`bank:51`, LENSKART, ₹3,01,719.78) was classified `MISSING_IN_GATEWAY` before and `UNSPLITTABLE_BATCH` after. Nothing about that credit changed — a gateway payment in its S10 candidate pool acquired a bank leg through the new cross-key anchor and therefore left the pool, which changed the answer S10's bounded search returns for it. The category moved from *"no gateway row found"* to *"the engine tried to decompose this credit and proved it could not"*, which is `schema.md` §8.2's precedence working exactly as written and is strictly more useful to a human. Classification precision and recall did not move in any cell.
+
+  **What the fix deliberately does NOT do, both decided on evidence rather than symmetry:**
+
+  1. **A strong-key contradiction still discards the pair**, whichever weak key agrees — `bank_ref_no` is documented as *sometimes* equal to the RRN, so a coincidental agreement must never outvote two ids that positively disagree. A consequence, asserted in a test rather than left to be discovered: a **near-anchor** is by construction two values of the same key that differ, so wherever a near-anchor exists the cross-key block stands down. That costs nothing measurable — bank rows carry no structured strong anchor at all (AUDIT-1), so a gateway↔bank pair has nothing to contradict with, and zero holdout pairs exercise the interaction.
+  2. **weak↔weak across different keys is not granted.** A gateway `order_id` equal to a bank `bank_ref_no` is the symmetric case and the issue explicitly asked for it to be decided on evidence. It occurs **zero times among the holdout's 26,908 candidate pairs**, so granting it would add an inference path nothing exercises. Left out, and said so — in a test, so the decision is visible rather than absent.
+
+  **Why 486 passing tests never caught this.** The same shape as #30, #31 and #40: `scoring.ts` was correct against every worked example in `schema.md` and had a guard test protecting the ADR-030 ceiling, and the ceiling was never what was wrong. The defect was in a comparison that *doesn't happen*, and no test can assert the absence of a comparison nobody thought to write. What made it findable at all was the answer key — the pair recall figure is the only artifact in this project that can say "there are eleven relationships here that you did not find", and the only reason it could name them was that #46 had already cleared the other 48 out of the way.
+
+  **Fourteen pinned test literals moved, across five files.** Every one was checked against a before/after run rather than pasted from a failure message, and each delta reconciles arithmetically with the eleven pairs: +11 match members, +11 three-way groups, +22 implied pairs, −22 exceptions, −22 audit entries, −9 `MATCH_CONFIRMED_EXACT` (§10 rule 5 reporting a group at its weakest tier), +7 `MATCH_FLAGGED_FOR_REVIEW`. **A pin updated to whatever the run printed is not a passing test, it is a recording.** The three new positive assertions in `scoring.test.ts` were verified to FAIL with the fix reverted before they were kept.

@@ -256,6 +256,10 @@ Revised weights:
 | **Date** | **0.20** | `0.20 × (1 − days_off / window_span)`, floored at 0. Same business day earns full. |
 | **Counterparty** | **0.15** | `0.15 × trigram_similarity(key_a, key_b)`, using post-alias `counterparty_key` where available. |
 
+**Anchor agreement is compared ACROSS key types, not only like-for-like.** A strong key on one side matching a *structured weak* key on the other — a gateway `rrn` equal to a bank `bank_ref_no` — is `strong↔weak` agreement and earns `0.30`. This was always the intent and was never written down, so the first implementation compared each key only against itself; since `bank_ref_no` exists on bank rows and on no other source, the weak branch could never fire across sources and 11 holdout pairs scored a literal zero anchor with a byte-identical 12-digit reference sitting on both rows (issue #38). It is `strong↔weak` rather than `weak↔weak` because the same 0.30 is already granted when a structured anchor matches a value recovered by regex from a bank description blob, and a value the source stated in a structured column of its own is strictly better evidence than that.
+
+Two limits, both deliberate. A strong-key **contradiction** still discards the pair whichever weak key agrees — `bank_ref_no` is "sometimes equal to the RRN, sometimes not" (`schema.md` §2.2), so a coincidental agreement must never outvote two ids that positively disagree; because a near-anchor is by construction two values of the same key that differ, this also means a near-anchor's presence stands the cross-key comparison down. And weak↔weak **across** different keys (a gateway `order_id` equal to a bank `bank_ref_no`) is **not** granted: it occurs zero times among the holdout's 26,908 candidate pairs, so it would be an inference path nothing exercises.
+
 **The property this buys, and it is worth stating in the pitch:**
 
 ```

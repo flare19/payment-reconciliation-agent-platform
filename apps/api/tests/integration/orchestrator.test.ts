@@ -52,17 +52,18 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
     assert.equal(out.status, 'completed', out.errorDetail ?? '');
     assert.equal(out.referenceDate, '2026-08-21');
     assert.equal(out.matches, 284);
-    assert.equal(out.exceptions, 236);
+    assert.equal(out.exceptions, 214);
 
     assert.equal(await count(`SELECT count(*)::int c FROM transactions WHERE run_id=$1`), 920);
     assert.equal(await count(`SELECT count(*)::int c FROM matches WHERE run_id=$1`), 284);
-    assert.equal(await count(`SELECT count(*)::int c FROM exceptions WHERE run_id=$1`), 236);
-    // 755, not 598: issue #40 let a gateway matched at Tier 1 keep looking for
-    // its bank leg, so 157 two-way groups became three-way. The GROUP count is
-    // unchanged at 284 — the same events, more completely assembled.
+    assert.equal(await count(`SELECT count(*)::int c FROM exceptions WHERE run_id=$1`), 214);
+    // 784, not 598: issue #40 let a gateway matched at Tier 1 keep looking for
+    // its bank leg, and #38 let it find that leg through a `bank_ref_no` equal to
+    // its own `rrn`. Both turn two-way groups into three-way ones. The GROUP count
+    // is unchanged at 284 throughout — the same events, more completely assembled.
     assert.equal(await count(
       `SELECT count(*)::int c FROM match_members mm JOIN matches m ON m.id=mm.match_id
-        WHERE m.run_id=$1`), 773);
+        WHERE m.run_id=$1`), 784);
   });
 
   test('ADR-040: every term of the match-rate denominator is recorded', async () => {
@@ -114,7 +115,7 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
     assert.equal(v.firstDivergenceSequenceNo, null);
     // Pinned exactly. A loose floor here would hide the thing this test is for:
     // the chain covering every decision the run made, and no more.
-    assert.equal(v.entriesChecked, 615);
+    assert.equal(v.entriesChecked, 593);
   });
 
   test('the audit trail records DECISIONS, and is not drowned by transcription', async () => {
@@ -130,16 +131,21 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
     // These ARE decisions — each one changed a record's fate.
     assert.equal(by['RECORD_EXCLUDED'], 37);
     assert.equal(by['RECORD_DEDUPLICATED'], 9);
-    // 46, not 203, and that is §10 rule 5 rather than lost exact matches. Tier 1
-    // still produces all 203 gateway<->ledger pairs; 157 of their groups now also
+    // 32, not 203, and that is §10 rule 5 rather than lost exact matches. Tier 1
+    // still produces all 203 gateway<->ledger pairs; 171 of their groups now also
     // hold a fuzzy bank leg, and "group tier is the WEAKEST tier used" reports
-    // those as fuzzy. 203 - 157 = 46. Reporting them as exact would overstate the
+    // those as fuzzy. 203 - 171 = 32. Reporting them as exact would overstate the
     // evidence for the leg a reader is most likely to check.
-    assert.equal(by['MATCH_CONFIRMED_EXACT'], 41);
-    assert.equal(by['MATCH_CONFIRMED_FUZZY'], 179);
-    assert.equal(by['MATCH_FLAGGED_FOR_REVIEW'], 64);
+    //
+    // The eleven pairs #38 recovered move this number DOWN by nine and
+    // MATCH_FLAGGED_FOR_REVIEW UP by seven, because seven of the newly-found bank
+    // legs score in the review band and §10 rule 4 makes a group holding a
+    // proposal a proposal. That is the ADR-038/ADR-040 trade working, not a loss.
+    assert.equal(by['MATCH_CONFIRMED_EXACT'], 32);
+    assert.equal(by['MATCH_CONFIRMED_FUZZY'], 181);
+    assert.equal(by['MATCH_FLAGGED_FOR_REVIEW'], 71);
     assert.equal(by['MATCH_CANDIDATE_DISPLACED'], 35);
-    assert.equal(by['EXCEPTION_RAISED'], 236);
+    assert.equal(by['EXCEPTION_RAISED'], 214);
 
     // S8 re-derives every pair S6 already claimed and reports outcome 'match'
     // "for completeness". Logging those would put a second entry beside every
@@ -185,8 +191,8 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
     // from the stored object, not only inside the function that computed it.
     const run = await findRun(runId);
     const m = run!.metrics as Record<string, Record<string, number>>;
-    assert.equal(m['matchRate']!['matchRatePct'], 66.48);
-    assert.equal(m['matchRate']!['matchedRecords'], 581);
+    assert.equal(m['matchRate']!['matchRatePct'], 65.22);
+    assert.equal(m['matchRate']!['matchedRecords'], 570);
     assert.equal(m['matchRate']!['reconcilableRecords'], 874);
     const p = m['population']!;
     assert.equal(
@@ -204,7 +210,7 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
     // no batch verdict reaches S12 and both counts are 0 — a real zero from a
     // stage that ran, which is a different claim from `null`.
     const e = m['exceptions'] as Record<string, unknown>;
-    assert.equal(e['batchSearchExhausted'], 3);
+    assert.equal(e['batchSearchExhausted'], 4);
     assert.equal(e['batchSearchBoundExceeded'], 0);
   });
 
@@ -215,8 +221,8 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
     const run = await findRun(runId);
     const t = (run!.metrics as Record<string, Record<string, number>>)['tierAttribution']!;
     assert.equal(t['exact'], 203);
-    assert.equal(t['fuzzy'], 268);
-    assert.equal(t['implied'], 220);
+    assert.equal(t['fuzzy'], 279);
+    assert.equal(t['implied'], 231);
     assert.equal(t['batch'], 18, 'S10 split legs, attributed to their own tier (ADR-072)');
     assert.equal(t['unattributed'], 0);
     assert.equal(t['identityEstablished'], 9, 'what S8 contributed, not what it re-derived');
@@ -231,9 +237,9 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
     const out = await executeRun(second.id, sources, ENGINE_DEFAULTS);
     assert.equal(out.status, 'completed');
     assert.equal(out.matches, 284);
-    assert.equal(out.exceptions, 236);
+    assert.equal(out.exceptions, 214);
     assert.equal(out.referenceDate, '2026-08-21');
-    assert.equal(out.auditEntries, 615, 'the same inputs must produce the same trail');
+    assert.equal(out.auditEntries, 593, 'the same inputs must produce the same trail');
   });
 
   test('a failed run says so, and its committed phases stay visible (ADR-046)', async () => {

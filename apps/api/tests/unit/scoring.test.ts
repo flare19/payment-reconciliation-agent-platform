@@ -379,6 +379,134 @@ describe('scorePair — components and breakdown', () => {
   });
 });
 
+describe('cross-key anchor agreement (#38)', () => {
+  // A bank row states its reference in `bank_ref_no`; a gateway row states the
+  // same 12 digits in `rrn`. No source but bank carries a `bank_ref_no`, so a
+  // like-for-like weak-key comparison could never fire across sources and the
+  // pair scored a literal zero anchor with a matching reference on both rows.
+  const RRN = '587906399877';   // a real holdout value: bank#45 <-> gateway#268
+
+  test('a gateway rrn equal to a bank bank_ref_no is strong_weak', () => {
+    const r = anchorAgreement(
+      txn({ sourceSystem: 'gateway', referenceIds: { rrn: RRN } }),
+      txn({ sourceSystem: 'bank', referenceIds: { bank_ref_no: RRN } }),
+      config, true);
+    assert.equal(r.kind, 'exact');
+    assert.equal(r.kind === 'exact' && r.strength, 'strong_weak');
+    assert.equal(r.kind === 'exact' && r.key, 'rrn',
+      'the STRONG key names the evidence, whichever side stated it');
+  });
+
+  test('it is symmetric: the bank row may be either argument', () => {
+    const r = anchorAgreement(
+      txn({ sourceSystem: 'bank', referenceIds: { bank_ref_no: RRN } }),
+      txn({ sourceSystem: 'gateway', referenceIds: { rrn: RRN } }),
+      config, true);
+    assert.equal(r.kind === 'exact' && r.strength, 'strong_weak');
+  });
+
+  test('a DIFFERENT bank_ref_no is still no anchor at all', () => {
+    // The half of the change that must not move. `bank_ref_no` is documented as
+    // "sometimes equal to the RRN, sometimes not" (schema.md §2.2), so a
+    // non-matching one carries no evidence in either direction.
+    const r = anchorAgreement(
+      txn({ sourceSystem: 'gateway', referenceIds: { rrn: RRN } }),
+      txn({ sourceSystem: 'bank', referenceIds: { bank_ref_no: '999999999999' } }),
+      config, false);
+    assert.equal(r.kind, 'none');
+  });
+
+  test('a malformed rrn is not rescued by a weak key that copies it', () => {
+    // `isWellFormedAnchor` still governs: the generator truncates ~10% of bank
+    // descriptions mid-token, and a 7-digit fragment is not a reference.
+    const r = anchorAgreement(
+      txn({ sourceSystem: 'gateway', referenceIds: { rrn: '5879063' } }),
+      txn({ sourceSystem: 'bank', referenceIds: { bank_ref_no: '5879063' } }),
+      config, false);
+    assert.equal(r.kind, 'none');
+  });
+
+  test('a contradicted strong anchor still discards, whatever bank_ref_no says', () => {
+    // The guard rail on this change. A coincidental `bank_ref_no` agreement must
+    // not outvote two `payment_id`s that positively disagree — otherwise the fix
+    // would buy recall by disabling the engine's sharpest discard rule.
+    const r = anchorAgreement(
+      txn({ sourceSystem: 'gateway',
+            referenceIds: { rrn: RRN, payment_id: 'pay_AAAAAAAAAAAA01' } }),
+      txn({ sourceSystem: 'bank',
+            referenceIds: { bank_ref_no: RRN, payment_id: 'pay_ZZZZZZZZZZZZ99' } }),
+      config, false);
+    assert.equal(r.kind, 'contradiction');
+  });
+
+  test('cross-key agreement outranks like-for-like weak agreement', () => {
+    // Both fire; the cross-key block is checked first, so the pair is scored on
+    // the stronger of the two pieces of evidence rather than on whichever loop
+    // happens to come first in the file.
+    const r = anchorAgreement(
+      txn({ sourceSystem: 'gateway', referenceIds: { rrn: RRN, order_id: 'order_XYZ' } }),
+      txn({ sourceSystem: 'bank', referenceIds: { bank_ref_no: RRN, order_id: 'order_XYZ' } }),
+      config, false);
+    assert.equal(r.kind === 'exact' && r.strength, 'strong_weak');
+  });
+
+  test('any strong-key disagreement suppresses the cross-key path, near-anchor included', () => {
+    // A CONSEQUENCE of the contradiction guard, asserted rather than discovered
+    // later: a near-anchor is by construction two values of the SAME strong key
+    // that differ, which is also a contradiction candidate. So wherever a
+    // near-anchor is available the cross-key block stands down and the pair is
+    // scored `near` (0.24), not `strong_weak` (0.30).
+    //
+    // This costs nothing measurable — bank rows carry no structured strong anchor
+    // (AUDIT-1), so a gateway<->bank pair has nothing to contradict with, and the
+    // holdout has zero pairs where the two interact. It is the conservative
+    // reading, and conservative is the right default for a new inference path.
+    const r = anchorAgreement(
+      txn({ sourceSystem: 'gateway',
+            referenceIds: { rrn: RRN, settlement_id: 'setl_QK29fT10aXbZ81' } }),
+      txn({ sourceSystem: 'bank',
+            referenceIds: { bank_ref_no: RRN, settlement_id: 'setl_QK29fT10aXbZ18' } }),
+      config, true);
+    assert.equal(r.kind, 'near');
+
+    // And without corroboration the same pair is discarded outright, which is the
+    // property guard rail 2 of #38 asks for in as many words.
+    const uncorroborated = anchorAgreement(
+      txn({ sourceSystem: 'gateway',
+            referenceIds: { rrn: RRN, settlement_id: 'setl_QK29fT10aXbZ81' } }),
+      txn({ sourceSystem: 'bank',
+            referenceIds: { bank_ref_no: RRN, settlement_id: 'setl_QK29fT10aXbZ18' } }),
+      config, false);
+    assert.equal(uncorroborated.kind, 'contradiction');
+  });
+
+  test('weak<->weak across DIFFERENT keys is deliberately NOT granted', () => {
+    // Considered and declined on the evidence, not by symmetry: a gateway
+    // `order_id` equal to a bank `bank_ref_no` occurs ZERO times among the
+    // holdout's 26,908 candidate pairs, so granting it would add an inference
+    // path nothing exercises. Like-for-like weak agreement is unaffected.
+    const cross = anchorAgreement(
+      txn({ sourceSystem: 'gateway', referenceIds: { order_id: 'order_XYZ123' } }),
+      txn({ sourceSystem: 'bank', referenceIds: { bank_ref_no: 'order_XYZ123' } }),
+      config, false);
+    assert.equal(cross.kind, 'none');
+
+    const likeForLike = anchorAgreement(
+      txn({ sourceSystem: 'gateway', referenceIds: { order_id: 'order_XYZ123' } }),
+      txn({ sourceSystem: 'ledger', referenceIds: { order_id: 'order_XYZ123' } }),
+      config, false);
+    assert.equal(likeForLike.kind === 'exact' && likeForLike.strength, 'weak_weak');
+  });
+
+  test('the ADR-030 ceiling is untouched: strong_weak still cannot reach 1.0 alone', () => {
+    // The change moves pairs into an EXISTING bucket; it does not create a bucket
+    // and it does not touch a weight.
+    assert.equal(maxScoreForAnchor('strong_weak', config), 1);
+    assert.ok(maxScoreForAnchor('none', config) < config.fuzzyAutoConfirmThreshold,
+      'a pair with no shared reference of any kind still cannot auto-confirm');
+  });
+});
+
 describe('near-anchor (ADR-031)', () => {
   const typo = 'pay_QK29fT10aXbZ81';
   const typod = 'pay_QK29fT10aXbZ18';   // adjacent transposition

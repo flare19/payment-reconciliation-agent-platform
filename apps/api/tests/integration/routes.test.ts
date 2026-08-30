@@ -131,13 +131,13 @@ describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL
     // MEASURED figure and lives in score_reports (ADR-041) — the engine must
     // never fill that slot with something it computed about itself.
     const h = r.json['headline'] as Record<string, unknown>;
-    assert.equal(h['matchRatePct'], 66.48);
-    assert.equal(h['coldStartMatchRatePct'], 66.48);
-    assert.equal(h['exceptionCount'], 236);
+    assert.equal(h['matchRatePct'], 65.22);
+    assert.equal(h['coldStartMatchRatePct'], 65.22);
+    assert.equal(h['exceptionCount'], 214);
     assert.equal(h['falsePositiveMatches'], null);
     // §11.5 rule 3: review burden travels WITH the match rate. This read named
     // the wrong metrics block until U8 and silently resolved to null.
-    assert.equal(h['pendingReviewCount'], 64);
+    assert.equal(h['pendingReviewCount'], 71);
   });
 
   test('2 · an unknown configOverride is REJECTED, not silently ignored', async () => {
@@ -177,11 +177,11 @@ describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL
     assert.equal(r.status, 200);
     const items = r.json['exceptions'] as Record<string, unknown>[];
     assert.equal(items.length, 5);
-    assert.deepEqual(r.json['pagination'], { page: 1, pageSize: 5, total: 236, totalPages: 48 });
+    assert.deepEqual(r.json['pagination'], { page: 1, pageSize: 5, total: 214, totalPages: 43 });
 
     const facets = r.json['facets'] as Record<string, Record<string, number>>;
-    assert.equal(facets['category']!['MISSING_IN_GATEWAY'], 70);
-    assert.equal(facets['severity']!['high'], 113);
+    assert.equal(facets['category']!['MISSING_IN_GATEWAY'], 58);
+    assert.equal(facets['severity']!['high'], 101);
 
     // Default sort is severity then money at risk — ADR-044's whole point.
     assert.equal(items[0]!['severity'], 'high');
@@ -260,10 +260,10 @@ describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL
     const seqs = entries.map((e) => e['sequenceNo'] as number);
     assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b));
     assert.equal(entries[0]!['eventType'], 'RUN_STARTED', 'the anchor comes first');
-    assert.equal((run.json['pagination'] as Record<string, number>)['total'], 615);
+    assert.equal((run.json['pagination'] as Record<string, number>)['total'], 593);
 
     const byActor = await req('GET', `/api/runs/${runId}/audit?actorType=engine`);
-    assert.equal((byActor.json['pagination'] as Record<string, number>)['total'], 615);
+    assert.equal((byActor.json['pagination'] as Record<string, number>)['total'], 593);
     const byEvent = await req('GET', `/api/runs/${runId}/audit?eventType=RECORD_DEDUPLICATED`);
     assert.equal((byEvent.json['pagination'] as Record<string, number>)['total'], 9);
   });
@@ -275,7 +275,7 @@ describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL
     // A hash chain proves the entries you HOLD are consistent and cannot prove
     // you hold all of them. Without the anchor, deleting the tail reads as clean.
     assert.equal(r.json['anchored'], true);
-    assert.equal(r.json['entriesChecked'], 615);
+    assert.equal(r.json['entriesChecked'], 593);
     assert.equal(r.json['firstDivergenceSequenceNo'], null);
   });
 
@@ -297,7 +297,7 @@ describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL
     assert.equal(r.status, 200);
     const lines = r.text.split('\n');
     assert.match(lines[0]!, /^exceptionId,category/);
-    assert.equal(lines.length, 237, 'header plus every exception');
+    assert.equal(lines.length, 215, 'header plus every exception');
     const matches = await req('GET', `/api/runs/${runId}/export?scope=matches`);
     assert.equal(matches.text.split('\n').length, 285);
   });
