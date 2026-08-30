@@ -1,7 +1,7 @@
 /**
  * The audit hash chain (ADR-042).
  *
- *     entry_hash = sha256( canonical_json(entry minus prev_hash/entry_hash) || prev_hash )
+ *     entry_hash = sha256( canonical_json(entry minus sequence_no/prev_hash/entry_hash) || prev_hash )
  *
  * WHY, given `audit_log` already has a BEFORE UPDATE OR DELETE trigger: the
  * trigger stops tampering *through the application*. Anyone who can drop a
@@ -11,13 +11,18 @@
  * this table" and "logged immutably", which is what ARCHITECTURE §4.6 claims.
  *
  * ---------------------------------------------------------------------------
- * TWO FIELDS ARE DELIBERATELY OUTSIDE THE HASH, and the reasons are not stylistic.
+ * THREE FIELDS ARE DELIBERATELY OUTSIDE THE HASH (ADR-082 — this used to say
+ * two, and one of the two it named was `occurred_at`, which the very next
+ * paragraph said WAS hashed; only `strip()` below was ever right).
  *
  * `sequence_no` is `BIGSERIAL` — assigned by the database during INSERT, so it
  * does not exist when the hash must be computed. It cannot be added afterwards
  * either: the append-only trigger forbids the UPDATE. Excluding it costs nothing,
  * because ordering is already enforced by `prev_hash` linkage, which is the
  * stronger guarantee: renumbering rows without breaking the chain is impossible.
+ *
+ * `prev_hash`/`entry_hash` are the chain links themselves — excluded for the
+ * obvious reason a hash cannot include itself.
  *
  * `occurred_at` IS hashed, which means the application must supply it explicitly
  * rather than letting the column default to `now()`. A DB-side default would be

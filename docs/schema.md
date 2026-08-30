@@ -758,8 +758,10 @@ CREATE TRIGGER trg_audit_log_immutable
 ### 9.0 The hash chain (ADR-042)
 
 ```
-entry_hash = sha256( canonical_json(entry minus prev_hash/entry_hash) || prev_hash )
+entry_hash = sha256( canonical_json(entry minus sequence_no/prev_hash/entry_hash) || prev_hash )
 ```
+
+Three fields are excluded from the hash, not two (see #25 — this line, migration 007's comment and ADR-042 previously all said two). `prev_hash`/`entry_hash` are the chain links, excluded for the obvious reason. `sequence_no` is excluded too: it is `BIGSERIAL`, assigned by Postgres at INSERT, so it does not exist yet when the hash must be computed, and it cannot be added afterward either — the append-only trigger forbids the UPDATE. Excluding it costs nothing, because ordering is already enforced by `prev_hash` linkage, which is the stronger guarantee: renumbering rows without breaking the chain is impossible. `occurred_at` is NOT excluded — it IS hashed, which is why the application must supply it explicitly rather than letting the column default to `now()` (§9's mandatory-fields list, above).
 
 `canonical_json` sorts object keys and serializes timestamps as ISO-8601 UTC, so the hash is stable across drivers and platforms. Entries are chained **per run**, in `sequence_no` order; the first entry of a run chains from 64 zeros. Alias-admin entries with `run_id IS NULL` form their own chain.
 
