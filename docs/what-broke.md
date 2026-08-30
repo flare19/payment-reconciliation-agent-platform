@@ -408,3 +408,22 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
   **Corrected attribution of the 133 never-found pairs:** 48 are S10 unwired (#46, real, Day 10); **42 are the engine correctly refusing anchorless bank↔ledger pairs**; 43 are gateway-bearing and still unexplained, which is where the recall gap actually lives.
 
+  **Also Day 10 — the 43 gateway-bearing misses, diagnosed. The never-found population is now fully attributed, and it is mostly the engine being right.**
+
+  Every one of the 43 has the identical shape: **perfect amount (delta 0, exact to the paisa), in-window date, perfect counterparty trigram, and `anchor = 0`.** They score 0.50–0.60 against a 0.65 floor. One test splits them — do the two rows share a reference *value* under *different* keys?
+
+  ```
+  sharing a value under different keys (#38) ....... 11
+  sharing no reference value at all ................ 32
+  ```
+
+  The 11 are all `bank_ref_no == rrn`: a byte-identical 12-digit reference sitting on both rows, contributing nothing because `anchorAgreement`'s weak-key loop compares the *same* key on both sides and no bank row has an `rrn` field. That is #38, already a P1, and this raises its standing — those 11 are not merely under-scored, they are never surfaced to a human at all.
+
+  **Final attribution of the 133 never-found pairs: 48 S10 (#46), 11 #38, and 74 the engine correctly refusing pairs with no shared identifier.** Only **59 are actionable**. That is a much better result than "133 missing" implied, and it took two days of measurement to see.
+
+  **A second finding, folded into [#48](https://github.com/flare19/payment-reconciliation-agent-platform/issues/48) rather than filed fresh.** The date component is `0.20 × (1 − days_off / window_span)`, which is exactly zero when `days_off == window_span` — **on the SLA boundary, inside the window**. A T+3 card settlement, which ADR-009 defines as normal, scores the same date evidence as one thirty days late: none. Consequence: an anchorless pair with perfect amount and counterparty sits at 0.50 and needs three-quarters of the date weight to clear the floor, so **for every window the engine defines it reaches review only on a same-day match**. `schema.md` §5.4 and ADR-030 publish the opposite property — *"it can reach the review band and ask a human"* — and 20 of the 43 score zero on date while inside the window they were measured against.
+
+  **Folded rather than filed because it breaks the same sentence #48 already names.** After #47 — where I filed a P1 that an ADR had already decided — the instinct to open a new issue for every striking number is the thing to distrust. Two mechanisms, one false sentence, one fix conversation.
+
+  **And the same honesty applies to its yield:** correcting the date curve alone would recover approximately nothing. Those pairs are missing 0.30 of anchor weight; a plausible re-shaping moves them 0.50 → 0.55, still short. Recording it as a defect in the *published property* rather than as a recall opportunity is the accurate framing, and #48's recommended resolution is still to make the documentation true rather than to change the arithmetic.
+

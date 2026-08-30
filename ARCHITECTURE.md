@@ -245,7 +245,7 @@ The build is **13 working days**, Aug 23 → Sep 5. There is no Day for Aug 25 �
 | 8 | Aug 28 | Routes and run orchestration. **First end-to-end persisted run — done, Aug 28.** AUDIT-2 outstanding. |
 | 9 | **Aug 29** | AUDIT-2 and its P1 (#40). Metrics S14, scorer (`tools/score`), score-report endpoint. **First honest cold-run number — three calendar days early.** **Done.** |
 | 10 | Aug 30 | **Deploy the API to Railway** — an unknowns-flush, not a checkbox; redeployment stays manual and cheap, no CI/CD (ADR-061, ADR-074). Wire S10 (#46). |
-| 11 | Aug 31 | Explain layer S13 + signature cache + templates. Diagnose the 43 gateway-bearing misses. Re-score. |
+| 11 | Aug 31 | **#38 — the last actionable never-found cause (11 pairs).** Explain layer S13 + signature cache + templates. Re-score. |
 | 12 | Sep 1 | Agent tool registry and the investigation loop A1–A4. |
 | 13 | Sep 2 | **AUDIT-3.** Scale benchmark (ADR-045). The #38/#43 sweep. |
 | 14 | Sep 3 | Frontend: design direction + dashboard. |
@@ -285,11 +285,14 @@ engine match rate 67.85% against a computed ceiling of 93%
 
 **The 133, attributed:**
 
-| Cause | Pairs | Status |
+| Cause | Pairs | Actionable? |
 |---|---|---|
-| `viaTier: batch` — S10 built, tested, never called | **48** | [#46](https://github.com/flare19/payment-reconciliation-agent-platform/issues/46) P1 — **real, Day 10** |
-| bank↔ledger, genuinely anchorless | 42 | **correct refusal, not a defect** (ADR-075) |
-| gateway-bearing, awaiting diagnosis (30 overlap #38) | 43 | real; where the recall gap actually lives |
+| `viaTier: batch` — S10 built, tested, never called | **48** | **yes** — [#46](https://github.com/flare19/payment-reconciliation-agent-platform/issues/46) P1, Day 10 |
+| bank↔ledger, genuinely anchorless | 42 | no — correct refusal (ADR-075) |
+| gateway-bearing, genuinely anchorless | 32 | no — correct refusal |
+| `bank_ref_no == rrn`, weak keys compared like-for-like | **11** | **yes** — [#38](https://github.com/flare19/payment-reconciliation-agent-platform/issues/38) P1 |
+
+**Of 133 never-found pairs, only 59 are actionable. The other 74 are the engine correctly refusing pairs that share no identifier at all.** Every one of the 43 gateway-bearing misses has a perfect amount (delta 0, exact to the paisa), an in-window date and a perfect counterparty trigram — and `anchor = 0`. 11 of them have a byte-identical 12-digit reference on both rows that contributes nothing because the weak-key comparison is key-scoped (#38); the other 32 share no reference value under any key.
 
 **The bank↔ledger 42 were filed as a P1 ([#47](https://github.com/flare19/payment-reconciliation-agent-platform/issues/47)) and that filing was wrong.** The arithmetic is real — §5.3.1 gives bank and ledger no comparable amount basis, so an anchorless pair caps at `date 0.20 + counterparty 0.15 = 0.35` against a `0.65` floor — but **ADR-064 decided this deliberately on Day 4**, with the same numbers, and set a revisit condition the first measurement does not meet:
 

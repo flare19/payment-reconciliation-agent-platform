@@ -539,7 +539,7 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 | # | What | Cost, measured | When |
 |---|---|---|---|
 | **[#46](https://github.com/flare19/payment-reconciliation-agent-platform/issues/46)** | S10 built, tested, never called | 48 pairs · 6.7 recall points · an exception category at 0.000/0.000 | **Day 10** |
-| **[#38](https://github.com/flare19/payment-reconciliation-agent-platform/issues/38)** | `anchorAgreement` compares weak keys like-for-like | 17 pairs, 11 scoring a literal zero anchor. Overlaps #47's residual 30. | Day 13 |
+| **[#38](https://github.com/flare19/payment-reconciliation-agent-platform/issues/38)** | `anchorAgreement` compares weak keys like-for-like | 17 pairs — and **11 of them are in the never-found set**, the entire actionable remainder once #46 is wired | **Day 11** |
 | **[#43](https://github.com/flare19/payment-reconciliation-agent-platform/issues/43)** | `countsTowardEngineMatchRate` admits `pending_review` | Browse list implies 86.4% where the headline says 67.85% | **before the frontend reads it** |
 
 > **[#47](https://github.com/flare19/payment-reconciliation-agent-platform/issues/47) IS CLOSED AS NOT-A-DEFECT — do not re-open it from the arithmetic alone (ADR-075).**
