@@ -66,7 +66,7 @@ import {
   type EngineException,
 } from './scoring.js';
 
-export const SCORER_VERSION = '1.2.0';
+export const SCORER_VERSION = '1.3.0';
 
 interface Args {
   runId: string; keyFile: string; api: string; post: boolean; out: string | null;
@@ -262,6 +262,11 @@ export function formatReport(r: ScoreReport, key: AnswerKey): string {
   for (const [c, v] of Object.entries(r.classification.perCategory)) {
     if (v.support === 0) continue;
     L.push(`    ${c.padEnd(22)} P ${v.precision.toFixed(3)}  R ${v.recall.toFixed(3)}  n=${v.support}`);
+  }
+  L.push(`  multi-label (a category counts if raised ANYWHERE on the event):`);
+  L.push(`    any-category recall ${r.classification.multiLabel.anyCategoryRecall}`);
+  for (const [c, v] of Object.entries(r.classification.multiLabel.perCategory)) {
+    L.push(`    ${c.padEnd(22)} P ${v.precision.toFixed(3)}  R ${v.recall.toFixed(3)}`);
   }
   L.push('');
   L.push('══ RESOLVABILITY ══════════════════════════════════════════════');

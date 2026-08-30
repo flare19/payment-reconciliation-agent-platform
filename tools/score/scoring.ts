@@ -127,6 +127,35 @@ export function pairKey(a: string, b: string): string {
   return a < b ? `${a}|${b}` : `${b}|${a}`;
 }
 
+/**
+ * `schema.md` §8.2's precedence, verbatim. The engine applies it per RECORD to
+ * choose one primary category; the scorer applies it across an EVENT's records
+ * to choose which of several raised categories is that event's prediction (#50).
+ *
+ * Using the engine's own stated rule is what makes the choice principled rather
+ * than arbitrary. It does not consult the expected category, so it cannot
+ * manufacture a true positive; and §8.2 names this exact case — *"Unsplittable
+ * batch before presence… its member payments would each otherwise be reported as
+ * `MISSING_IN_BANK`, turning one honest exception into five misleading ones."*
+ * Canonical row order got that backwards, reporting 0.000 for a category the
+ * engine raises on exactly the right credits.
+ */
+export const CATEGORY_PRECEDENCE: readonly string[] = [
+  'DUPLICATE_RECORD',
+  'AMBIGUOUS_MATCH',
+  'UNSPLITTABLE_BATCH',
+  'AMOUNT_MISMATCH',
+  'MISSING_IN_GATEWAY',
+  'MISSING_IN_BANK',
+  'MISSING_IN_LEDGER',
+  'TIMING_DRIFT',
+];
+
+function precedenceOf(category: string): number {
+  const i = CATEGORY_PRECEDENCE.indexOf(category);
+  return i === -1 ? CATEGORY_PRECEDENCE.length : i;
+}
+
 /** Canonical order over row keys: gateway < bank < ledger, then row number. */
 export function compareRowKeys(a: string, b: string): number {
   const rank = (k: string): number =>
@@ -323,6 +352,17 @@ export interface ClassificationScore {
    * confusion matrix is read knowing how much it is flattening.
    */
   multiCategoryEvents: number;
+  /**
+   * The same events scored WITHOUT the single-label reduction (#50): a category
+   * counts if the engine raised it anywhere on the event. Reported beside the
+   * matrix, never instead of it — a set-valued prediction and a primary-category
+   * prediction answer different questions, and collapsing them would hide which
+   * one a figure came from.
+   */
+  multiLabel: {
+    anyCategoryRecall: number;
+    perCategory: Record<string, { precision: number; recall: number }>;
+  };
 }
 
 /**
@@ -361,6 +401,10 @@ export function scoreClassification(
   let amountMismatchScoredAsPendingMatch = 0;
   let timingDriftAutoConfirmed = 0;
   let multiCategoryEvents = 0;
+  let multiLabelHits = 0;
+  let multiLabelEvents = 0;
+  const multiRaised = new Map<string, number>();
+  const multiCorrect = new Map<string, number>();
 
   for (const ev of key.events) {
     if (ev.expectedOutcome !== 'EXCEPTION' || ev.expectedCategory === null) continue;
@@ -368,19 +412,35 @@ export function scoreClassification(
 
     // An event can carry several exceptions — a net batch raises
     // UNSPLITTABLE_BATCH on the credit AND MISSING_IN_BANK on the gateway and
-    // ledger rows, and all three are true statements. The key names ONE
-    // expectedCategory, so the scorer must pick one prediction, and WHICH one it
-    // picks must be a stated rule rather than the order the generator happened
-    // to write `projections` in (ADR-032 rule 3).
+    // ledger rows, and all three are true. The key names ONE expectedCategory,
+    // so one prediction must be chosen, by a STATED rule (ADR-032 rule 3).
     //
-    // Canonical row order — gateway < bank < ledger, then row number. It does
-    // NOT peek at the expected category: choosing "whichever row agrees with the
-    // key" would manufacture a true positive whenever any row happened to be
-    // right, which is the flattering direction and unfalsifiable.
-    const orderedRows = [...rows].sort(compareRowKeys);
-    const raised = orderedRows.map((r) => raisedByRow.get(r)).find((x) => x !== undefined);
+    // The rule is the engine's own precedence (§8.2), applied across the event's
+    // records. Row order was the first attempt and it is backwards for exactly
+    // the case §8.2 legislates: the gateway row is reached first, carries
+    // MISSING_IN_BANK, and the batch verdict is never scored.
+    const onEvent = [...rows]
+      .sort(compareRowKeys)
+      .map((r) => raisedByRow.get(r))
+      .filter((x): x is EngineException => x !== undefined);
+    const raised = [...onEvent].sort(
+      (x, y) => precedenceOf(x.category) - precedenceOf(y.category))[0];
     bump(ev.expectedCategory, raised?.category ?? 'NONE');
-    if (orderedRows.filter((r) => raisedByRow.has(r)).length > 1) multiCategoryEvents += 1;
+    if (onEvent.length > 1) multiCategoryEvents += 1;
+
+    // Multi-label view, reported alongside (#50). The single-label matrix throws
+    // away everything the engine said after its highest-precedence verdict, and
+    // on this dataset that is more than half the exception events. Recall asks
+    // "did the engine say the right thing ANYWHERE on this event"; precision is
+    // computed per category below over the events that raised it, so an engine
+    // that raises everything everywhere scores ~1/8 and is caught.
+    const categories = new Set(onEvent.map((x) => x.category));
+    if (categories.has(ev.expectedCategory)) multiLabelHits += 1;
+    multiLabelEvents += 1;
+    for (const c of categories) {
+      multiRaised.set(c, (multiRaised.get(c) ?? 0) + 1);
+      if (c === ev.expectedCategory) multiCorrect.set(c, (multiCorrect.get(c) ?? 0) + 1);
+    }
 
     if (raised !== undefined) {
       jaccards.push(jaccard(new Set(ev.expectedSecondaryFlags), new Set(raised.secondaryFlags)));
@@ -446,6 +506,17 @@ export function scoreClassification(
     secondaryFlagJaccard: jaccards.length === 0 ? null : round4(mean(jaccards)),
     s8RegressionCells: { amountMismatchScoredAsPendingMatch, timingDriftAutoConfirmed },
     multiCategoryEvents,
+    multiLabel: {
+      anyCategoryRecall: round4(multiLabelEvents === 0 ? 0 : multiLabelHits / multiLabelEvents),
+      perCategory: Object.fromEntries([...multiRaised.keys()].sort().map((c) => {
+        const support = Object.values(matrix[c] ?? {}).reduce((a, b) => a + b, 0);
+        return [c, {
+          precision: round4((multiRaised.get(c) ?? 0) === 0
+            ? 0 : (multiCorrect.get(c) ?? 0) / multiRaised.get(c)!),
+          recall: round4(support === 0 ? 0 : (multiCorrect.get(c) ?? 0) / support),
+        }];
+      })),
+    },
   };
 }
 
