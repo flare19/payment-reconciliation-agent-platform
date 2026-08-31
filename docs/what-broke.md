@@ -7,6 +7,28 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
 ---
 
+## Day 13 (2026-09-01) — AUDIT-3: three P1s, all invisible to 741 passing tests
+
+**AUDIT-3** audited U11–U13 in an isolated session and filed nine issues. The three P1s are fixed and merged (`3546b6f`); six P2/P3 remain open and are queued on a nightly Sonnet routine.
+
+- **#53 — the headline verdict was unreachable.** A3 validated four `proposedAction` variants meticulously. The system prompt named none of them and showed the model one example of the field: `"proposedAction":null`. Twenty live investigations produced zero proposals, and the single attempt died on `schema: proposedAction must be an object`. Three of `agent-design.md` §7's six metrics were structurally 0 for that reason alone. **The defect lived in the conjunction of two correct files** — the gate implemented §3's schema correctly, the loop implemented §3's honesty rules correctly, and no file owned the fact that the schema has to reach the model. Same shape as #40.
+- **#54 — the gate was rejecting truthful verdicts.** A3 joined the model's narrative step number to the runtime turn counter. Nothing kept them in sync, and they came apart whenever the model omitted a call from its write-up or one turn made several calls. **13 of the 15 verdict-producing runs on the baseline were rejected by that collision, not by a hallucination.** The grounding-failure count that §7 reads as a prompt/tool signal was mostly counting our own bookkeeping. Now joined on `(tool, resultDigest)` — the digest was always the thing doing the work.
+- **#55 — the self-correction tool searched nothing.** `rerun_subset_search` used `unmatchedOnly` where the engine asks whether a record's *bank role* is open, and truncated by row number before `buildBatchPool` ranked. Filed at "26% of the population" from raw counts; measured through `buildBatchPool` it was **a pool of ZERO for all four `UNSPLITTABLE_BATCH` credits**. It returned `exhaustive: true` and told the model, in deterministic prose it cannot check, that this was "a stronger claim than the engine's original one".
+
+### The sixth instance of a test that could not fail
+
+The obvious test for #55 — *"at the engine's own bounds the tool reproduces the engine's verdict"* — **passes on the broken code.** An empty search is trivially exhaustive, so it agreed with the engine's `searchExhausted: true` for the opposite reason. Two answers matching because one is vacuous. It was written, run against the pre-fix source, seen to pass, and replaced with one that asserts the *input*: the tool's searched `stats.poolSize` must equal `buildBatchPool` over S10's population. **Every behavioural fix on Day 13 was verified by reverting the source and watching the new test fail**, with the failure message recorded in the issue.
+
+### An audit conclusion that was wrong, corrected
+
+`docs/analyst-baseline.md` DEFECT 3 concluded from a uniform 10-of-10 failure signature that corroboration's grounding wiring was at fault. **It was not.** The wiring is correct; the join key was the defect, and it was never corroboration-specific — the same failure appears in three investigations. It only *looked* uniform because every corroboration opened with `get_exception(matchId)` → `found:false` (#59) and so desynced at exactly step 1. A fast diagnosis from a clean signature, and wrong. **That section of `analyst-baseline.md` has not yet been corrected.**
+
+### A cost paid deliberately
+
+#53's fix grows the investigation system prompt by **~405 tokens per turn** (2,716 → 4,337 chars), ~10% of the 40,000-token investigation budget over a 10-step run. It makes the token/step bound inconsistency (`analyst-baseline.md` DEFECT 1) worse, and that defect is still **unfiled and unfixed**. An unreachable headline verdict costs more than 405 tokens, but the two bounds must land before any paid run.
+
+---
+
 - **2026-08-23** — —
 - **2026-08-24** — — *(Day 2: architecture documentation. Nothing broke; nothing was built.)*
 - **2026-08-25** — *(no session. Deliberately **not** a numbered build day: numbering a day nobody worked inflated every subsequent day by one, which is why the count was corrected on Day 4.)*
