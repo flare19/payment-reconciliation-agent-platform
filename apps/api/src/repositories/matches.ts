@@ -314,3 +314,70 @@ export async function listMatchedTransactionIds(runId: string): Promise<string[]
   );
   return rows.map((r) => r.transaction_id);
 }
+
+/**
+ * A1b TRIAGE — the review queue as a second work list (ADR-081, U13).
+ *
+ * READ-ONLY. `listReviewQueue` above serves the human's screen and orders by
+ * `confidence ASC, matched_at, id`; this one serves the Analyst and follows
+ * agent-design §3's own order, which is different and deliberately so.
+ *
+ * **Ascending confidence, because the least certain proposal is where a reviewer
+ * most needs the work done for them.** The exception list orders by severity;
+ * this one orders by doubt.
+ *
+ * `amount_at_risk_paise` does not exist on `matches`, so §3's second term is
+ * derived: the largest member amount in the group. A pending match's money at
+ * risk is the size of the payment it concerns, and taking the MAX rather than a
+ * sum avoids double-counting the same economic event across its two or three
+ * legs. Stated here because a derived column that looks like a stored one is how
+ * a metric quietly becomes wrong.
+ *
+ * The canonical tie-break is the group's EARLIEST member in canonical order, so
+ * two groups never compare by whichever leg the aggregate happened to visit
+ * first. `m.id` closes the order so it is TOTAL (ADR-032).
+ */
+export interface QueueTriageCandidate {
+  matchId: string;
+  tier: MatchTier;
+  confidence: number;
+  memberTransactionIds: string[];
+  maxMemberAmountPaise: number;
+}
+
+export async function listQueueTriageCandidates(
+  runId: string, limit: number, client?: TxClient,
+): Promise<QueueTriageCandidate[]> {
+  if (limit <= 0) return [];
+  const { rows } = await (client ?? getPool()).query<{
+    id: string; tier: MatchTier; confidence: number;
+    member_ids: string[]; max_amount: number;
+  }>(
+    `SELECT m.id, m.tier, m.confidence,
+            ARRAY(SELECT mm2.transaction_id FROM match_members mm2
+                   JOIN transactions t2 ON t2.id = mm2.transaction_id
+                  WHERE mm2.match_id = m.id
+                  ORDER BY source_rank(t2.source_system), t2.source_row_number) AS member_ids,
+            max(t.amount_paise) AS max_amount,
+            min(source_rank(t.source_system)) AS first_rank,
+            min(t.source_row_number) AS first_row
+       FROM matches m
+       JOIN match_members mm ON mm.match_id = m.id
+       JOIN transactions t ON t.id = mm.transaction_id
+      WHERE m.run_id = $1 AND m.status = 'pending_review'
+      GROUP BY m.id, m.tier, m.confidence
+      ORDER BY m.confidence ASC,
+               max(t.amount_paise) DESC,
+               min(source_rank(t.source_system)), min(t.source_row_number),
+               m.id
+      LIMIT $2`,
+    [runId, limit]);
+
+  return rows.map((r) => ({
+    matchId: r.id,
+    tier: r.tier,
+    confidence: Number(r.confidence),
+    memberTransactionIds: r.member_ids,
+    maxMemberAmountPaise: Number(r.max_amount),
+  }));
+}

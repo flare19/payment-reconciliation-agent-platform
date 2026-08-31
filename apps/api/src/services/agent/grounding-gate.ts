@@ -22,8 +22,8 @@
  */
 
 import type {
-  AgentConfidence, ProposedAction, RawVerdict, ReasoningStep, ToolCallRecord,
-  ValidatedVerdict, Verdict,
+  AgentConfidence, CorroborationVerdict, ProposedAction, RawCorroboration, RawVerdict,
+  ReasoningStep, ToolCallRecord, ValidatedCorroboration, ValidatedVerdict, Verdict,
 } from '../../types/agent.js';
 import type { AliasType, Direction, SourceSystem } from '../../types/domain.js';
 import { AGENT_DEFAULTS } from '../../config/defaults.js';
@@ -32,11 +32,39 @@ const VERDICTS: readonly Verdict[] = [
   'RESOLUTION_PROPOSED', 'CONFIRMED_UNRESOLVABLE', 'NEEDS_EXTERNAL_DATA', 'INSUFFICIENT_EVIDENCE',
 ];
 const CONFIDENCES: readonly AgentConfidence[] = ['high', 'medium', 'low'];
-const ACTION_TYPES = ['MANUAL_MATCH', 'CREATE_ALIAS', 'MARK_WONT_FIX', 'ADJUST_SEARCH_BOUNDS'] as const;
-const SOURCE_SYSTEMS: readonly SourceSystem[] = ['gateway', 'bank', 'ledger'];
+const CORROBORATION_VERDICTS: readonly CorroborationVerdict[] =
+  ['CORROBORATED', 'CONTRADICTED', 'NO_NEW_EVIDENCE'];
+/**
+ * EXPORTED so the investigation prompt can be checked against it (issue #53).
+ *
+ * A schema the model is never shown is a schema the model cannot satisfy. The
+ * gate validated all four variants meticulously while `SYSTEM_PROMPT` named
+ * none of them, so `RESOLUTION_PROPOSED` — the verdict agent-design.md §7 calls
+ * the agent's entire reason to exist — was unreachable, and the one live
+ * attempt died on `proposedAction must be an object`. `agent-prompt.test.ts`
+ * now asserts every name below appears in the prompt, so a fifth action type
+ * fails a test rather than silently becoming unreachable.
+ */
+export const ACTION_TYPES =
+  ['MANUAL_MATCH', 'CREATE_ALIAS', 'MARK_WONT_FIX', 'ADJUST_SEARCH_BOUNDS'] as const;
+export const SOURCE_SYSTEMS: readonly SourceSystem[] = ['gateway', 'bank', 'ledger'];
 /** Mirrors `learned_aliases.alias_type`'s CHECK constraint (migration 005). */
-const ALIAS_TYPES: readonly AliasType[] =
+export const ALIAS_TYPES: readonly AliasType[] =
   ['merchant_name', 'counterparty_name', 'reference_id', 'description_token'];
+
+/**
+ * The field names `checkActionSchema` requires, per variant. Declared as data
+ * beside the checks that enforce them so the prompt test can iterate them.
+ * `rationale` is required on every variant and is therefore listed once, below.
+ */
+export const ACTION_REQUIRED_FIELDS: Readonly<Record<
+  (typeof ACTION_TYPES)[number], readonly string[]
+>> = {
+  MANUAL_MATCH: ['members', 'transactionId', 'role'],
+  CREATE_ALIAS: ['aliasType', 'rawValue', 'canonicalValue'],
+  MARK_WONT_FIX: [],
+  ADJUST_SEARCH_BOUNDS: ['poolSize', 'maxSubsetSize', 'nodeBudget'],
+};
 
 /** Everything the gate needs about the world, so the gate itself stays pure. */
 export interface GateContext {
@@ -239,7 +267,7 @@ function checkActionSchema(action: unknown): string | null {
       return null;
 
     case 'ADJUST_SEARCH_BOUNDS': {
-      for (const field of ['poolSize', 'maxSubsetSize', 'budgetMs'] as const) {
+      for (const field of ['poolSize', 'maxSubsetSize', 'nodeBudget'] as const) {
         const value = a[field];
         if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
           return `ADJUST_SEARCH_BOUNDS.${field} must be a positive integer`;
@@ -249,7 +277,7 @@ function checkActionSchema(action: unknown): string | null {
         // a billion must not reach them looking actionable.
         const ceiling = AGENT_DEFAULTS.rerunSubsetCeilings[field];
         if (value > ceiling) {
-          return `ADJUST_SEARCH_BOUNDS.${field} is ${value}, above the ADR-054 ceiling of ${ceiling}`;
+          return `ADJUST_SEARCH_BOUNDS.${field} is ${value}, above the ADR-054/085 ceiling of ${ceiling}`;
         }
       }
       return null;
@@ -309,7 +337,7 @@ function checkGrounding(verdict: RawVerdict, context: GateContext): string | nul
     if (!calledTools.has(step.tool)) {
       return `reasoning step ${i + 1} cites tool "${step.tool}", which was never called`;
     }
-    const digestMismatch = digestFor(context.toolCalls, step);
+    const digestMismatch = digestFor(context.toolCalls, step, i + 1);
     if (digestMismatch !== null) return digestMismatch;
   }
   return null;
@@ -320,20 +348,55 @@ function checkGrounding(verdict: RawVerdict, context: GateContext): string | nul
  * it. Keeping them in separate fields is what lets a reader check the reasoning
  * against the evidence; letting the model write both would make the chain
  * self-consistent and unverifiable at the same time.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * THE JOIN KEY IS (tool, resultDigest). IT USED TO INCLUDE `step`, AND THAT WAS
+ * A BUG THAT REJECTED TRUTHFUL VERDICTS (issue #54).
+ *
+ * `step.step` is model-authored — the index in the narrative it chose to write.
+ * `ToolCallRecord.step` was the runtime's counter. Nothing kept them in sync, and
+ * they came apart on two ordinary events: the model omitting a call from its
+ * write-up (a call that returned nothing useful is naturally left out), and a
+ * single turn issuing more than one tool call (all of them stamped identically,
+ * so no narrative numbering could address them individually).
+ *
+ * Measured on holdout run 80ddde9d: 10 of 10 corroborations and 3 of the 5
+ * verdict-producing investigations were rejected this way — 13 of 15 — every one
+ * of them citing a tool it really called and echoing a digest the runtime really
+ * produced. agent-design.md §7 reads the grounding-failure count as a signal that
+ * the prompt or the tools need work, and this file's own words apply: "A metric
+ * that counts our own bugs as the model's hallucinations is worse than no metric."
+ *
+ * ── WHY THIS DOES NOT WEAKEN THE GATE ──
+ * The checksum property is unchanged, because the DIGEST was always the thing
+ * doing the work. A model narrating a step it never took still cannot produce the
+ * digest for it: digests are long, tool-prefixed (`digestOf`) and handed over
+ * verbatim, so they cannot be guessed, and copying one from a different tool's
+ * result fails the `c.tool === step.tool` half. What is dropped is only the
+ * requirement that the model number its narrative the way the runtime happened to
+ * count turns — which was never evidence of anything.
+ *
+ * Ordering is not lost either: the persisted chain is rebuilt from the tool calls
+ * themselves (`reasoningChain`), in the order they were actually made, so the
+ * transcript's order comes from the runtime and never from the model.
+ * ══════════════════════════════════════════════════════════════════════════════
  */
-function digestFor(calls: readonly ToolCallRecord[], step: ReasoningStep): string | null {
-  const call = calls.find((c) => c.step === step.step && c.tool === step.tool);
-  if (call === undefined) {
-    return `reasoning step ${step.step} has no matching tool call`;
-  }
-  if (call.resultDigest !== step.resultDigest) {
-    return `reasoning step ${step.step} reports a result the runtime did not record`;
-  }
-  return null;
+function digestFor(
+  calls: readonly ToolCallRecord[], step: ReasoningStep, position: number,
+): string | null {
+  // `position` is the index in the reasoning array, not `step.step`. The message
+  // has to name something well-defined, and a model-supplied number is not.
+  const sameTool = calls.filter((c) => c.tool === step.tool);
+  if (sameTool.some((c) => c.resultDigest === step.resultDigest)) return null;
+  // Reached only when the tool WAS called (checkGrounding tests that first), so
+  // this is the specific claim: a result no call of that tool actually returned.
+  return `reasoning step ${position} reports a "${step.tool}" result the runtime `
+    + 'did not record';
 }
 
 function idsInAction(action: ProposedAction | null): string[] {
-  if (action === null) return [];
+  // `== null` for the same reason as `checkConstraints` above.
+  if (action == null) return [];
   return action.type === 'MANUAL_MATCH' ? action.members.map((m) => m.transactionId) : [];
 }
 
@@ -347,7 +410,16 @@ function idsInAction(action: ProposedAction | null): string[] {
  */
 function checkConstraints(verdict: RawVerdict, context: GateContext): string | null {
   const action = verdict.proposedAction;
-  if (action === null) return null;
+  // `== null`, NOT `=== null`. `checkSchema` above already treats an ABSENT
+  // `proposedAction` as equivalent to a null one — correctly, because a model
+  // omitting an optional-looking field is ordinary. This guard did not, so an
+  // omitted field reached `action.type` and THREW.
+  //
+  // A throw here is much worse than a rejection: `validateVerdict` is documented
+  // to throw only for a caller bug, so `investigateOne` does not catch it, and
+  // the whole investigation was recorded as failed instead of being downgraded.
+  // Found by a live run — 2 of 17 investigations lost this way.
+  if (action == null) return null;
 
   if (action.type === 'MANUAL_MATCH') {
     const seenRoles = new Set<SourceSystem>();
@@ -423,6 +495,130 @@ function reject(raw: unknown, check: GateResult['rejection'] extends null ? neve
       verdict: 'INSUFFICIENT_EVIDENCE',
       confidence: 'low',
       proposedAction: null,
+      reasoning: Array.isArray(source.reasoning) ? source.reasoning : [],
+      citations: [],
+      summary: typeof source.summary === 'string' ? source.summary : '',
+      groundingPassed: false,
+      groundingFailure: `${check}: ${reason}`,
+      budgetExhausted: false,
+    },
+    rejection: { check, reason },
+  };
+}
+
+// ─── A2 CORROBORATE — the same gate, a different vocabulary (ADR-081) ────────
+
+/**
+ * Validate a review-queue corroboration.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * IT REUSES `checkGrounding` VERBATIM, AND THAT IS THE POINT.
+ *
+ * The citation rule, the "cites a tool it never called" rule and the digest
+ * checksum are the substance of A3; a second copy tuned for corroborations would
+ * drift from the original and the drift would be invisible, because both would
+ * keep passing their own tests. Only the SCHEMA differs, because only the
+ * vocabulary differs.
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
+ * ── THERE IS NO PROPOSAL ARM, DELIBERATELY ──
+ * A corroboration carries no `proposedAction` and the schema rejects one if it
+ * appears. agent-design.md §3: "The Analyst does not recommend confirming or
+ * rejecting a match. It never says 'confirm this'." The human still clicks,
+ * through `PATCH /api/matches/:id`. A gate that would accept a recommendation
+ * here is a gate that has stopped enforcing the line ADR-017 draws.
+ */
+export interface CorroborationGateResult {
+  verdict: ValidatedCorroboration;
+  rejection: { check: 'schema' | 'grounding'; reason: string } | null;
+}
+
+export function validateCorroboration(
+  raw: unknown, context: GateContext,
+): CorroborationGateResult {
+  assertContextIsScoped(context);
+
+  const schema = checkCorroborationSchema(raw);
+  if (schema !== null) return rejectCorroboration(raw, 'schema', schema);
+
+  const corroboration = raw as RawCorroboration;
+
+  // `checkGrounding` takes a `RawVerdict`; a corroboration is the same shape
+  // minus the proposal, so it is widened with an explicit null rather than
+  // copied. There is no action, so `idsInAction` finds none.
+  //
+  // `CONFIRMED_UNRESOLVABLE` is not an arbitrary stand-in: it selects
+  // `checkGrounding`'s "asserts something, so it requires a reasoning chain"
+  // arm, and ALL THREE corroboration verdicts assert something. CORROBORATED
+  // and CONTRADICTED obviously do. NO_NEW_EVIDENCE does too, and that is the
+  // one worth being explicit about — "the engine's score is all there is" is a
+  // claim about HAVING LOOKED, and a model that concludes it without calling a
+  // tool has not looked. Reaching it for free would make it the cheapest
+  // verdict, which is exactly how an agent learns to stop investigating.
+  const grounding = checkGrounding(
+    { ...corroboration, verdict: 'CONFIRMED_UNRESOLVABLE', proposedAction: null },
+    context);
+  if (grounding !== null) return rejectCorroboration(corroboration, 'grounding', grounding);
+
+  return {
+    verdict: {
+      ...corroboration,
+      citations: [...new Set(corroboration.citations)].sort(),
+      groundingPassed: true,
+      groundingFailure: null,
+      budgetExhausted: false,
+    },
+    rejection: null,
+  };
+}
+
+function checkCorroborationSchema(raw: unknown): string | null {
+  if (raw === null || typeof raw !== 'object') return 'corroboration is not an object';
+  const v = raw as Record<string, unknown>;
+
+  if (!CORROBORATION_VERDICTS.includes(v['verdict'] as CorroborationVerdict)) {
+    return `verdict must be one of ${CORROBORATION_VERDICTS.join(', ')}, `
+      + `got ${String(v['verdict'])}`;
+  }
+  if (!CONFIDENCES.includes(v['confidence'] as AgentConfidence)) {
+    return `confidence must be one of ${CONFIDENCES.join(', ')}, got ${String(v['confidence'])}`;
+  }
+  if (typeof v['summary'] !== 'string' || v['summary'].trim() === '') {
+    return 'summary is required';
+  }
+  if (!Array.isArray(v['citations'])
+    || v['citations'].some((c) => typeof c !== 'string')) {
+    return 'citations must be an array of strings';
+  }
+  // A recommendation has no field to live in. If one arrives, the model has been
+  // told the wrong job and the verdict is refused rather than quietly stripped —
+  // stripping it would hide that the prompt has drifted.
+  if (v['proposedAction'] !== undefined && v['proposedAction'] !== null) {
+    return 'a corroboration must not carry a proposedAction: it reports evidence, '
+      + 'it does not recommend confirming or rejecting a match (ADR-081)';
+  }
+  if (!Array.isArray(v['reasoning'])) return 'reasoning must be an array';
+  for (const [i, step] of (v['reasoning'] as unknown[]).entries()) {
+    const s = step as Record<string, unknown>;
+    if (s === null || typeof s !== 'object') return `reasoning[${i}] is not an object`;
+    if (typeof s['tool'] !== 'string' || s['tool'] === '') return `reasoning[${i}].tool is required`;
+    if (typeof s['resultDigest'] !== 'string') return `reasoning[${i}].resultDigest is required`;
+    if (typeof s['inference'] !== 'string') return `reasoning[${i}].inference is required`;
+  }
+  return null;
+}
+
+function rejectCorroboration(
+  raw: unknown, check: 'schema' | 'grounding', reason: string,
+): CorroborationGateResult {
+  const source = (raw ?? {}) as Partial<RawCorroboration>;
+  return {
+    verdict: {
+      // NO_NEW_EVIDENCE is the corroboration analogue of INSUFFICIENT_EVIDENCE:
+      // the honest floor. A rejected corroboration must not read as
+      // CONTRADICTED, which is a positive claim about evidence AGAINST a match.
+      verdict: 'NO_NEW_EVIDENCE',
+      confidence: 'low',
       reasoning: Array.isArray(source.reasoning) ? source.reasoning : [],
       citations: [],
       summary: typeof source.summary === 'string' ? source.summary : '',

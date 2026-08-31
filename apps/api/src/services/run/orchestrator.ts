@@ -64,6 +64,15 @@ import {
 import { runBatchStage } from '../matching/batch-stage.js';
 import { runClassification } from '../classification/collect.js';
 import { computeRunMetrics, type StageTimings } from '../metrics/run-metrics.js';
+import {
+  auditEventFor, planSignatures, resolveExplanations,
+  type ExceptionToExplain, type ExplainStats,
+} from '../explain/cache.js';
+import type { ExplainLlmClient } from '../explain/llm-client.js';
+import { PROMPT_VERSION } from '../explain/templates.js';
+import type { TxForSignature } from '../explain/signature.js';
+import { DEFAULT_EXPLAIN_MODEL } from '../../config/defaults.js';
+import * as explainRepo from '../../repositories/explanations.js';
 
 import * as runsRepo from '../../repositories/runs.js';
 import * as txnRepo from '../../repositories/transactions.js';
@@ -79,6 +88,32 @@ export interface RunSources {
   bank: string;
   ledger: string;
 }
+
+/**
+ * What S13 needs that a `RunConfig` cannot carry.
+ *
+ * The API key and the model name are ENVIRONMENT, not run configuration — they
+ * are not overridable per run and they must never reach `config_snapshot`.
+ * They arrive here instead, injected by the route, so the orchestrator has no
+ * dependency on `loadEnv()` and a test can hand it a fake client.
+ *
+ * `model` is required even when `client` is null, and that is not redundant:
+ * the model name is hashed into every `signature_hash` (ADR-018), so a keyless
+ * run must compute the SAME hashes a keyed run would. If it used a placeholder,
+ * the day a key arrives every signature would change and the cache the keyless
+ * runs had been checking against would be a different namespace.
+ */
+export interface ExplainDeps {
+  /** `null` when there is no key or `LLM_EXPLAIN_ENABLED=false`. A legitimate state. */
+  client: ExplainLlmClient | null;
+  /** The CONFIGURED explain model, whether or not a client exists. */
+  model: string;
+  promptVersion: string;
+}
+
+const DEFAULT_EXPLAIN_DEPS: ExplainDeps = {
+  client: null, model: DEFAULT_EXPLAIN_MODEL, promptVersion: PROMPT_VERSION,
+};
 
 export interface RunOutcome {
   runId: string;
@@ -143,9 +178,10 @@ const blank = {
  */
 export async function executeRun(
   runId: string, sources: RunSources, baseConfig: Omit<RunConfig, 'referenceDate' | 'aliasCountAtStart'>,
+  explain: ExplainDeps = DEFAULT_EXPLAIN_DEPS,
 ): Promise<RunOutcome> {
   try {
-    return await runPhases(runId, sources, baseConfig);
+    return await runPhases(runId, sources, baseConfig, explain);
   } catch (err) {
     const detail = err instanceof CsvParseError
       ? `PARSE_FAILED: ${err.message}`
@@ -174,6 +210,7 @@ export async function executeRun(
 async function runPhases(
   runId: string, sources: RunSources,
   baseConfig: Omit<RunConfig, 'referenceDate' | 'aliasCountAtStart'>,
+  explain: ExplainDeps,
 ): Promise<RunOutcome> {
   let auditEntries = 0;
 
@@ -459,12 +496,19 @@ async function runPhases(
     auditEntries += audit.count;
   });
 
-  // ── S13 EXPLAIN — U11, Day 10 ──────────────────────────────────────────────
-  // The status transition happens regardless so the poll target is truthful
-  // about where the run is; with no explain layer the phase is a no-op and every
-  // exception keeps `explanation_text = NULL`, which is exactly what the UI
-  // renders as "not yet explained" rather than as an empty explanation.
+  // ── S13 EXPLAIN (U11) ──────────────────────────────────────────────────────
+  // Runs over the exceptions S12 ALREADY COMMITTED (schema.md §10.1) — that is
+  // what makes ADR-017's boundary structural rather than a promise: by the time
+  // any prose exists, every category and severity is already a durable row.
+  //
+  // With no API key this phase still runs and still does work; it writes the
+  // hand-written template for every signature. That is the primary path here,
+  // not a degraded one, and it is why `explanation_text` is never NULL on a
+  // completed run.
   await runsRepo.setRunStatus(runId, 'explaining');
+  const explained = await stage.timeAsync('explain', () =>
+    runExplainPhase(runId, ingested.transactions, config, explain));
+  auditEntries += explained.auditEntries;
 
   // ── S14 METRICS + FINALIZE ─────────────────────────────────────────────────
   // `computeRunMetrics` re-derives ADR-040's denominator and THROWS if the
@@ -496,6 +540,12 @@ async function runPhases(
     batchPairs: batch.splitPairs,
     timings: stage.finish(startedAt),
     config,
+    explain: {
+      ...explained.stats,
+      model: explain.model,
+      promptVersion: explain.promptVersion,
+      callCapPerRun: config.llmMaxCallsPerRun,
+    },
   });
 
   return await withTransaction(async (c) => {
@@ -527,6 +577,141 @@ async function runPhases(
 }
 
 /**
+ * S13, end to end.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * THE READS AND THE MODEL CALLS HAPPEN OUTSIDE ANY TRANSACTION; THE WRITES
+ * HAPPEN INSIDE ONE.
+ *
+ * Every other phase in this file opens its transaction first and works inside
+ * it. This one must not. A batch call can take up to 20 seconds and there can
+ * be eight of them, and `appendAuditEntry` holds a transaction-scoped advisory
+ * lock on the run's chain for the life of its transaction — so wrapping the
+ * model calls would hold that lock across minutes of network I/O, block every
+ * other append, and expose the run to a managed-Postgres idle-in-transaction
+ * timeout on the platform this deploys to. The stage is slow because it talks
+ * to a model; the WRITE has no reason to inherit that.
+ *
+ * The cost of the split is the ordinary one: a crash between the model call and
+ * the write loses the prose and keeps the exceptions at `open`. That is the
+ * correct direction to fail — a re-run regenerates it, and nothing about the
+ * reconciliation itself is affected, because S13 changes no decision (ADR-017).
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
+ * ── ONE AUDIT ENTRY PER SIGNATURE, NOT PER EXCEPTION ──
+ * The DECISION is made once per signature: call the model, reuse the cache, or
+ * take the template. Fanning the same verdict out to every exception sharing
+ * that signature would be TRANSCRIPTION, and this file already draws that line
+ * for ingestion — one entry per source, not one per row, for exactly the reason
+ * §9.1 floors `MATCH_CANDIDATE_REJECTED` at 0.40. Each entry names the
+ * exceptions it covers, and every exception's own row carries
+ * `explanation_source` and `signature_hash`, so nothing is lost by not
+ * repeating it a few hundred times in a hash-chained log.
+ */
+async function runExplainPhase(
+  runId: string,
+  allTransactions: readonly NormalizedTransaction[],
+  config: RunConfig,
+  explain: ExplainDeps,
+): Promise<{ stats: ExplainStats; auditEntries: number }> {
+  // Every ingested row, not the deduped pool: a DUPLICATE_RECORD exception is
+  // raised ON the non-primary copy, which S4 removed from the pool. Signing it
+  // against the pool alone would report `sources_present: unknown` for the one
+  // category whose subject is guaranteed to be missing from it.
+  const txById = new Map<string, TxForSignature>(
+    allTransactions.map((t) => [t.id, t]));
+
+  // The persisted rows, which carry the `id` the fan-out needs. `listUnexplained`
+  // is S13's work list and is already ordered by severity.
+  const pending = await excRepo.listUnexplained(runId, Number.MAX_SAFE_INTEGER);
+  const toExplain: ExceptionToExplain[] = pending.map((e) => ({
+    id: e.id,
+    transactionId: e.transactionId,
+    relatedTransactionIds: e.relatedTransactionIds,
+    category: e.category,
+    secondaryFlags: e.secondaryFlags,
+    evidence: e.evidence,
+    severity: e.severity,
+  }));
+
+  const groups = planSignatures(toExplain, txById, {
+    promptVersion: explain.promptVersion, model: explain.model,
+  });
+
+  const { resolved, stats } = await resolveExplanations(groups, {
+    // `llmExplainEnabled` is per-run config (api-contract §2 allows overriding
+    // it), so a run may switch the model off even where a key exists.
+    client: config.llmExplainEnabled ? explain.client : null,
+    lookupCache: async (hash) => {
+      const hit = await explainRepo.getCachedExplanation(hash);
+      return hit === null ? null : {
+        explanationText: hit.explanationText,
+        suggestedAction: hit.suggestedAction,
+        tokensIn: hit.tokensIn,
+        tokensOut: hit.tokensOut,
+      };
+    },
+  }, { llmMaxCallsPerRun: config.llmMaxCallsPerRun });
+
+  let written = 0;
+  await withTransaction(async (c) => {
+    const audit = new PhaseAudit(c, runId);
+
+    for (const r of resolved) {
+      // ADR-084: only fresh model output is cached. A template row would be
+      // served as a HIT by every later run — including runs that have a key —
+      // so one keyless afternoon would permanently stop that signature ever
+      // reaching the model, silently.
+      if (r.needsCacheWrite) {
+        await explainRepo.putExplanation({
+          signatureHash: r.hash,
+          promptVersion: explain.promptVersion,
+          model: explain.model,
+          category: r.category,
+          signatureInput: { ...r.components },
+          explanationText: r.explanationText,
+          suggestedAction: r.suggestedAction,
+          tokensIn: r.tokensIn,
+          tokensOut: r.tokensOut,
+        }, c);
+      }
+
+      for (const exceptionId of r.exceptionIds) {
+        await excRepo.setExplanation(exceptionId, {
+          explanationText: r.explanationText,
+          suggestedAction: r.suggestedAction,
+          explanationSource: r.source,
+          signatureHash: r.hash,
+        }, c);
+      }
+
+      await audit.write({
+        ...blank,
+        eventType: auditEventFor(r.source),
+        subjectType: 'run', subjectId: runId,
+        // The model is the ACTOR only where it actually wrote the words. A
+        // template attributed to `llm` would misrepresent what produced the
+        // text a panelist is reading.
+        decision: r.source,
+        reason: r.reason,
+        details: details({
+          signatureHash: r.hash,
+          signatureInput: { ...r.components },
+          category: r.category,
+          explanationSource: r.source,
+          occurrenceCount: r.occurrenceCount,
+          exceptionIds: r.exceptionIds,
+          templateCause: r.templateCause,
+        }),
+      });
+    }
+    written = audit.count;
+  });
+
+  return { stats, auditEntries: written };
+}
+
+/**
  * Per-stage wall-clock, accumulated as the run walks S1 -> S12.
  *
  * Accumulating rather than assigning: `tier15` runs once today, but a stage that
@@ -544,6 +729,21 @@ class StageClock {
     const t0 = Date.now();
     try {
       return fn();
+    } finally {
+      this.ms.set(name, (this.ms.get(name) ?? 0) + (Date.now() - t0));
+    }
+  }
+
+  /**
+   * S13 is the only stage that awaits, and it awaits the network. Its figure is
+   * therefore NOT comparable to the others and is deliberately excluded from
+   * `engineMs` below — folding model latency into an engine throughput number
+   * would make the headline a claim about Google's servers.
+   */
+  async timeAsync<T>(name: string, fn: () => Promise<T>): Promise<T> {
+    const t0 = Date.now();
+    try {
+      return await fn();
     } finally {
       this.ms.set(name, (this.ms.get(name) ?? 0) + (Date.now() - t0));
     }
@@ -572,7 +772,9 @@ class StageClock {
       batch: this.get('batch'),
       group: this.get('group'),
       classify: this.get('classify'),
-      explain: null,    // S13 unwired
+      // S13 runs on every run since U11 — with no key it writes templates,
+      // which is work, not an absence. A real measurement, never null.
+      explain: this.get('explain'),
       engineMs,
       wallClockMs: Date.now() - startedAt,
     };
@@ -608,20 +810,24 @@ function reasonForException(e: ClassifiedException): string {
 }
 
 /**
- * ── The one stage this orchestrator does NOT run, stated rather than hidden ──
+ * ── EVERY STAGE NOW RUNS ──
  *
- * S13 (explain) is U11. Its status transition and its call site are here; it
- * fabricates no value it cannot compute, so every exception keeps
- * `explanation_text = NULL`, which the UI renders as "not yet explained" rather
- * than as an empty explanation. `metrics.llmCost` stays `null` for the same
- * reason — a stage that did not run must not report a cost of zero, which reads
- * as a warm cache.
+ * This list is EMPTY, and it is kept rather than deleted because the rule it
+ * enforces is what mattered: a stage that did not run reports `null`, never
+ * `0`, and names itself here so a reader never has to consult the source to
+ * find out which figures are findings and which are absences.
  *
- * S10 (batch decomposition) and S14 (metrics) were both on this list and are
- * now wired — S14 on Day 9, S10 on Day 10 (issue #46). `UNSPLITTABLE_BATCH` is
- * therefore raised by a search that actually ran, which is the whole of ADR-038:
- * the engine may only call a batch unsplittable after genuinely trying to split
- * it, and `evidence.searchExhausted` vs `evidence.searchBoundExceeded` says
- * which claim it is making.
+ * The three that were once on it, and when each came off:
+ *   S14 metrics             — Day 9 (U8)
+ *   S10 batch decomposition — Day 10 (issue #46)
+ *   S13 explain             — Day 11 (U11)
+ *
+ * S13's departure is the one worth stating precisely, because "it ran" is a
+ * weaker claim than it looks: with no API key the stage still executes and
+ * still writes a hand-written template for every signature (schema.md §10.1).
+ * So `metrics.llmCost` is now an object on every run — but `apiCalls: 0` beside
+ * `signaturesTemplated: 27` says "no model was called", which is a different
+ * and honest claim from the `null` that used to mean "there is no explain
+ * layer".
  */
-export const UNWIRED_STAGES = ['S13_EXPLAIN'] as const;
+export const UNWIRED_STAGES = [] as const;

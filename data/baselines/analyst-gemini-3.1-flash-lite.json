@@ -1,0 +1,71 @@
+{
+  "kind": "analyst-baseline",
+  "runId": "80ddde9d-af94-49e5-b873-5382f4a515c0",
+  "model": "gemini-3.1-flash-lite",
+  "recordedAt": "2026-08-31T16:46:48.322Z",
+  "engine": {
+    "matchRatePct": 65.22,
+    "matches": 284,
+    "exceptions": 212
+  },
+  "bounds": {
+    "maxInvestigations": 20,
+    "maxCorroborations": 15,
+    "maxRequests": 220,
+    "rpm": 12,
+    "tpm": 200000,
+    "investigationBudget": {
+      "maxSteps": 10,
+      "maxToolCalls": 16,
+      "maxWallMs": 60000,
+      "maxTokens": 40000
+    },
+    "corroborationBudget": {
+      "maxSteps": 6,
+      "maxToolCalls": 8
+    }
+  },
+  "triage": {
+    "investigate": 20,
+    "corroborate": 15,
+    "investigationsSkipped": 1,
+    "worstCaseRequests": 290
+  },
+  "outcome": {
+    "investigated": 20,
+    "corroborated": 10,
+    "verdicts": {
+      "INSUFFICIENT_EVIDENCE": 19,
+      "CONFIRMED_UNRESOLVABLE": 1
+    },
+    "corroborationVerdicts": {
+      "NO_NEW_EVIDENCE": 10
+    },
+    "groundingFailures": 19,
+    "corroborationGroundingFailures": 10,
+    "budgetExhaustedCount": 15,
+    "skippedForBudget": 0,
+    "auditEntries": 309
+  },
+  "spend": {
+    "requestsSpent": 216,
+    "requestsIssued": 216,
+    "retries": 0,
+    "throttleWaitMs": 569933,
+    "backoffWaitMs": 0,
+    "tokensIn": 1138165,
+    "tokensOut": 21519,
+    "costUsd": null,
+    "tokensPerInvestigation": 57984,
+    "projectedOpus5Usd": 6.2288
+  },
+  "latencyMs": {
+    "turns": 216,
+    "min": 994,
+    "median": 2323,
+    "p95": 4689,
+    "max": 8682,
+    "boundMs": 60000,
+    "phaseWallMs": 1122751
+  }
+}

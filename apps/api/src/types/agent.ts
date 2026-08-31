@@ -26,7 +26,12 @@ export type ProposedAction =
   | { type: 'MANUAL_MATCH'; members: { transactionId: string; role: MemberRole }[]; rationale: string }
   | { type: 'CREATE_ALIAS'; aliasType: string; rawValue: string; canonicalValue: string; rationale: string }
   | { type: 'MARK_WONT_FIX'; rationale: string }
-  | { type: 'ADJUST_SEARCH_BOUNDS'; poolSize: number; maxSubsetSize: number; budgetMs: number; rationale: string };
+  /**
+   * ADR-085: the agent widens the NODE budget, never a time budget. A wall-clock
+   * bound would make `searchExhausted` vs `searchBoundExceeded` a property of the
+   * hardware, inside the evidence a reasoning chain cites.
+   */
+  | { type: 'ADJUST_SEARCH_BOUNDS'; poolSize: number; maxSubsetSize: number; nodeBudget: number; rationale: string };
 
 export interface ReasoningStep {
   step: number;
@@ -98,6 +103,35 @@ export interface AgentTool<TArgs = unknown, TResult = unknown> {
    */
   readonly readOnly: true;
   execute(args: TArgs): Promise<{ result: TResult; returnedIds: string[]; digest: string }>;
+}
+
+/**
+ * A2 CORROBORATE's verdicts (agent-design §3, ADR-081).
+ *
+ * DISJOINT from `Verdict` on purpose. These are statements about EVIDENCE; those
+ * are statements about whether an exception can be resolved. A union type would
+ * let one function accept both and a reader assume they are comparable.
+ *
+ * There is no corroboration equivalent of `RESOLUTION_PROPOSED`, and that is the
+ * design: "The Analyst does not recommend confirming or rejecting a match. It
+ * never says 'confirm this'." A vocabulary with no word for a recommendation
+ * cannot express one.
+ */
+export type CorroborationVerdict = 'CORROBORATED' | 'CONTRADICTED' | 'NO_NEW_EVIDENCE';
+
+/** Raw model output for a corroboration, BEFORE the A3 gate. Untrusted. */
+export interface RawCorroboration {
+  verdict: CorroborationVerdict;
+  confidence: AgentConfidence;
+  reasoning: ReasoningStep[];
+  citations: string[];
+  summary: string;
+}
+
+export interface ValidatedCorroboration extends RawCorroboration {
+  groundingPassed: boolean;
+  groundingFailure: string | null;
+  budgetExhausted: boolean;
 }
 
 export interface InvestigationInput {

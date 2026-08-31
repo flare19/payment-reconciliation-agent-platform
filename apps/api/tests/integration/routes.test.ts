@@ -267,10 +267,10 @@ describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL
     const seqs = entries.map((e) => e['sequenceNo'] as number);
     assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b));
     assert.equal(entries[0]!['eventType'], 'RUN_STARTED', 'the anchor comes first');
-    assert.equal((run.json['pagination'] as Record<string, number>)['total'], 591);
+    assert.equal((run.json['pagination'] as Record<string, number>)['total'], 612);
 
     const byActor = await req('GET', `/api/runs/${runId}/audit?actorType=engine`);
-    assert.equal((byActor.json['pagination'] as Record<string, number>)['total'], 591);
+    assert.equal((byActor.json['pagination'] as Record<string, number>)['total'], 612);
     const byEvent = await req('GET', `/api/runs/${runId}/audit?eventType=RECORD_DEDUPLICATED`);
     assert.equal((byEvent.json['pagination'] as Record<string, number>)['total'], 9);
   });
@@ -282,7 +282,7 @@ describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL
     // A hash chain proves the entries you HOLD are consistent and cannot prove
     // you hold all of them. Without the anchor, deleting the tail reads as clean.
     assert.equal(r.json['anchored'], true);
-    assert.equal(r.json['entriesChecked'], 591);
+    assert.equal(r.json['entriesChecked'], 612);
     assert.equal(r.json['firstDivergenceSequenceNo'], null);
   });
 

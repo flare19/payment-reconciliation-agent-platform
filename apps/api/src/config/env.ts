@@ -6,6 +6,11 @@
  * Optional vars degrade explicitly (see `llmConfigured`).
  */
 
+import {
+  AGENT_DEFAULTS, DEFAULT_AGENT_MODEL, DEFAULT_EXPLAIN_MODEL, DEFAULT_PROMPT_VERSION,
+} from './defaults.js';
+import { RATE_LIMIT_DEFAULTS } from '../services/agent/rate-limiter.js';
+
 function required(name: string): string {
   const v = process.env[name];
   if (v === undefined || v === '') {
@@ -58,6 +63,9 @@ export interface Env {
   explainModel: string;
   /** Phase A investigation and Q&A loops (ADR-080). */
   agentModel: string;
+  agentMaxRequestsPerMinute: number;
+  agentMaxTokensPerMinute: number;
+  agentMaxRetries: number;
   llmExplainEnabled: boolean;
   llmMaxCallsPerRun: number;
   promptVersion: string;
@@ -103,11 +111,11 @@ export function loadEnv(): Env {
     logLevel: optional('LOG_LEVEL', 'info'),
 
     geminiApiKey: key === undefined || key === '' ? null : key,
-    explainModel: optional('GEMINI_EXPLAIN_MODEL', 'gemini-3.5-flash'),
-    agentModel: optional('GEMINI_AGENT_MODEL', 'gemini-3.7-flash'),
+    explainModel: optional('GEMINI_EXPLAIN_MODEL', DEFAULT_EXPLAIN_MODEL),
+    agentModel: optional('GEMINI_AGENT_MODEL', DEFAULT_AGENT_MODEL),
     llmExplainEnabled: bool('LLM_EXPLAIN_ENABLED', true),
     llmMaxCallsPerRun: int('LLM_MAX_CALLS_PER_RUN', 8),
-    promptVersion: optional('PROMPT_VERSION', 'v1'),
+    promptVersion: optional('PROMPT_VERSION', DEFAULT_PROMPT_VERSION),
 
     aliasLearningEnabled: bool('ALIAS_LEARNING_ENABLED', true),
     candidateCap: int('CANDIDATE_CAP', 200),
@@ -116,14 +124,22 @@ export function loadEnv(): Env {
     staleRunTimeoutMinutes: int('STALE_RUN_TIMEOUT_MINUTES', 5),
 
     agentEnabled: bool('AGENT_ENABLED', true),
-    agentMaxInvestigationsPerRun: int('AGENT_MAX_INVESTIGATIONS_PER_RUN', 20),
+    agentMaxInvestigationsPerRun: int('AGENT_MAX_INVESTIGATIONS_PER_RUN', AGENT_DEFAULTS.maxInvestigationsPerRun),
     agentMaxCostUsdPerRun: num('AGENT_MAX_COST_USD_PER_RUN', 1.0),
-    agentMaxLlmRequestsPerRun: int('AGENT_MAX_LLM_REQUESTS_PER_RUN', 220),
-    agentMaxQueueTriagesPerRun: int('AGENT_MAX_QUEUE_TRIAGES_PER_RUN', 15),
+    agentMaxLlmRequestsPerRun: int('AGENT_MAX_LLM_REQUESTS_PER_RUN', AGENT_DEFAULTS.maxLlmRequestsPerRun),
+    agentMaxQueueTriagesPerRun: int('AGENT_MAX_QUEUE_TRIAGES_PER_RUN', AGENT_DEFAULTS.maxQueueTriagesPerRun),
     agentQaEnabled: bool('AGENT_QA_ENABLED', true),
     agentQaMaxQuestionsPerRun: int('AGENT_QA_MAX_QUESTIONS_PER_RUN', 50),
     agentQaMaxQuestionsPerHour: int('AGENT_QA_MAX_QUESTIONS_PER_HOUR', 100),
     agentPromptVersion: optional('AGENT_PROMPT_VERSION', 'agent-v1'),
+    // Paced BELOW the provider ceiling on purpose (rate-limiter.ts). A refused
+    // request still counts against a daily quota, so the margin is what keeps
+    // the budget being spent on work rather than on rejections.
+    agentMaxRequestsPerMinute:
+      int('AGENT_MAX_REQUESTS_PER_MINUTE', RATE_LIMIT_DEFAULTS.maxRequestsPerMinute),
+    agentMaxTokensPerMinute:
+      int('AGENT_MAX_TOKENS_PER_MINUTE', RATE_LIMIT_DEFAULTS.maxTokensPerMinute),
+    agentMaxRetries: int('AGENT_MAX_RETRIES', RATE_LIMIT_DEFAULTS.maxRetries),
 
     devSeed: int('DEV_SEED', 1337),
     holdoutSeed: int('HOLDOUT_SEED', 90210),

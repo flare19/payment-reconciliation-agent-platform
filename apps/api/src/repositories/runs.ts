@@ -120,8 +120,8 @@ export async function createRun(input: CreateRunInput, client?: TxClient): Promi
   return toRun(rows[0]!);
 }
 
-export async function findRun(runId: string): Promise<Run | null> {
-  const { rows } = await getPool().query<RunRow>(
+export async function findRun(runId: string, client?: TxClient): Promise<Run | null> {
+  const { rows } = await (client ?? getPool()).query<RunRow>(
     `SELECT ${COLUMNS} FROM runs WHERE id = $1`, [runId]);
   return rows.length === 0 ? null : toRun(rows[0]!);
 }

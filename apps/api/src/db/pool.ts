@@ -158,6 +158,46 @@ export function advisoryXactLockHeldSql(namespaceParam: number, keyParam: number
  * after `BEGIN` succeeds, and it is what lets `takeAdvisoryXactLock` trust its
  * argument.
  */
+/**
+ * A transaction Postgres itself will not let you write through (ADR-049, ADR-051).
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * THIS IS WHAT MAKES THE ANALYST'S READ-ONLY TOOL REGISTRY A GUARANTEE RATHER
+ * THAN A CLAIM.
+ *
+ * `agent-design.md` §4 says the agent "is not *trusted* not to write — it is
+ * *unable* to." A registry that merely declares `readOnly: true` on each tool is
+ * a claim about code someone can change; `BEGIN TRANSACTION READ ONLY` is the
+ * database refusing. Any INSERT, UPDATE, DELETE or DDL attempted on this client
+ * fails with SQLSTATE 25006, whatever the calling code believes it is doing —
+ * including through a repository function that was read-only when the tool was
+ * written and is not any more.
+ *
+ * It yields a `TxClient` because it genuinely IS inside a transaction, so
+ * transaction-scoped advisory locks behave normally. Passing one to a writing
+ * repository function typechecks and then FAILS AT THE DATABASE, which is the
+ * correct outcome and is asserted by a test rather than assumed.
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
+ * There is no COMMIT path that can persist anything, so the exit is always
+ * ROLLBACK — cheaper than COMMIT on a read-only transaction and impossible to
+ * misread as "the writes went through".
+ */
+export async function withReadOnlyTransaction<T>(
+  fn: (client: TxClient) => Promise<T>,
+): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN TRANSACTION READ ONLY');
+    return await fn(client as TxClient);
+  } finally {
+    // ROLLBACK even on success: nothing in here may have written, so there is
+    // nothing to commit, and a COMMIT would only invite the reader to wonder.
+    try { await client.query('ROLLBACK'); } catch { /* connection already gone */ }
+    client.release();
+  }
+}
+
 export async function withTransaction<T>(fn: (client: TxClient) => Promise<T>): Promise<T> {
   const client = await getPool().connect();
   try {

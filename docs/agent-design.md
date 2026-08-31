@@ -195,8 +195,10 @@ Nine tools. **None of them writes.** The registry contains no mutating tool, so 
 | Tool | Purpose |
 |---|---|
 | `score_pair({transactionIdA, transactionIdB})` | Runs **the same Tier 2 scorer S9 used**. Returns the component breakdown and which hard gate failed, if any. The agent's only route to "would these match?" |
-| `rerun_subset_search({bankTransactionId, poolSize, maxSubsetSize, budgetMs})` | Runs **the same S10 meet-in-the-middle** with agent-chosen bounds, subject to hard ceilings (pool ≤ 64, subset ≤ 10, budget ≤ 2000 ms) the agent cannot exceed. This is the self-correction surface (§5). |
+| `rerun_subset_search({bankTransactionId, poolSize, maxSubsetSize, nodeBudget})` | Runs **the same S10 depth-first search with prefix pruning** (ADR-060) with agent-chosen bounds, subject to hard ceilings (pool ≤ 64, subset ≤ 10, nodes ≤ 5,200,000) the agent cannot exceed. The wall clock is **not** an agent-selectable bound — it remains ADR-060's safety valve. This is the self-correction surface (§5). |
 | `check_alias({value})` | Looks up `learned_aliases`, returns any active mapping plus the `wouldAlsoResolve` count for a proposed one. |
+
+> **Why the agent cannot choose a time budget (ADR-060, ADR-085).** An earlier draft of this row let the agent pass `budgetMs`. That would have put the operative bound back on the wall clock *inside the evidence the agent cites* — and `searchExhausted` vs `searchBoundExceeded` are different claims about the DATA, so deciding between them by hardware speed is precisely the defect ADR-060 removed from S10. §5's payoff depends on it: "upgraded from `searchBoundExceeded` to `searchExhausted` at wider bounds" is only worth saying if the upgrade is a property of the data. The node budget is the bound the agent widens; the 2 s valve stays a valve.
 
 **Result digests, not raw dumps.** Tool results are shaped for a model — bounded row counts, pre-formatted amounts (`amountDisplay`, per api-contract §0), no `raw_payload` unless explicitly requested. A tool that can return 800 rows can exhaust a context window and produce a worse answer than one that returns 20 and says how many it truncated.
 

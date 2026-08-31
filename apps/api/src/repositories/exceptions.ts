@@ -152,8 +152,10 @@ export async function insertExceptions(
   return written;
 }
 
-export async function findException(id: string): Promise<ExceptionRecord | null> {
-  const { rows } = await getPool().query<ExcRow>(
+export async function findException(
+  id: string, client?: TxClient,
+): Promise<ExceptionRecord | null> {
+  const { rows } = await (client ?? getPool()).query<ExcRow>(
     `SELECT ${COLUMNS} FROM exceptions WHERE id = $1`, [id]);
   return rows.length === 0 ? null : toException(rows[0]!);
 }
@@ -325,4 +327,173 @@ export async function listUnexplained(runId: string, limit: number): Promise<Exc
     [runId, limit],
   );
   return rows.map(toException);
+}
+
+/**
+ * `find_similar_exceptions` — institutional memory for the Analyst (U12).
+ *
+ * READ-ONLY, like every Phase A query (ADR-049, ADR-051).
+ *
+ * Two lookup modes, and the difference matters:
+ *   · by `signatureHash` — the SAME structural discrepancy shape, as computed by
+ *     S13 (ADR-018). This is the sharp one, and it only became usable when U11
+ *     started populating `signature_hash` on every exception.
+ *   · by `category` — a much broader net, for when no signature is available.
+ *
+ * **Deliberately NOT scoped to one run.** Every other agent query is
+ * run-scoped, and the asymmetry is the point: a human resolution recorded on a
+ * previous run is exactly the institutional memory this tool exists to surface,
+ * and confining it to the current run would return only exceptions the agent
+ * could already see. The safety property that matters — an agent may not CITE a
+ * record it did not retrieve — is enforced by the A3 grounding gate over tool
+ * results, not by the WHERE clause, so widening the read here does not widen
+ * what a verdict may claim. `resolvedOnly` narrows it to exceptions a human
+ * actually dispositioned, which is the interesting subset.
+ */
+export interface SimilarExceptionQuery {
+  signatureHash?: string;
+  category?: ExceptionCategory;
+  /** Only exceptions a human has resolved or dismissed. */
+  resolvedOnly?: boolean;
+  /** Never return the exception being investigated. */
+  excludeExceptionId?: string;
+}
+
+export interface SimilarException {
+  id: string;
+  runId: string;
+  category: ExceptionCategory;
+  severity: Severity;
+  signatureHash: string | null;
+  status: ExceptionStatus;
+  resolvedBy: string | null;
+  resolutionNote: string | null;
+  amountAtRiskPaise: number | null;
+  createdAt: Date;
+}
+
+export async function findSimilarExceptions(
+  query: SimilarExceptionQuery, limit: number, client?: TxClient,
+): Promise<SimilarException[]> {
+  const where: string[] = [];
+  const params: unknown[] = [];
+  const add = (sql: string, value: unknown): void => {
+    params.push(value);
+    where.push(sql.replace('$?', `$${params.length}`));
+  };
+
+  if (query.signatureHash !== undefined) add('signature_hash = $?', query.signatureHash);
+  if (query.category !== undefined) add('category = $?', query.category);
+  if (query.excludeExceptionId !== undefined) add('id <> $?', query.excludeExceptionId);
+  if (query.resolvedOnly === true) where.push(`status IN ('human_resolved', 'wont_fix')`);
+
+  // Neither selector supplied would return "every exception ever", which is not
+  // a similarity query — it is a data dump with a LIMIT on it, and the agent
+  // would reason over whatever happened to sort first.
+  if (query.signatureHash === undefined && query.category === undefined) {
+    throw new Error(
+      'findSimilarExceptions requires signatureHash or category: without one, ' +
+      'this is an unfiltered scan rather than a similarity lookup.');
+  }
+
+  const { rows } = await (client ?? getPool()).query<{
+    id: string; run_id: string; category: ExceptionCategory; severity: Severity;
+    signature_hash: string | null; status: ExceptionStatus; resolved_by: string | null;
+    resolution_note: string | null; amount_at_risk_paise: number | null; created_at: Date;
+  }>(
+    `SELECT id, run_id, category, severity, signature_hash, status, resolved_by,
+            resolution_note, amount_at_risk_paise, created_at
+       FROM exceptions
+      WHERE ${where.join(' AND ')}
+      -- Resolved ones first: a human's disposition is the useful part. Then
+      -- newest, then id, so the order is TOTAL (ADR-032) and a re-run cites the
+      -- same rows.
+      ORDER BY (resolved_by IS NULL), created_at DESC, id
+      LIMIT $${params.length + 1}`,
+    [...params, limit]);
+
+  return rows.map((r) => ({
+    id: r.id,
+    runId: r.run_id,
+    category: r.category,
+    severity: r.severity,
+    signatureHash: r.signature_hash,
+    status: r.status,
+    resolvedBy: r.resolved_by,
+    resolutionNote: r.resolution_note,
+    amountAtRiskPaise: r.amount_at_risk_paise,
+    createdAt: r.created_at,
+  }));
+}
+
+/**
+ * A1 TRIAGE — the exceptions worth investigating (agent-design §3, U13).
+ *
+ * READ-ONLY. Selection is DETERMINISTIC even though the investigations it feeds
+ * are not, and that is the whole point of doing it in SQL with an explicit
+ * ORDER BY: the Analyst's *work list* is reproducible from the run alone, so two
+ * people asking "why did it investigate those twenty?" get the same answer
+ * (ADR-032 rule 9).
+ *
+ * §3's order, exactly: `severity DESC, amount_at_risk_paise DESC,
+ * (source_system, source_row_number) ASC`.
+ *
+ * Three things that sentence does not say and this query has to decide:
+ *
+ *  · **`severity DESC` is a taxonomy order, not a string order.** Alphabetically
+ *    DESC would be medium > low > high, which is worse than useless. The CASE
+ *    ranks high/medium/low the way `listExceptions` already does.
+ *  · **`amount_at_risk_paise` is nullable** (group-level exceptions with no single
+ *    amount). NULLS LAST: an exception with no stated amount must not outrank a
+ *    proved ₹5,00,000 discrepancy by accident of a missing column.
+ *  · **`transaction_id` is nullable too**, so the canonical tie-break needs a LEFT
+ *    JOIN and its own NULLS LAST. `e.id` closes the order so it is TOTAL — a
+ *    non-total order here would silently change which exceptions get the budget
+ *    between two runs of the same data.
+ */
+export interface TriageCandidate {
+  exceptionId: string;
+  transactionId: string | null;
+  category: ExceptionCategory;
+  severity: Severity;
+  amountAtRiskPaise: number | null;
+  signatureHash: string | null;
+}
+
+export async function listExceptionTriageCandidates(
+  runId: string,
+  eligibleCategories: readonly ExceptionCategory[],
+  limit: number,
+  client?: TxClient,
+): Promise<TriageCandidate[]> {
+  if (eligibleCategories.length === 0 || limit <= 0) return [];
+  const { rows } = await (client ?? getPool()).query<{
+    id: string; transaction_id: string | null; category: ExceptionCategory;
+    severity: Severity; amount_at_risk_paise: number | null; signature_hash: string | null;
+  }>(
+    `SELECT e.id, e.transaction_id, e.category, e.severity,
+            e.amount_at_risk_paise, e.signature_hash
+       FROM exceptions e
+       LEFT JOIN transactions t ON t.id = e.transaction_id
+      WHERE e.run_id = $1
+        AND e.category = ANY($2::text[])
+        -- Already dispositioned by a human: the Analyst adds nothing, and
+        -- spending an investigation on a closed question is the one way this
+        -- budget can be wasted without anybody noticing.
+        AND e.status IN ('open', 'explained')
+      ORDER BY CASE e.severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+               e.amount_at_risk_paise DESC NULLS LAST,
+               source_rank(t.source_system) NULLS LAST, t.source_row_number NULLS LAST,
+               e.id
+      LIMIT $3`,
+    [runId, [...eligibleCategories], limit]);
+
+  return rows.map((r) => ({
+    exceptionId: r.id,
+    transactionId: r.transaction_id,
+    category: r.category,
+    severity: r.severity,
+    amountAtRiskPaise: r.amount_at_risk_paise,
+    signatureHash: r.signature_hash,
+  }));
 }

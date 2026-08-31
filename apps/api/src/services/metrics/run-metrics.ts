@@ -44,12 +44,17 @@
  * schema.md §11.1's example renders the same object in snake_case; the contract
  * is binding for anything a frontend reads (ADR-072 note in CLAUDE.md §3).
  *
- * ── WHAT IS NOT COMPUTED, AND WHY IT IS ABSENT RATHER THAN ZERO ──
- * S13 is unwired (`UNWIRED_STAGES` in `services/run/orchestrator.ts`). A stage
- * that did not run reports `null`, not `0`: `llmCost.apiCalls: 0` reads as "the
- * cache served everything" rather than "there is no explain layer yet".
- * `stagesNotRun` names it, so a reader never has to consult the source to find
- * out which figures are findings and which are absences.
+ * ── ABSENT RATHER THAN ZERO, AND WHY THAT LIST IS NOW EMPTY ──
+ * A stage that did not run reports `null`, not `0`, and names itself in
+ * `stagesNotRun` so a reader never has to consult the source to find out which
+ * figures are findings and which are absences.
+ *
+ * Since U11 wired S13, EVERY stage runs and `stagesNotRun` is `[]`. `llmCost`
+ * is therefore an object on every run rather than `null` — and the distinction
+ * the old `null` carried is preserved by the object's own contents, not lost:
+ * `apiCalls: 0` beside `signaturesTemplated: 27` says "the stage ran and called
+ * no model", where `null` said "there is no explain layer". Those are different
+ * claims and the metrics must be able to make both.
  *
  * The rule cuts both ways, and S10 is why it is worth stating: since #46 wired
  * the batch stage, `batchSearchExhausted` and `batchSearchBoundExceeded` are
@@ -122,10 +127,81 @@ export interface MetricsInput {
   batchOutcomes: readonly { stats: { exhaustive: boolean; boundHit: unknown } }[];
   timings: StageTimings;
   config: RunConfig;
+  /** S13's outcome (U11). Always present — the stage runs on every run. */
+  explain: ExplainMetricsInput;
 }
 
-/** Every stage whose figures are absent rather than zero. */
-export type UnrunStage = 'S13_EXPLAIN';
+/** What S14 needs from S13. Mirrors `ExplainStats` plus the configured names. */
+export interface ExplainMetricsInput {
+  model: string;
+  promptVersion: string;
+  signaturesTotal: number;
+  cacheHits: number;
+  generated: number;
+  templated: number;
+  apiCalls: number;
+  exceptionsExplained: number;
+  tokensIn: number;
+  tokensOut: number;
+  callCapPerRun: number;
+  callCapReached: boolean;
+  failures: { reason: string; detail: string }[];
+}
+
+/**
+ * Every stage whose figures are absent rather than zero.
+ *
+ * `never` because there are none left — S14 was wired on Day 9, S10 on Day 10,
+ * S13 on Day 11. The type widens again the moment a stage is added and not
+ * wired, which is the point: `stagesNotRun` is a list a reader can trust to be
+ * complete, because nothing can be added to it silently.
+ */
+export type UnrunStage = never;
+
+/**
+ * S13's cost and cache story (schema.md §10.3, ADR-018).
+ *
+ * The headline this exists to support is not a dollar figure — it is that
+ * signature collapse makes re-running the full batch FREE, which is what lets
+ * the project obey the track's "never cherry-pick" bar without flinching. So
+ * the fields a reader needs are the collapse ratio and the call count, not a
+ * price.
+ */
+export interface LlmCostMetrics {
+  /** Hashed into every signature (ADR-018), so it belongs beside the counts. */
+  model: string;
+  promptVersion: string;
+  /** Real HTTP requests, retries included. Bounded by `callCapPerRun`. */
+  apiCalls: number;
+  /** Distinct discrepancy shapes — ADR-018's denominator. */
+  signaturesTotal: number;
+  signaturesFromCache: number;
+  signaturesGenerated: number;
+  signaturesTemplated: number;
+  /** Exceptions that received text. Equals the run's exception count. */
+  exceptionsExplained: number;
+  /**
+   * The collapse itself: exceptions per distinct signature. This is the number
+   * ADR-018 is an argument about.
+   */
+  collapseRatio: number | null;
+  tokensIn: number;
+  tokensOut: number;
+  /**
+   * NULL, never 0.
+   *
+   * ADR-080 put this build on a free tier, where there is no bill to report. A
+   * `0.00` here would be indistinguishable from a priced run that happened to
+   * cost nothing, and this file's whole discipline is that an absence and a
+   * measured zero are different claims.
+   */
+  estimatedCostUsd: number | null;
+  callCapPerRun: number;
+  /** True when signatures were templated because the budget ran out. */
+  callCapReached: boolean;
+  /** One per failed batch. Empty on a clean run; never omitted. */
+  failures: { reason: string; detail: string }[];
+}
 
 export interface RunMetrics {
   [k: string]: unknown;
@@ -168,7 +244,7 @@ export interface RunMetrics {
     stageMs: Record<string, number | null>;
     note: string;
   };
-  llmCost: null | Record<string, number>;
+  llmCost: LlmCostMetrics;
 }
 
 const DENOMINATOR_NOTE =
@@ -295,7 +371,7 @@ export function computeRunMetrics(input: MetricsInput): RunMetrics {
   const {
     population, pool, exactPairs, tier2, identity, groups, exceptions,
     aliasCountAtStart, aliasCounts, humanCorrectionsToDate, timings, batchOutcomes,
-    batchPairs,
+    batchPairs, explain,
   } = input;
 
   const reconcilable = pool.filter((t) => t.statusNorm === 'reconcilable').length;
@@ -337,8 +413,8 @@ export function computeRunMetrics(input: MetricsInput): RunMetrics {
 
   return {
     schemaVersion: 1,
-    // Named, not inferred. Every null below is explained by this list.
-    stagesNotRun: ['S13_EXPLAIN'],
+    // Named, not inferred. EMPTY since U11 wired S13 — every stage runs.
+    stagesNotRun: [],
 
     matchRate: {
       matchRatePct: pct(matched.size, reconcilable),
@@ -414,9 +490,30 @@ export function computeRunMetrics(input: MetricsInput): RunMetrics {
       note: THROUGHPUT_NOTE,
     },
 
-    // S13 never ran, so there is no cost to report. An object of zeros would say
-    // the explain layer ran and cost nothing (ADR-017's template fallback looks
-    // exactly like that), which is a different and false claim.
-    llmCost: null,
+    // S13 runs on every run since U11, so this is a report rather than an
+    // absence. `apiCalls: 0` with `signaturesTemplated > 0` is the keyless
+    // run saying exactly what it did, which the old `null` could not express.
+    llmCost: {
+      model: explain.model,
+      promptVersion: explain.promptVersion,
+      apiCalls: explain.apiCalls,
+      signaturesTotal: explain.signaturesTotal,
+      signaturesFromCache: explain.cacheHits,
+      signaturesGenerated: explain.generated,
+      signaturesTemplated: explain.templated,
+      exceptionsExplained: explain.exceptionsExplained,
+      // ADR-018's headline: how many exceptions each distinct shape covered.
+      // NULL rather than 0 when there are no signatures at all, because a ratio
+      // over an empty denominator is undefined, not zero.
+      collapseRatio: explain.signaturesTotal === 0
+        ? null
+        : Math.round((explain.exceptionsExplained / explain.signaturesTotal) * 100) / 100,
+      tokensIn: explain.tokensIn,
+      tokensOut: explain.tokensOut,
+      estimatedCostUsd: null,
+      callCapPerRun: explain.callCapPerRun,
+      callCapReached: explain.callCapReached,
+      failures: explain.failures,
+    },
   };
 }

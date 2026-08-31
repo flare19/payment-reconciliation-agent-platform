@@ -424,12 +424,12 @@ describe('A3 — rejection behaviour', () => {
       {
         name: 'ADJUST_SEARCH_BOUNDS',
         action: { type: 'ADJUST_SEARCH_BOUNDS', rationale: 'r',
-          poolSize: 32, maxSubsetSize: 6, budgetMs: 1_500 },
+          poolSize: 32, maxSubsetSize: 6, nodeBudget: 1_000_000 },
         fields: [
           ['rationale', NOT_TEXT],
           ['poolSize', NOT_BOUND],
           ['maxSubsetSize', NOT_BOUND],
-          ['budgetMs', NOT_BOUND],
+          ['nodeBudget', NOT_BOUND],
         ],
       },
     ];
@@ -460,25 +460,38 @@ describe('A3 — rejection behaviour', () => {
     assert.ok(swept >= 60, `the sweep must actually sweep; it covered ${swept}`);
   });
 
-  test('ADR-054 ceilings are enforced on a proposal, not merely on the tool', () => {
+  test('ADR-054/085 ceilings are enforced on a proposal, not merely on the tool', () => {
     // The gate is the only deterministic check on the proposal a human sees, so a
     // request for a pool of a billion must not reach them looking actionable.
     for (const over of [
-      { poolSize: 65 }, { maxSubsetSize: 11 }, { budgetMs: 2_001 },
-      { poolSize: 1e9, maxSubsetSize: 500, budgetMs: 86_400_000 },
+      { poolSize: 65 }, { maxSubsetSize: 11 }, { nodeBudget: 5_200_001 },
+      { poolSize: 1e9, maxSubsetSize: 500, nodeBudget: 1e12 },
     ]) {
       assert.equal(passes(verdict({
         verdict: 'RESOLUTION_PROPOSED', citations: [G1],
         proposedAction: { type: 'ADJUST_SEARCH_BOUNDS', rationale: 'wider',
-          poolSize: 32, maxSubsetSize: 6, budgetMs: 1_500, ...over } as never,
-      })), false, `bounds above ADR-054's ceiling were accepted: ${JSON.stringify(over)}`);
+          poolSize: 32, maxSubsetSize: 6, nodeBudget: 1_000_000, ...over } as never,
+      })), false, `bounds above the ceiling were accepted: ${JSON.stringify(over)}`);
     }
     // Exactly at the ceiling is legal.
     assert.equal(passes(verdict({
       verdict: 'RESOLUTION_PROPOSED', citations: [G1],
       proposedAction: { type: 'ADJUST_SEARCH_BOUNDS', rationale: 'wider',
-        poolSize: 64, maxSubsetSize: 10, budgetMs: 2_000 },
+        poolSize: 64, maxSubsetSize: 10, nodeBudget: 5_200_000 },
     })), true);
+  });
+
+  test('ADR-085: a TIME budget is not an adjustable bound and cannot be proposed', () => {
+    // The defect this replaced: with `budgetMs` selectable, the operative bound
+    // sat on the wall clock INSIDE the evidence a reasoning chain cites, and
+    // `searchExhausted` vs `searchBoundExceeded` — two different claims about the
+    // DATA — would have been decided by how fast the box was. §5's whole payoff
+    // is that "exhaustive at wider bounds" is reproducible on a second machine.
+    assert.equal(passes(verdict({
+      verdict: 'RESOLUTION_PROPOSED', citations: [G1],
+      proposedAction: { type: 'ADJUST_SEARCH_BOUNDS', rationale: 'wider',
+        poolSize: 32, maxSubsetSize: 6, budgetMs: 1_500 } as never,
+    })), false, 'a proposal carrying budgetMs instead of nodeBudget must not validate');
   });
 
   test('an unknown alias type is rejected', () => {
@@ -489,11 +502,146 @@ describe('A3 — rejection behaviour', () => {
     })), false);
   });
 
+  test('an OMITTED proposedAction is rejected, never thrown on', () => {
+    // `checkSchema` treats absent as equivalent to null; `checkConstraints`
+    // guarded only `=== null` and then read `action.type`, so an omitted field
+    // THREW. `validateVerdict` is documented to throw only for a CALLER bug, so
+    // the loop does not catch it and the whole investigation was recorded as
+    // failed rather than downgraded. A live run lost 2 of 17 this way.
+    const { proposedAction: _dropped, ...without } = verdict({
+      verdict: 'CONFIRMED_UNRESOLVABLE', citations: [G1] });
+    assert.doesNotThrow(() => validateVerdict(without, context()));
+    // And it still VALIDATES: a non-proposal verdict with no action is legal.
+    assert.equal(passes(without as never), true);
+  });
+
+  test('an omitted action on a PROPOSAL is still rejected by the schema', () => {
+    // The other direction: absent must not become a free pass.
+    const { proposedAction: _d, ...without } = verdict({
+      verdict: 'RESOLUTION_PROPOSED', citations: [G1] });
+    assert.equal(passes(without as never), false);
+  });
+
   test('validation is pure — the same input always gives the same result', () => {
     const v = verdict({ citations: [G1, B1] });
     const first = JSON.stringify(validateVerdict(v, context()));
     for (let i = 0; i < 20; i += 1) {
       assert.equal(JSON.stringify(validateVerdict(v, context())), first);
     }
+  });
+});
+
+/**
+ * ── THE JOIN KEY BETWEEN A REASONING STEP AND ITS EVIDENCE (issue #54) ──
+ *
+ * A3 used to match a reasoning step to a tool call on `(step, tool)`, where
+ * `step.step` is model-authored and `ToolCallRecord.step` was the runtime's turn
+ * counter. Nothing kept them in sync, and on holdout run 80ddde9d that rejected
+ * 13 of the 15 verdict-producing agent runs — every one of them citing a tool it
+ * really called and echoing a digest the runtime really produced.
+ *
+ * The join is now `(tool, resultDigest)`. Loosening a safety gate is exactly the
+ * change that passes every existing test while quietly failing to catch anything,
+ * so this block is written in PAIRS: each "now accepted" case has a sibling
+ * proving the fabrication it superficially resembles is STILL rejected.
+ */
+describe('a reasoning step is grounded by its DIGEST, not by its number (#54)', () => {
+  // Two calls made in the SAME turn — the runtime used to stamp both `step: 2`.
+  const exc = call({ step: 1, tool: 'get_exception', resultDigest: 'get_exception: {"found":false}' });
+  const txnA = call({ step: 2, tool: 'get_transaction', resultDigest: 'get_transaction: {"id":"A"}' });
+  const txnB = call({ step: 3, tool: 'get_transaction', resultDigest: 'get_transaction: {"id":"B"}' });
+
+  test('ACCEPTED: the model omits a call from its narrative', () => {
+    // The exact 10-of-10 corroboration signature. Every corroboration opened with
+    // get_exception(matchId) -> found:false, dropped that dead call from its
+    // write-up, and numbered from its first useful call. Truthful, and rejected.
+    const r = validateVerdict(verdict({
+      reasoning: [{ step: 1, tool: 'get_transaction', arguments: {},
+        resultDigest: 'get_transaction: {"id":"A"}', inference: 'read the raw payload' }],
+    }), context({ toolCalls: [exc, txnA] }));
+    assert.equal(r.rejection, null, r.verdict.groundingFailure ?? '');
+    assert.equal(r.verdict.groundingPassed, true);
+  });
+
+  test('ACCEPTED: two calls of the same tool are addressed individually', () => {
+    // Previously impossible: both carried the same turn number, so no narrative
+    // numbering could distinguish them. The digests differ, so the evidence does.
+    const r = validateVerdict(verdict({
+      reasoning: [
+        { step: 1, tool: 'get_transaction', arguments: {},
+          resultDigest: 'get_transaction: {"id":"A"}', inference: 'the gateway leg' },
+        { step: 2, tool: 'get_transaction', arguments: {},
+          resultDigest: 'get_transaction: {"id":"B"}', inference: 'the bank leg' },
+      ],
+    }), context({ toolCalls: [txnA, txnB] }));
+    assert.equal(r.rejection, null, r.verdict.groundingFailure ?? '');
+  });
+
+  test('ACCEPTED: the narrative may be written out of call order', () => {
+    // Order is not evidence. The persisted chain is rebuilt from the tool calls
+    // in the order they were MADE, so the transcript's order is the runtime's.
+    const r = validateVerdict(verdict({
+      reasoning: [
+        { step: 1, tool: 'get_transaction', arguments: {},
+          resultDigest: 'get_transaction: {"id":"B"}', inference: 'second, narrated first' },
+        { step: 2, tool: 'get_exception', arguments: {},
+          resultDigest: 'get_exception: {"found":false}', inference: 'first, narrated second' },
+      ],
+    }), context({ toolCalls: [exc, txnB] }));
+    assert.equal(r.rejection, null, r.verdict.groundingFailure ?? '');
+  });
+
+  test('STILL REJECTED: a digest copied from a DIFFERENT tool of the same run', () => {
+    // The check the tool half of the join exists for. Digests are tool-prefixed
+    // by `digestOf`, so this is caught twice over — but it is caught on purpose,
+    // not by luck, and a future digest format must not be allowed to break it.
+    const r = validateVerdict(verdict({
+      reasoning: [{ step: 1, tool: 'get_exception', arguments: {},
+        resultDigest: 'get_transaction: {"id":"A"}', inference: 'borrowed evidence' }],
+    }), context({ toolCalls: [exc, txnA] }));
+    assert.equal(r.verdict.groundingPassed, false);
+    assert.match(r.verdict.groundingFailure!, /the runtime did not record/);
+  });
+
+  test('STILL REJECTED: a digest the model paraphrased rather than copied', () => {
+    const r = validateVerdict(verdict({
+      reasoning: [{ step: 1, tool: 'get_exception', arguments: {},
+        resultDigest: 'get_exception: found nothing', inference: 'close enough' }],
+    }), context({ toolCalls: [exc] }));
+    assert.equal(r.verdict.groundingPassed, false);
+    assert.match(r.verdict.groundingFailure!, /the runtime did not record/);
+  });
+
+  test('STILL REJECTED: the live hallucination the gate caught on Day 12', () => {
+    // CLAUDE.md: "the model claimed a `rerun_subset_search` step it had never
+    // run, and the verdict was rejected and downgraded." ADR-050 stops being a
+    // design argument only while this keeps failing.
+    const r = validateVerdict(verdict({
+      reasoning: [
+        { step: 1, tool: 'get_exception', arguments: {},
+          resultDigest: 'get_exception: {"found":false}', inference: 'the engine gave up' },
+        { step: 2, tool: 'rerun_subset_search', arguments: {},
+          resultDigest: 'rerun_subset_search: {"exhaustive":true}',
+          inference: 'I widened the bounds and proved it' },
+      ],
+    }), context({ toolCalls: [exc] }));
+    assert.equal(r.verdict.groundingPassed, false);
+    assert.match(r.verdict.groundingFailure!, /never called/);
+  });
+
+  test('STILL REJECTED: a plausible digest for a tool that returned something else', () => {
+    // The subtlest fabrication available: right tool, invented result. The model
+    // ran `rerun_subset_search` and got `exhaustive:false`, then reported the
+    // answer it wanted. This is the one a step-number join would also have caught
+    // — it must not be lost.
+    const ran = call({ step: 2, tool: 'rerun_subset_search',
+      resultDigest: 'rerun_subset_search: {"outcome":"unsplittable","exhaustive":false}' });
+    const r = validateVerdict(verdict({
+      reasoning: [{ step: 1, tool: 'rerun_subset_search', arguments: {},
+        resultDigest: 'rerun_subset_search: {"outcome":"unsplittable","exhaustive":true}',
+        inference: 'proved no decomposition exists' }],
+    }), context({ toolCalls: [ran] }));
+    assert.equal(r.verdict.groundingPassed, false);
+    assert.match(r.verdict.groundingFailure!, /the runtime did not record/);
   });
 });

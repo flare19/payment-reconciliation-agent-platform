@@ -169,8 +169,65 @@ export async function listTransactions(runId: string): Promise<NormalizedTransac
   return rows.map(toTransaction);
 }
 
-export async function findTransaction(id: string): Promise<NormalizedTransaction | null> {
-  const { rows } = await getPool().query<TxnRow>(
+/**
+ * The candidate population for a settlement decomposition (issue #55).
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * THIS IS S10's OWN POPULATION, NOT "RECORDS IN NO MATCH AT ALL".
+ *
+ * `runBatchStage` selects with `openIn('gateway', 'bank')` — reconcilable
+ * gateway records whose BANK ROLE is open. `rerun_subset_search` used
+ * `unmatchedOnly`, which asks whether the record is in ANY non-rejected match,
+ * and those are very different questions: a gateway payment matched to a LEDGER
+ * row but with no bank leg is the ordinary shape of a payment awaiting
+ * settlement, and therefore the typical member of a decomposition. On the
+ * holdout the engine's population is 54 records and `unmatchedOnly` returned 14
+ * — the agent was re-searching 26% of the space and reporting the result as a
+ * stronger proof than the engine's.
+ *
+ * ── ONE DELIBERATE DIFFERENCE FROM THE IN-RUN PREDICATE, STATED ──
+ * `openIn` reads `priorPairs` — what S6–S9 proposed, before S11 assembled
+ * groups. This reads `match_members`, which is what S11 KEPT. So a pair S9
+ * proposed and S11 declined leaves its gateway record looking open here and
+ * closed there. That is the right direction for this caller and the only one
+ * available post-run: the agent is deliberately re-searching a space the engine
+ * has finished with, and "does this payment have a bank leg in a match" is the
+ * question a human asks after the run. It is never NARROWER than the engine's,
+ * which is the property `rerun_subset_search` depends on.
+ *
+ * NOT capped. `buildBatchPool` applies the date window, the counterparty filter,
+ * the date-proximity ranking and `batchPoolCap` — in that order. Truncating here
+ * would hand it an arbitrary prefix ordered by row number, so widening the cap
+ * would widen a prefix rather than the search. Duplicating its predicate in SQL
+ * would be two copies of one rule, free to drift.
+ * ══════════════════════════════════════════════════════════════════════════════
+ */
+export async function listBatchPoolCandidates(
+  runId: string, client?: TxClient,
+): Promise<NormalizedTransaction[]> {
+  const { rows } = await (client ?? getPool()).query<TxnRow>(
+    `SELECT ${COLUMNS} FROM transactions t
+      WHERE t.run_id = $1
+        AND t.source_system = 'gateway'
+        AND t.status_norm = 'reconcilable'
+        AND NOT EXISTS (
+          SELECT 1
+            FROM match_members mm
+            JOIN matches m        ON m.id = mm.match_id
+            JOIN match_members mm2 ON mm2.match_id = m.id
+            JOIN transactions  t2  ON t2.id = mm2.transaction_id
+           WHERE mm.transaction_id = t.id
+             AND m.status <> 'human_rejected'
+             AND t2.source_system = 'bank')
+      ${CANONICAL_ORDER_SQL}`,
+    [runId]);
+  return rows.map(toTransaction);
+}
+
+export async function findTransaction(
+  id: string, client?: TxClient,
+): Promise<NormalizedTransaction | null> {
+  const { rows } = await (client ?? getPool()).query<TxnRow>(
     `SELECT ${COLUMNS} FROM transactions WHERE id = $1`, [id]);
   return rows.length === 0 ? null : toTransaction(rows[0]!);
 }
@@ -230,6 +287,181 @@ export async function setCounterpartyKeys(
       WHERE t.id = u.txn_id`,
     [updates.map((u) => u.transactionId), updates.map((u) => u.counterpartyKey)],
   );
+}
+
+/**
+ * ── READ-ONLY QUERIES FOR THE ANALYST'S TOOL REGISTRY (U12, ADR-049) ─────────
+ *
+ * These serve `search_transactions` and `find_by_anchor`. They live here for the
+ * same reason every other query does — all SQL is in `repositories/` — and they
+ * are SELECT-only by construction. Phase A may read the engine's output; it may
+ * never write to it (ADR-048, ADR-051).
+ *
+ * Both are scoped to one `run_id`. That is not a performance detail: an agent
+ * investigating run A must not be able to cite a record from run B, and the
+ * cheapest place to make that impossible is the WHERE clause rather than a
+ * check downstream.
+ */
+
+/**
+ * `COLUMNS`, aliased to `t`, for the queries below that join or use a subquery.
+ * Derived from the one list rather than written out again — a second column list
+ * is a second thing to keep in sync with the row type.
+ */
+const COLUMNS_T = COLUMNS.split(',').map((c) => `t.${c.trim()}`).join(', ');
+
+/** `search_transactions` filters (agent-design §4). Every field optional. */
+export interface TransactionSearchFilter {
+  sourceSystem?: SourceSystem;
+  direction?: Direction;
+  statusNorm?: StatusNorm;
+  /** Inclusive, business dates (`YYYY-MM-DD`). */
+  dateFrom?: string;
+  dateTo?: string;
+  /** Inclusive, paise. */
+  amountMinPaise?: number;
+  amountMaxPaise?: number;
+  /** Substring, case-insensitive, against `counterparty_norm`. */
+  counterparty?: string;
+  /** Exclude records already sitting in a non-rejected match. */
+  unmatchedOnly?: boolean;
+}
+
+/**
+ * The workhorse. Bounded and canonically ordered.
+ *
+ * `limit` is capped by the CALLER (the tool registry enforces 50, agent-design
+ * §4). It is passed through rather than clamped here so that a repository
+ * function does not silently disagree with the bound its caller advertises —
+ * one place owns the number.
+ *
+ * `ORDER BY` is the canonical tie-break, unconditionally (ADR-032 rule 9). A
+ * bounded search with an unspecified order returns a different 50 rows on two
+ * runs, and the agent would cite evidence that a re-run cannot reproduce — which
+ * is the same reproducibility property ADR-085 protects one layer up.
+ */
+export async function searchTransactionsForAgent(
+  runId: string, filter: TransactionSearchFilter, limit: number, client?: TxClient,
+): Promise<{ transactions: NormalizedTransaction[]; totalMatching: number }> {
+  const where: string[] = ['t.run_id = $1'];
+  const params: unknown[] = [runId];
+  const add = (sql: string, value: unknown): void => {
+    params.push(value);
+    where.push(sql.replace('$?', `$${params.length}`));
+  };
+
+  if (filter.sourceSystem !== undefined) add('t.source_system = $?', filter.sourceSystem);
+  if (filter.direction !== undefined) add('t.direction = $?', filter.direction);
+  if (filter.statusNorm !== undefined) add('t.status_norm = $?', filter.statusNorm);
+  if (filter.dateFrom !== undefined) add('t.txn_date >= $?::date', filter.dateFrom);
+  if (filter.dateTo !== undefined) add('t.txn_date <= $?::date', filter.dateTo);
+  if (filter.amountMinPaise !== undefined) add('t.amount_paise >= $?', filter.amountMinPaise);
+  if (filter.amountMaxPaise !== undefined) add('t.amount_paise <= $?', filter.amountMaxPaise);
+  if (filter.counterparty !== undefined && filter.counterparty.trim() !== '') {
+    add('t.counterparty_norm ILIKE $?', `%${filter.counterparty.trim()}%`);
+  }
+  if (filter.unmatchedOnly === true) {
+    where.push(`NOT EXISTS (
+      SELECT 1 FROM match_members mm JOIN matches m ON m.id = mm.match_id
+       WHERE mm.transaction_id = t.id AND m.status <> 'human_rejected')`);
+  }
+  const predicate = where.join(' AND ');
+
+  const q = client ?? getPool();
+  const [page, count] = await Promise.all([
+    q.query<TxnRow>(
+      `SELECT ${COLUMNS_T} FROM transactions t
+        WHERE ${predicate}
+        ORDER BY source_rank(t.source_system), t.source_row_number
+        LIMIT $${params.length + 1}`,
+      [...params, limit]),
+    // Reported so the agent is TOLD when its view was truncated. A tool that
+    // silently returns 50 of 300 invites a conclusion drawn from a sample the
+    // model believes is the population (agent-design §4, "result digests").
+    q.query<{ count: number }>(
+      `SELECT count(*)::int AS count FROM transactions t WHERE ${predicate}`, params),
+  ]);
+  return {
+    transactions: page.rows.map(toTransaction),
+    totalMatching: count.rows[0]!.count,
+  };
+}
+
+/**
+ * Every record in the run carrying `value` under ANY reference key.
+ *
+ * Cross-source by design: this is the tool for "does this reference appear
+ * anywhere else", which is the single most useful question on a `MISSING_IN_*`
+ * exception (agent-design §4).
+ *
+ * `jsonb_each_text` rather than the `ix_txn_refs_gin` containment index,
+ * deliberately: the question is "any key with this value", and the GIN index
+ * answers "this key with this value". Serving it from the index would mean
+ * enumerating the known anchor keys here, which puts a second copy of
+ * `anchors.ts`'s key list in the repository layer — the drift risk is worse
+ * than the scan, which is bounded to one run and runs at most a few dozen times
+ * per run (agent budgets, §8).
+ */
+export async function findTransactionsByAnchorValue(
+  runId: string, value: string, client?: TxClient,
+): Promise<NormalizedTransaction[]> {
+  const { rows } = await (client ?? getPool()).query<TxnRow>(
+    `SELECT ${COLUMNS_T} FROM transactions t
+      WHERE t.run_id = $1
+        AND EXISTS (SELECT 1 FROM jsonb_each_text(t.reference_ids) AS kv(k, v)
+                     WHERE kv.v = $2)
+      ORDER BY source_rank(t.source_system), t.source_row_number`,
+    [runId, value]);
+  return rows.map(toTransaction);
+}
+
+/**
+ * Candidates for a NEAR-anchor lookup: same leading `prefixLen` characters.
+ *
+ * This returns a BLOCK, not an answer. The edit-distance decision is made by
+ * `damerauLevenshteinWithin` in `services/matching/scoring.ts` — the engine's
+ * own locked implementation, the one the single-scorer guard pins to a single
+ * definition. Doing the distance in SQL would be a second implementation of a
+ * scoring primitive, which is precisely what ADR-049 forbids and what
+ * `single-scorer-guard.test.ts` exists to catch.
+ *
+ * The prefix length is passed in from `blocking.ts`'s `ANCHOR_PREFIX_LEN` for
+ * the same reason: the blocking constant has one home (ADR-033 / §7.2).
+ */
+export async function findTransactionsByAnchorPrefix(
+  runId: string, prefix: string, prefixLen: number, client?: TxClient,
+): Promise<{ transaction: NormalizedTransaction; anchorValues: string[] }[]> {
+  const { rows } = await (client ?? getPool()).query<TxnRow & { anchor_values: string[] }>(
+    `SELECT ${COLUMNS_T},
+            ARRAY(SELECT kv.v FROM jsonb_each_text(t.reference_ids) AS kv(k, v)
+                   WHERE left(kv.v, $3) = $2 ORDER BY kv.v) AS anchor_values
+       FROM transactions t
+      WHERE t.run_id = $1
+        AND EXISTS (SELECT 1 FROM jsonb_each_text(t.reference_ids) AS kv(k, v)
+                     WHERE left(kv.v, $3) = $2)
+      ORDER BY source_rank(t.source_system), t.source_row_number`,
+    [runId, prefix, prefixLen]);
+  return rows.map((r) => ({ transaction: toTransaction(r), anchorValues: r.anchor_values }));
+}
+
+/**
+ * How many records in the run carry this counterparty — `check_alias`'s
+ * `wouldAlsoResolve` figure (agent-design §4).
+ *
+ * The honest way to size a proposed alias before a human approves it: an alias
+ * that would resolve one record is a footnote, and one that would resolve forty
+ * is a decision. Counted over `counterparty_norm` (pre-alias) rather than
+ * `counterparty_key` (post-alias), because the question is what the alias WOULD
+ * do, and the key already reflects aliases that have been applied.
+ */
+export async function countRecordsWithCounterparty(
+  runId: string, counterpartyNorm: string, client?: TxClient,
+): Promise<number> {
+  const { rows } = await (client ?? getPool()).query<{ count: number }>(
+    `SELECT count(*)::int AS count FROM transactions
+      WHERE run_id = $1 AND counterparty_norm = $2`,
+    [runId, counterpartyNorm]);
+  return rows[0]!.count;
 }
 
 /** Exported so a caller can assert the SQL order matches the TS comparator. */

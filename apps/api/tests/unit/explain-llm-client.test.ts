@@ -1,0 +1,165 @@
+import { test, describe } from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  parseResponse, buildUserMessage, createExplainClient, MAX_SIGNATURES_PER_REQUEST,
+  type SignaturePrompt,
+} from '../../src/services/explain/llm-client.js';
+
+/**
+ * The client's two testable halves are its PARSER and its no-key behaviour.
+ * The network call itself is not mocked — the driver's tests inject a fake
+ * `ExplainLlmClient` instead, which exercises every branch that matters without
+ * pretending to test Google's SDK.
+ */
+
+const asked = new Set(['sig_1', 'sig_2']);
+
+const ok = JSON.stringify({
+  explanations: [
+    { id: 'sig_1', explanation: 'The bank credit never arrived.', suggested_action: 'Check the statement.' },
+    { id: 'sig_2', explanation: 'Two candidates tied.', suggested_action: 'Compare them by hand.' },
+  ],
+});
+
+describe('parseResponse', () => {
+  test('parses the documented response shape', () => {
+    const out = parseResponse(ok, asked);
+    assert.ok(out);
+    assert.equal(out!.size, 2);
+    assert.equal(out!.get('sig_1')!.explanation, 'The bank credit never arrived.');
+    assert.equal(out!.get('sig_2')!.suggestedAction, 'Compare them by hand.');
+  });
+
+  test('DROPS an id that was never asked about', () => {
+    // A response naming a signature the batch did not contain is the model
+    // inventing a subject. Fanning that text out would attach prose to an
+    // exception it was never written about.
+    const rogue = JSON.stringify({
+      explanations: [
+        { id: 'sig_1', explanation: 'Real one.', suggested_action: 'Do the thing.' },
+        { id: 'sig_99', explanation: 'Invented.', suggested_action: 'Invented.' },
+      ],
+    });
+    const out = parseResponse(rogue, asked);
+    assert.ok(out);
+    assert.equal(out!.size, 1);
+    assert.equal(out!.has('sig_99'), false);
+  });
+
+  test('a PARTIAL response is used, not discarded — that is not malformed JSON', () => {
+    // §10.4's retry is for unparseable output. Throwing away eight good
+    // explanations because two are absent would be a worse trade than letting
+    // the driver template the two.
+    const partial = JSON.stringify({
+      explanations: [{ id: 'sig_1', explanation: 'Only this one.', suggested_action: 'Act.' }],
+    });
+    const out = parseResponse(partial, asked);
+    assert.ok(out);
+    assert.equal(out!.size, 1);
+    assert.equal(out!.has('sig_2'), false, 'the absent one is left for the template floor');
+  });
+
+  test('a blank explanation is treated as ABSENT, never written through', () => {
+    // An exception rendering an empty explanation panel is worse than one
+    // rendering the hand-written template.
+    for (const bad of ['', '   ', '\n']) {
+      const out = parseResponse(JSON.stringify({
+        explanations: [{ id: 'sig_1', explanation: bad, suggested_action: 'Act.' }],
+      }), asked);
+      assert.ok(out);
+      assert.equal(out!.has('sig_1'), false, `blank explanation ${JSON.stringify(bad)} leaked through`);
+    }
+    const noAction = parseResponse(JSON.stringify({
+      explanations: [{ id: 'sig_1', explanation: 'Text.', suggested_action: '  ' }],
+    }), asked);
+    assert.equal(noAction!.has('sig_1'), false);
+  });
+
+  test('returns null — the retry signal — only when nothing is usable', () => {
+    assert.equal(parseResponse(undefined, asked), null);
+    assert.equal(parseResponse('', asked), null);
+    assert.equal(parseResponse('not json at all', asked), null);
+    assert.equal(parseResponse('{"explanations": "a string"}', asked), null);
+    assert.equal(parseResponse('[]', asked), null);
+    assert.equal(parseResponse('null', asked), null);
+    assert.equal(parseResponse('"a bare string"', asked), null);
+  });
+
+  test('a well-formed response with no usable rows parses to an EMPTY map, not null', () => {
+    // The distinction the retry depends on: `null` means "I could not read
+    // this", an empty map means "I read it and it said nothing about my
+    // signatures". Both end in templates, but only the first is worth a retry.
+    const out = parseResponse(JSON.stringify({ explanations: [] }), asked);
+    assert.notEqual(out, null);
+    assert.equal(out!.size, 0);
+  });
+
+  test('non-object rows are skipped rather than crashing the batch', () => {
+    const messy = JSON.stringify({
+      explanations: [null, 42, 'text', { id: 'sig_1', explanation: 'Good.', suggested_action: 'Act.' }],
+    });
+    const out = parseResponse(messy, asked);
+    assert.equal(out!.size, 1);
+  });
+
+  test('whitespace is trimmed off both fields', () => {
+    const out = parseResponse(JSON.stringify({
+      explanations: [{ id: 'sig_1', explanation: '  padded  ', suggested_action: '\tact\n' }],
+    }), asked);
+    assert.equal(out!.get('sig_1')!.explanation, 'padded');
+    assert.equal(out!.get('sig_1')!.suggestedAction, 'act');
+  });
+});
+
+describe('buildUserMessage', () => {
+  const sig: SignaturePrompt = {
+    id: 'sig_1', category: 'AMOUNT_MISMATCH', amountDelta: '3_to_10pct',
+    dateDelta: 'within_window', sourcesPresent: 'gateway+bank', anchorStrength: 'strong',
+    aliasInvolved: 'no', candidateCount: '1', secondaryFlags: ['TIMING_DRIFT'],
+    occurrenceCount: 14,
+  };
+
+  test('emits §10.4\'s snake_case prompt body', () => {
+    const body = JSON.parse(buildUserMessage([sig])) as Record<string, Record<string, unknown>[]>;
+    assert.deepEqual(body['signatures']![0], {
+      id: 'sig_1', category: 'AMOUNT_MISMATCH', amount_delta: '3_to_10pct',
+      date_delta: 'within_window', sources_present: 'gateway+bank', anchor_strength: 'strong',
+      alias_involved: 'no', candidate_count: '1', secondary_flags: ['TIMING_DRIFT'],
+      occurrence_count: 14,
+    });
+  });
+
+  test('carries no amount, no id and no merchant name (ADR-018, ADR-080 consequence 3)', () => {
+    // The privacy property that makes a free tier acceptable here: the prompt is
+    // buckets and counts. If a specific ever reaches this string, the claim in
+    // ADR-080 stops being true.
+    const body = buildUserMessage([sig]);
+    assert.equal(/\d{4,}/.test(body.replace(/occurrence_count":\s*\d+/, '')), false,
+      'no long digit run may appear — that would be an amount or a reference id');
+    assert.equal(body.includes('₹'), false);
+  });
+});
+
+describe('createExplainClient — the no-key path is a legitimate state', () => {
+  const base = { geminiApiKey: 'k', explainModel: 'gemini-3.5-flash', llmExplainEnabled: true };
+
+  test('returns null with no key, so the driver templates everything', () => {
+    assert.equal(createExplainClient({ ...base, geminiApiKey: null }), null);
+    assert.equal(createExplainClient({ ...base, geminiApiKey: '' }), null);
+  });
+
+  test('returns null when the explain layer is switched off', () => {
+    assert.equal(createExplainClient({ ...base, llmExplainEnabled: false }), null);
+  });
+
+  test('returns a client carrying the configured model, which the signature hashes', () => {
+    const c = createExplainClient(base);
+    assert.ok(c);
+    assert.equal(c!.model, 'gemini-3.5-flash');
+  });
+});
+
+test('§10.3 batches at most 10 signatures per request', () => {
+  assert.equal(MAX_SIGNATURES_PER_REQUEST, 10);
+});

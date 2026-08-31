@@ -8,6 +8,40 @@
 
 import type { RunConfig, ScoreWeights } from '../types/engine.js';
 
+/**
+ * ADR-080's explain model, in ONE place.
+ *
+ * It is hashed into every `signature_hash` (ADR-018), so it must be the same
+ * string whether it arrives from `GEMINI_EXPLAIN_MODEL` or from a default. Two
+ * spellings of the default would be two cache namespaces that look like one.
+ */
+export const DEFAULT_EXPLAIN_MODEL = 'gemini-3.5-flash';
+
+/**
+ * `prompt_version` (schema.md §10.2), in ONE place, for the same reason as the
+ * model above: it is hashed into every `signature_hash`, so two spellings would
+ * be two cache namespaces that look like one. `services/explain/templates.ts`
+ * re-exports this as `PROMPT_VERSION` and owns the prose it versions — bump it
+ * HERE whenever that prompt changes, and every signature re-resolves.
+ */
+export const DEFAULT_PROMPT_VERSION = 'v1';
+
+/**
+ * Phase A's model (ADR-080, amended by ADR-086).
+ *
+ * ADR-080 named `gemini-3.7-flash`, chosen from Google's DESCRIPTION of it
+ * ("built for complex coding, agentic workflows") rather than from any
+ * measurement. On this key it answers "reply with the single word: ok" in
+ * **53 seconds** — 63 s with thinking disabled, so the latency is not thinking.
+ * `gemini-3.6-flash` answers the same prompt in **2.4 s**.
+ *
+ * That is not a preference, it is a contradiction: `agent-design.md` §8 bounds an
+ * ENTIRE investigation at 60 s, and one turn on 3.7 exceeds the budget for the
+ * whole investigation. The model ADR-080 picked cannot satisfy the spec ADR-080
+ * sits beside.
+ */
+export const DEFAULT_AGENT_MODEL = 'gemini-3.6-flash';
+
 /** ADR-030. Sum = 1.00. See the ceiling guarantee documented on `ScoreWeights`. */
 export const SCORE_WEIGHTS: ScoreWeights = {
   anchor: 0.30,
@@ -89,8 +123,35 @@ export const ENGINE_DEFAULTS: Omit<RunConfig, 'referenceDate' | 'aliasCountAtSta
 export const AGENT_DEFAULTS = {
   maxInvestigationsPerRun: 20,
   budget: { maxSteps: 10, maxToolCalls: 16, maxWallMs: 60_000, maxTokens: 40_000 },
-  rerunSubsetCeilings: { poolSize: 64, maxSubsetSize: 10, budgetMs: 2_000 },
+  // ADR-085. The agent widens the NODE budget, never a time budget: a
+  // wall-clock bound would make `searchExhausted` vs `searchBoundExceeded` a
+  // property of the hardware, inside the evidence a reasoning chain cites.
+  //
+  // 5,200,000 is NOT a dominance proof (unlike the engine's figure, ADR-063 —
+  // at pool 64 / subset 10 the declared space is ~1.5e11 and no budget covers
+  // it). It is derived from the opposite constraint: the node budget must stay
+  // small enough that the 2 s safety valve NEVER fires, or the valve silently
+  // becomes the bound and the machine-dependence returns. ~1.08M nodes measures
+  // well under 50 ms locally, so ~5.2M is ~250 ms — an 8x margin.
+  rerunSubsetCeilings: { poolSize: 64, maxSubsetSize: 10, nodeBudget: 5_200_000 },
+  /**
+   * A2 CORROBORATE (agent-design §3, ADR-081) — "half an investigation".
+   *
+   * Numerically equal to `qa` below and deliberately NOT the same constant:
+   * they bound different loops for different reasons, and collapsing them would
+   * mean a future change to the Q&A budget silently re-tuned review-queue
+   * corroboration.
+   */
+  corroborate: { maxSteps: 6, maxToolCalls: 8 },
   qa: { maxSteps: 6, maxToolCalls: 8, maxOutputTokens: 1024 },
+  /** ADR-081. Cut FIRST when the request budget binds — the pre-agreed degradation. */
+  maxQueueTriagesPerRun: 15,
+  /**
+   * The bound that actually binds on a free tier (ADR-080 consequence 2):
+   * requests per day, not dollars. Lives here rather than only in `env.ts` so
+   * the default has one home — the same reason `DEFAULT_EXPLAIN_MODEL` does.
+   */
+  maxLlmRequestsPerRun: 220,
   /** A1 triage: which categories are worth an investigation (agent-design §3). */
   eligibleCategories: [
     'AMBIGUOUS_MATCH', 'UNSPLITTABLE_BATCH', 'MISSING_IN_BANK',

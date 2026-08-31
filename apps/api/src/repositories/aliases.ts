@@ -132,8 +132,8 @@ export async function listActiveAliases(client?: TxClient): Promise<ActiveAlias[
   }));
 }
 
-export async function findAlias(id: string): Promise<Alias | null> {
-  const { rows } = await getPool().query<AliasRow>(
+export async function findAlias(id: string, client?: TxClient): Promise<Alias | null> {
+  const { rows } = await (client ?? getPool()).query<AliasRow>(
     `SELECT ${COLUMNS} FROM learned_aliases WHERE id = $1`, [id]);
   return rows.length === 0 ? null : toAlias(rows[0]!);
 }

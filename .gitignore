@@ -23,3 +23,6 @@ next-env.d.ts
 # (`npm run generate -- dev`) and would otherwise churn on every generator change.
 data/fixtures/dev/
 data/truth/dev_seed_*.json
+
+# Raw stdout from npm run analyst; the ledger JSON beside it is the artifact.
+data/baselines/*.log
