@@ -16,6 +16,31 @@ import { stripComments } from './truth-leak-guard.test.js';
  * gap: a tool that opened its own pool connection would escape the read-only
  * transaction entirely, and every test would still pass.
  *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * TWO DIFFERENT RULES, AND THE FIRST VERSION OF THIS FILE CONFLATED THEM.
+ *
+ * It asserted "no module under services/agent writes", which was true while the
+ * directory held only the registry, the gate and the loop — and WRONG the moment
+ * A4 landed, because Phase A must persist its verdicts (§3 A4) and its audit
+ * trail (ADR-052). The guard fired on correct code.
+ *
+ * What ADR-049/051 actually says is narrower and sharper:
+ *
+ *   1. THE TOOL PATH writes NOTHING. `tool-registry.ts` may not reach the pool,
+ *      open a writable transaction, or call any mutating repository function.
+ *      This is the registry the model drives, so it is the surface an agent
+ *      could turn against the database.
+ *   2. NO AGENT MODULE may write to an ENGINE table. Phase A records its own
+ *      account of its own work — `agent_investigations`, `agent_questions`,
+ *      `audit_log` — and may never touch `matches`, `exceptions`,
+ *      `transactions`, `learned_aliases` or `runs`. That is ADR-048's line:
+ *      the agent proposes, humans dispose through endpoints 16/20/21.
+ *
+ * Rule 2 is the one that actually protects the measured accuracy number, and the
+ * original over-broad rule would have been RELAXED to let A4 through — losing
+ * it. Splitting them keeps the strong half strong.
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
  * Same reasoning as `truth-leak-guard` and `single-scorer-guard`: a comment
  * saying "this layer never writes" is a hope; a failing test is a property.
  */
@@ -54,49 +79,79 @@ describe('the agent layer cannot write (ADR-049, ADR-051)', () => {
       'Phase A reads the engine\'s output and never writes to it. All SQL lives in repositories/.');
   });
 
-  test('no agent module imports a MUTATING repository function', async () => {
-    // The realistic route, and the one a read-only transaction would catch at
-    // runtime but only if the code path is actually exercised. Better to make it
-    // impossible to write than to hope a test reaches it.
-    const mutators = [
-      'insertTransactions', 'markDuplicates', 'setCounterpartyKeys',
-      'insertMatch', 'insertMatches', 'reviewMatch',
-      'insertExceptions', 'setExplanation', 'resolveException',
-      'upsertAlias', 'revokeAlias', 'recordAliasApplications',
-      'appendAuditEntry', 'putExplanation', 'getCachedExplanation',
-      'createRun', 'setRunStatus', 'recordIngestion', 'setRunMetrics', 'finishRun',
-      'reapInterruptedRuns', 'insertScoreReport',
-    ];
+  /**
+   * RULE 2 — no agent module may write to an ENGINE table.
+   *
+   * This is the one that protects the measured accuracy number. Phase A records
+   * its own work and never edits the engine's output (ADR-048).
+   */
+  const ENGINE_MUTATORS = [
+    'insertTransactions', 'markDuplicates', 'setCounterpartyKeys',
+    'insertMatch', 'insertMatches', 'reviewMatch',
+    'insertExceptions', 'setExplanation', 'resolveException',
+    'upsertAlias', 'revokeAlias', 'recordAliasApplications',
+    'putExplanation', 'getCachedExplanation',
+    'createRun', 'setRunStatus', 'recordIngestion', 'setRunMetrics', 'finishRun',
+    'reapInterruptedRuns', 'insertScoreReport',
+  ];
+
+  /** The writes Phase A is ALLOWED: its own account of its own work. */
+  const PERMITTED_AGENT_WRITES = [
+    'startInvestigation', 'concludeInvestigation', 'failInvestigation',
+    'recordDisposition', 'recordQuestion', 'appendAuditEntry',
+  ];
+
+  test('RULE 2: no agent module writes to an ENGINE table', async () => {
     const offenders: string[] = [];
     for (const { rel, code } of await agentSources()) {
-      for (const fn of mutators) {
-        // Namespace-imported calls (`txnRepo.insertMatches(`) and named imports
-        // both. `getCachedExplanation` is in the list because it UPDATEs a hit
-        // counter — a read-looking name that writes is exactly the trap here.
+      for (const fn of ENGINE_MUTATORS) {
+        // `getCachedExplanation` is in the list because it UPDATEs a hit counter
+        // — a read-looking name that writes is exactly the trap here.
         if (new RegExp(`\\b(?:\\w+\\.)?${fn}\\s*\\(`).test(code)) {
           offenders.push(`${rel}: ${fn}`);
         }
       }
     }
     assert.deepEqual(offenders, [],
-      'Phase A proposes; humans dispose through endpoints 16/20/21 (ADR-049, ADR-051).');
+      'Phase A proposes; humans dispose through endpoints 16/20/21 (ADR-048, ADR-049).');
   });
 
-  test('no agent module reaches the pool directly, bypassing the read-only transaction', async () => {
-    // THE GAP THIS FILE EXISTS FOR. `withReadOnlyTransaction` only constrains
-    // queries issued on the client it yields. A tool calling `getPool().query(…)`
-    // — or a repository function without passing the client — runs in autocommit
-    // with full write access, and every existing test would still pass because
-    // the tools it tests happen not to write.
+  test('RULE 1: the TOOL PATH writes nothing and never reaches the pool', async () => {
+    // THE GAP THE RUNTIME GUARANTEE HAS. `withReadOnlyTransaction` only
+    // constrains queries issued on the client it yields. A tool calling
+    // `getPool().query(…)` — or a repository function without passing the client
+    // — runs in autocommit with full write access, and every existing test would
+    // still pass because the tools it tests happen not to write.
+    //
+    // Scoped to the registry: this is the surface the MODEL drives.
+    const registry = stripComments(await readFile(join(AGENT, 'tool-registry.ts'), 'utf8'));
     const offenders: string[] = [];
-    for (const { rel, code } of await agentSources()) {
-      if (/\bgetPool\s*\(/.test(code)) offenders.push(`${rel}: getPool()`);
-      if (/\bwithTransaction\s*\(/.test(code)) offenders.push(`${rel}: withTransaction()`);
-      if (/\.connect\s*\(\s*\)/.test(code)) offenders.push(`${rel}: pool.connect()`);
+    if (/\bgetPool\s*\(/.test(registry)) offenders.push('getPool()');
+    if (/\bwithTransaction\s*\(/.test(registry)) offenders.push('withTransaction()');
+    if (/\.connect\s*\(\s*\)/.test(registry)) offenders.push('pool.connect()');
+    for (const fn of [...ENGINE_MUTATORS, ...PERMITTED_AGENT_WRITES]) {
+      if (new RegExp(`\\b(?:\\w+\\.)?${fn}\\s*\\(`).test(registry)) {
+        offenders.push(fn);
+      }
     }
     assert.deepEqual(offenders, [],
-      'Agent code must obtain its client from withReadOnlyTransaction, so Postgres itself '
-      + 'refuses a write. Reaching the pool directly escapes that guarantee silently.');
+      'The tool registry must obtain its client from withReadOnlyTransaction and write '
+      + 'NOTHING — not even an agent table. It is the surface the model drives.');
+  });
+
+  test('Phase A\'s writes are exactly its OWN tables, and it says which', async () => {
+    // Not a relaxation of rule 2 — a statement of the narrow exception, so that
+    // widening it later is a visible edit to this list rather than a quiet one.
+    const phase = stripComments(await readFile(join(AGENT, 'phase-a.ts'), 'utf8'));
+    const used = PERMITTED_AGENT_WRITES.filter(
+      (fn) => new RegExp(`\\b(?:\\w+\\.)?${fn}\\s*\\(`).test(phase));
+    assert.ok(used.includes('startInvestigation'));
+    assert.ok(used.includes('concludeInvestigation'));
+    assert.ok(used.includes('appendAuditEntry'));
+    for (const fn of ENGINE_MUTATORS) {
+      assert.doesNotMatch(phase, new RegExp(`\\b(?:\\w+\\.)?${fn}\\s*\\(`),
+        `phase-a.ts calls ${fn}, which writes engine output`);
+    }
   });
 
   test('every repository call in the tool registry passes the read-only client', async () => {

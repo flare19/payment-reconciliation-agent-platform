@@ -3,13 +3,13 @@
  *
  * Thin: parse, validate, delegate, serialize (CLAUDE.md §4.3).
  *
- * ── Why these return 503 today, and why that is the right answer ──
- * The investigation loop is U12/U13 and the Q&A loop is U15. Until they land,
- * `AGENT_DISABLED` is not a placeholder — it is the contract's own name for a
- * legitimate operating state (`AGENT_ENABLED=false` or no `ANTHROPIC_API_KEY`),
- * and the frontend already has to handle it because a deploy without an API key
- * is a real configuration. Returning a fabricated empty investigation would be
- * the worse answer: it would say the agent ran and found nothing.
+ * ── `AGENT_DISABLED` is a real state, not a placeholder ──
+ * Endpoint 25 runs the loop since U13; endpoint 28 (Q&A) is still U15. Either
+ * way `AGENT_DISABLED` is the contract's own name for a legitimate operating
+ * state — `AGENT_ENABLED=false`, or no API key — and the frontend has to handle
+ * it because a deploy without a key is a real configuration. Returning a
+ * fabricated empty investigation would be the worse answer: it would say the
+ * agent ran and found nothing.
  *
  * The READ endpoints work now, because the repository and the table exist and an
  * empty list is a true statement about a run nobody has investigated.
@@ -27,17 +27,26 @@ import * as excRepo from '../repositories/exceptions.js';
 import * as runsRepo from '../repositories/runs.js';
 import { handler, found, pageParams, pathParam, requireString } from './helpers.js';
 import { investigationDto, questionDto, paginate } from './serialize.js';
+import { createAgentClient } from '../services/agent/gemini-agent-client.js';
+import { investigateOne } from '../services/agent/phase-a.js';
+import { isEligibleCategory } from '../services/agent/triage.js';
+import * as txnRepo from '../repositories/transactions.js';
+import * as matchRepo from '../repositories/matches.js';
+import * as aliasRepo from '../repositories/aliases.js';
+import type { RunConfig } from '../types/engine.js';
 
 export function investigationsRouter(env: Env): Router {
   const r = Router();
 
-  const requireAgent = (): void => {
-    if (!env.agentEnabled || env.geminiApiKey === null) {
+  // Built once. `null` is the ordinary state on a keyless deploy.
+  const agentClient = createAgentClient(env);
+
+  const requireAgent = (): NonNullable<typeof agentClient> => {
+    if (agentClient === null) {
       throw new ApiError(503, 'AGENT_DISABLED',
-        'The Analyst is disabled: set AGENT_ENABLED=true and provide ANTHROPIC_API_KEY.');
+        'The Analyst is disabled: set AGENT_ENABLED=true and provide an API key.');
     }
-    throw new ApiError(503, 'AGENT_DISABLED',
-      'The Analyst investigation loop is not yet implemented in this build (U12/U13).');
+    return agentClient;
   };
 
   // 25 · POST /api/exceptions/:exceptionId/investigate
@@ -52,8 +61,66 @@ export function investigationsRouter(env: Env): Router {
       throw new ApiError(409, 'INVESTIGATION_IN_PROGRESS',
         `Exception ${id} already has an investigation (${live.status}).`);
     }
-    requireAgent();
-    res.status(202).json({});   // unreachable; requireAgent always throws today
+    const client = requireAgent();
+
+    const exception = (await excRepo.findException(id))!;
+    const run = found(await runsRepo.findRun(exception.runId),
+      'RUN_NOT_FOUND', `No run exists with id ${exception.runId}`);
+    if (run.status !== 'completed') {
+      // ADR-048: Phase A reads a FINISHED run. Investigating a run still in
+      // flight would read half an engine's output and reason over it as if it
+      // were final.
+      throw new ApiError(409, 'RUN_NOT_COMPLETE',
+        `Run is ${run.status}; the Analyst investigates completed runs only.`);
+    }
+    if (!isEligibleCategory(exception.category)) {
+      // §3 excludes DUPLICATE_RECORD and TIMING_DRIFT: the engine's verdict on
+      // both is already complete and an agent adds nothing but tokens.
+      // `INVALID_REQUEST`, not a new code: `ERROR_CODES` is locked by
+      // api-contract.md and adding a member is a contract change needing an ADR.
+      // The message carries the specificity the code deliberately does not.
+      throw new ApiError(400, 'INVALID_REQUEST',
+        `${exception.category} is not an investigated category: the engine's verdict on `
+        + 'it is already complete, so the Analyst adds nothing (agent-design §3). '
+        + 'Eligible: AMBIGUOUS_MATCH, UNSPLITTABLE_BATCH, MISSING_IN_BANK, '
+        + 'MISSING_IN_LEDGER, MISSING_IN_GATEWAY, AMOUNT_MISMATCH.');
+    }
+
+    // The A3 evidence base. Assembled per request here rather than cached, so a
+    // record matched since the last investigation cannot be proposed again.
+    const [records, matchedIds, aliases] = await Promise.all([
+      txnRepo.listTransactions(exception.runId),
+      matchRepo.listMatchedTransactionIds(exception.runId),
+      aliasRepo.listActiveAliases(),
+    ]);
+    const matched = new Set(matchedIds);
+
+    // Deliberately NOT awaited: an investigation is bounded at 60 s and the
+    // contract is 202-then-poll (endpoint 27), the same protocol a run uses.
+    void investigateOne(exception.runId, id, {
+      client,
+      config: run.configSnapshot as RunConfig,
+      // No cost model on a free-tier key: NULL, never 0. A zero cost reads as a
+      // measured figure, and this build has not measured one (ADR-080).
+      cost: null,
+      promptVersion: env.agentPromptVersion,
+    }, {
+      runId: exception.runId,
+      records: new Map(records.map((t) => [t.id, {
+        runId: t.runId, sourceSystem: t.sourceSystem, direction: t.direction,
+        alreadyMatched: matched.has(t.id),
+      }])),
+      activeAliases: new Map(
+        aliases.map((a) => [`${a.aliasType}::${a.normalizedValue}`, a.canonicalValue])),
+    }).catch((err: unknown) => {
+      console.error('[api] investigation crashed outside its own handling', id, err);
+    });
+
+    res.status(202).json({
+      exceptionId: id,
+      status: 'running',
+      pollAt: `/api/runs/${exception.runId}/investigations`,
+    });
   }));
 
   // 26 · GET /api/runs/:runId/investigations

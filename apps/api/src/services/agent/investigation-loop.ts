@@ -89,6 +89,19 @@ export interface LoopDeps {
    * refusal reads as `budgetExhausted` rather than as a crash.
    */
   preflight?: (estimate: { step: number; usageSoFar: AgentUsage }) => string | null;
+  /**
+   * Called as each tool call completes, BEFORE the loop continues.
+   *
+   * §3: "Every step is written to `audit_log` as it happens, so a partial
+   * investigation that hits a budget still leaves a complete, ordered,
+   * tamper-evident record of what it did." Writing the trail only at the end
+   * would lose exactly the investigations most worth inspecting — the ones that
+   * crashed or ran out of budget.
+   *
+   * A throw here is swallowed: the audit trail must not be able to kill the
+   * investigation it is describing.
+   */
+  onToolCall?: (record: ToolCallRecord) => Promise<void>;
 }
 
 const SYSTEM_PROMPT = [
@@ -289,7 +302,7 @@ export async function investigate(
       }
 
       // Stamped with THIS investigation's id. The gate verifies it (#21).
-      toolCalls.push({
+      const record: ToolCallRecord = {
         investigationId: request.investigationId,
         step: steps,
         tool: call.name,
@@ -297,7 +310,14 @@ export async function investigate(
         returnedIds: result.returnedIds,
         resultDigest: result.digest,
         durationMs: now() - t0,
-      });
+      };
+      toolCalls.push(record);
+      if (deps.onToolCall !== undefined) {
+        // Swallowed deliberately: a failure to WRITE the trail must not change
+        // what the investigation concludes. The trail describes the work; it is
+        // not part of it.
+        try { await deps.onToolCall(record); } catch { /* trail write failed */ }
+      }
       // `resultDigest` is handed to the model EXPLICITLY because A3 requires it
       // echoed back and compares it against this exact string (`digestFor` in
       // grounding-gate.ts). It is a checksum on the reasoning chain: a model
