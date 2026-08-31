@@ -50,7 +50,7 @@ import {
 import * as corrRepo from '../../repositories/corroborations.js';
 import { buildInvestigationPrompt } from './investigation-prompt.js';
 import { createToolRegistry } from './tool-registry.js';
-import { triageRun, type TriagePlan } from './triage.js';
+import { triageRun, type TriagePlan, type TriageBudget } from './triage.js';
 import type { AgentLlmClient, AgentUsage, CostModel } from './agent-client.js';
 import { usdFor } from './agent-client.js';
 import type { RunConfig } from '../../types/engine.js';
@@ -76,6 +76,13 @@ export interface PhaseADeps {
   promptVersion?: string;
   budget?: InvestigationBudget;
   maxLlmRequests?: number;
+  /**
+   * The per-list caps (§3, ADR-081). Optional, and it had to become injectable
+   * the moment `runPhaseA` gained a caller outside a test: the env var
+   * `AGENT_MAX_INVESTIGATIONS_PER_RUN` was parsed but reached nothing, because
+   * the only call site took `triageRun`'s default.
+   */
+  triageBudget?: TriageBudget;
   now?: () => number;
   /**
    * The TRUE count of billable requests issued so far, from the pacing layer
@@ -417,7 +424,7 @@ export async function runPhaseA(
   const maxRequests = deps.maxLlmRequests ?? AGENT_DEFAULTS.maxLlmRequestsPerRun;
 
   const [plan, gateContext] = await Promise.all([
-    triageRun(runId), buildGateContext(runId),
+    triageRun(runId, deps.triageBudget), buildGateContext(runId),
   ]);
 
   const verdicts: Record<string, number> = {};
