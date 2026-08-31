@@ -232,5 +232,160 @@ export async function setCounterpartyKeys(
   );
 }
 
+/**
+ * ── READ-ONLY QUERIES FOR THE ANALYST'S TOOL REGISTRY (U12, ADR-049) ─────────
+ *
+ * These serve `search_transactions` and `find_by_anchor`. They live here for the
+ * same reason every other query does — all SQL is in `repositories/` — and they
+ * are SELECT-only by construction. Phase A may read the engine's output; it may
+ * never write to it (ADR-048, ADR-051).
+ *
+ * Both are scoped to one `run_id`. That is not a performance detail: an agent
+ * investigating run A must not be able to cite a record from run B, and the
+ * cheapest place to make that impossible is the WHERE clause rather than a
+ * check downstream.
+ */
+
+/**
+ * `COLUMNS`, aliased to `t`, for the queries below that join or use a subquery.
+ * Derived from the one list rather than written out again — a second column list
+ * is a second thing to keep in sync with the row type.
+ */
+const COLUMNS_T = COLUMNS.split(',').map((c) => `t.${c.trim()}`).join(', ');
+
+/** `search_transactions` filters (agent-design §4). Every field optional. */
+export interface TransactionSearchFilter {
+  sourceSystem?: SourceSystem;
+  direction?: Direction;
+  statusNorm?: StatusNorm;
+  /** Inclusive, business dates (`YYYY-MM-DD`). */
+  dateFrom?: string;
+  dateTo?: string;
+  /** Inclusive, paise. */
+  amountMinPaise?: number;
+  amountMaxPaise?: number;
+  /** Substring, case-insensitive, against `counterparty_norm`. */
+  counterparty?: string;
+  /** Exclude records already sitting in a non-rejected match. */
+  unmatchedOnly?: boolean;
+}
+
+/**
+ * The workhorse. Bounded and canonically ordered.
+ *
+ * `limit` is capped by the CALLER (the tool registry enforces 50, agent-design
+ * §4). It is passed through rather than clamped here so that a repository
+ * function does not silently disagree with the bound its caller advertises —
+ * one place owns the number.
+ *
+ * `ORDER BY` is the canonical tie-break, unconditionally (ADR-032 rule 9). A
+ * bounded search with an unspecified order returns a different 50 rows on two
+ * runs, and the agent would cite evidence that a re-run cannot reproduce — which
+ * is the same reproducibility property ADR-085 protects one layer up.
+ */
+export async function searchTransactionsForAgent(
+  runId: string, filter: TransactionSearchFilter, limit: number,
+): Promise<{ transactions: NormalizedTransaction[]; totalMatching: number }> {
+  const where: string[] = ['t.run_id = $1'];
+  const params: unknown[] = [runId];
+  const add = (sql: string, value: unknown): void => {
+    params.push(value);
+    where.push(sql.replace('$?', `$${params.length}`));
+  };
+
+  if (filter.sourceSystem !== undefined) add('t.source_system = $?', filter.sourceSystem);
+  if (filter.direction !== undefined) add('t.direction = $?', filter.direction);
+  if (filter.statusNorm !== undefined) add('t.status_norm = $?', filter.statusNorm);
+  if (filter.dateFrom !== undefined) add('t.txn_date >= $?::date', filter.dateFrom);
+  if (filter.dateTo !== undefined) add('t.txn_date <= $?::date', filter.dateTo);
+  if (filter.amountMinPaise !== undefined) add('t.amount_paise >= $?', filter.amountMinPaise);
+  if (filter.amountMaxPaise !== undefined) add('t.amount_paise <= $?', filter.amountMaxPaise);
+  if (filter.counterparty !== undefined && filter.counterparty.trim() !== '') {
+    add('t.counterparty_norm ILIKE $?', `%${filter.counterparty.trim()}%`);
+  }
+  if (filter.unmatchedOnly === true) {
+    where.push(`NOT EXISTS (
+      SELECT 1 FROM match_members mm JOIN matches m ON m.id = mm.match_id
+       WHERE mm.transaction_id = t.id AND m.status <> 'human_rejected')`);
+  }
+  const predicate = where.join(' AND ');
+
+  const pool = getPool();
+  const [page, count] = await Promise.all([
+    pool.query<TxnRow>(
+      `SELECT ${COLUMNS_T} FROM transactions t
+        WHERE ${predicate}
+        ORDER BY source_rank(t.source_system), t.source_row_number
+        LIMIT $${params.length + 1}`,
+      [...params, limit]),
+    // Reported so the agent is TOLD when its view was truncated. A tool that
+    // silently returns 50 of 300 invites a conclusion drawn from a sample the
+    // model believes is the population (agent-design §4, "result digests").
+    pool.query<{ count: number }>(
+      `SELECT count(*)::int AS count FROM transactions t WHERE ${predicate}`, params),
+  ]);
+  return {
+    transactions: page.rows.map(toTransaction),
+    totalMatching: count.rows[0]!.count,
+  };
+}
+
+/**
+ * Every record in the run carrying `value` under ANY reference key.
+ *
+ * Cross-source by design: this is the tool for "does this reference appear
+ * anywhere else", which is the single most useful question on a `MISSING_IN_*`
+ * exception (agent-design §4).
+ *
+ * `jsonb_each_text` rather than the `ix_txn_refs_gin` containment index,
+ * deliberately: the question is "any key with this value", and the GIN index
+ * answers "this key with this value". Serving it from the index would mean
+ * enumerating the known anchor keys here, which puts a second copy of
+ * `anchors.ts`'s key list in the repository layer — the drift risk is worse
+ * than the scan, which is bounded to one run and runs at most a few dozen times
+ * per run (agent budgets, §8).
+ */
+export async function findTransactionsByAnchorValue(
+  runId: string, value: string,
+): Promise<NormalizedTransaction[]> {
+  const { rows } = await getPool().query<TxnRow>(
+    `SELECT ${COLUMNS_T} FROM transactions t
+      WHERE t.run_id = $1
+        AND EXISTS (SELECT 1 FROM jsonb_each_text(t.reference_ids) AS kv(k, v)
+                     WHERE kv.v = $2)
+      ORDER BY source_rank(t.source_system), t.source_row_number`,
+    [runId, value]);
+  return rows.map(toTransaction);
+}
+
+/**
+ * Candidates for a NEAR-anchor lookup: same leading `prefixLen` characters.
+ *
+ * This returns a BLOCK, not an answer. The edit-distance decision is made by
+ * `damerauLevenshteinWithin` in `services/matching/scoring.ts` — the engine's
+ * own locked implementation, the one the single-scorer guard pins to a single
+ * definition. Doing the distance in SQL would be a second implementation of a
+ * scoring primitive, which is precisely what ADR-049 forbids and what
+ * `single-scorer-guard.test.ts` exists to catch.
+ *
+ * The prefix length is passed in from `blocking.ts`'s `ANCHOR_PREFIX_LEN` for
+ * the same reason: the blocking constant has one home (ADR-033 / §7.2).
+ */
+export async function findTransactionsByAnchorPrefix(
+  runId: string, prefix: string, prefixLen: number,
+): Promise<{ transaction: NormalizedTransaction; anchorValues: string[] }[]> {
+  const { rows } = await getPool().query<TxnRow & { anchor_values: string[] }>(
+    `SELECT ${COLUMNS_T},
+            ARRAY(SELECT kv.v FROM jsonb_each_text(t.reference_ids) AS kv(k, v)
+                   WHERE left(kv.v, $3) = $2 ORDER BY kv.v) AS anchor_values
+       FROM transactions t
+      WHERE t.run_id = $1
+        AND EXISTS (SELECT 1 FROM jsonb_each_text(t.reference_ids) AS kv(k, v)
+                     WHERE left(kv.v, $3) = $2)
+      ORDER BY source_rank(t.source_system), t.source_row_number`,
+    [runId, prefix, prefixLen]);
+  return rows.map((r) => ({ transaction: toTransaction(r), anchorValues: r.anchor_values }));
+}
+
 /** Exported so a caller can assert the SQL order matches the TS comparator. */
 export { compareCanonical };
