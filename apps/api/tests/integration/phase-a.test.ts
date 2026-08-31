@@ -7,10 +7,16 @@ import { createPool, closePool, getPool } from '../../src/db/pool.js';
 import { ENGINE_DEFAULTS, AGENT_DEFAULTS } from '../../src/config/defaults.js';
 import { createRun, findRun } from '../../src/repositories/runs.js';
 import { listExceptionTriageCandidates } from '../../src/repositories/exceptions.js';
-import { findInvestigation, agentMetrics } from '../../src/repositories/investigations.js';
+import {
+  findInvestigation, findInvestigationForException, agentMetrics,
+} from '../../src/repositories/investigations.js';
+import { findCorroborationForMatch } from '../../src/repositories/corroborations.js';
+import { listQueueTriageCandidates } from '../../src/repositories/matches.js';
 import { verifyRunChain } from '../../src/repositories/audit.js';
 import { executeRun } from '../../src/services/run/orchestrator.js';
-import { runPhaseA, investigateOne, type PhaseADeps } from '../../src/services/agent/phase-a.js';
+import {
+  runPhaseA, investigateOne, corroborateOne, type PhaseADeps,
+} from '../../src/services/agent/phase-a.js';
 import { ELIGIBLE_CATEGORIES } from '../../src/services/agent/triage.js';
 import { withRateLimit } from '../../src/services/agent/rate-limiter.js';
 import type { AgentLlmClient, AgentTurnResult } from '../../src/services/agent/agent-client.js';
@@ -89,6 +95,8 @@ describe('Phase A (integration)',
     let runId: string;
     let config: RunConfig;
     let deps: PhaseADeps;
+    /** Exception ids the FIRST test in this file already investigated (#57's tests avoid them). */
+    const ourInvestigated = new Set<string>();
 
     before(async () => {
       createPool({ databaseUrl: DB_URL!, corsOrigins: [] } as never);
@@ -114,6 +122,7 @@ describe('Phase A (integration)',
     test('one investigation persists a verdict, its citations and its cost', async () => {
       const candidate = (await listExceptionTriageCandidates(
         runId, ELIGIBLE_CATEGORIES, 1))[0]!;
+      ourInvestigated.add(candidate.exceptionId);
       const { investigationId, outcome } = await investigateOne(
         runId, candidate.exceptionId, deps, {
           runId, records: new Map(), activeAliases: new Map(),
@@ -135,6 +144,66 @@ describe('Phase A (integration)',
       assert.equal(stored!.groundingPassed, true);
       assert.ok(stored!.citations.length > 0, 'it cited what the tool returned');
       assert.ok(stored!.reasoning.length > 0);
+    });
+
+    test('#57: a throw after startInvestigation leaves the row FAILED, not stuck at running, '
+      + 'and the exception is investigable again', async () => {
+      const throwing: AgentLlmClient = {
+        model: 'throwing-model',
+        async turn() { throw new Error('simulated transport failure'); },
+      };
+      // A fresh exception, never investigated by an earlier test in this file.
+      const candidate = (await listExceptionTriageCandidates(runId, ELIGIBLE_CATEGORIES, 25))
+        .find((c) => !ourInvestigated.has(c.exceptionId));
+      assert.ok(candidate, 'need an exception no earlier test in this file has investigated');
+      ourInvestigated.add(candidate!.exceptionId);
+
+      await assert.rejects(
+        () => investigateOne(runId, candidate!.exceptionId, { ...deps, client: throwing }, {
+          runId, records: new Map(), activeAliases: new Map(),
+        }),
+        /investigation of exception .* failed: simulated transport failure/);
+
+      const failedRow = await findInvestigationForException(candidate!.exceptionId);
+      assert.ok(failedRow, 'startInvestigation must have persisted a row before the throw');
+      assert.equal(failedRow!.status, 'failed',
+        'a throw must not leave the row at status=running -- ux_inv_exc_active would then '
+        + 'permanently block this exception from ever being investigated again');
+
+      // ux_inv_exc_active is `UNIQUE (exception_id) WHERE status <> 'failed'` -- this second
+      // call only succeeds if the first row genuinely reached 'failed', not merely 'running'.
+      const { investigationId } = await investigateOne(
+        runId, candidate!.exceptionId, deps, {
+          runId, records: new Map(), activeAliases: new Map(),
+        });
+      const stored = await findInvestigation(investigationId);
+      assert.equal(stored!.status, 'concluded', 'the exception must be investigable again');
+    });
+
+    test('#57: the same throw-and-recover property holds for a corroboration', async () => {
+      const throwing: AgentLlmClient = {
+        model: 'throwing-model',
+        async turn() { throw new Error('simulated transport failure'); },
+      };
+      const candidate = (await listQueueTriageCandidates(runId, 5))[0]!;
+
+      await assert.rejects(
+        () => corroborateOne(runId, candidate.matchId, { ...deps, client: throwing }, {
+          runId, records: new Map(), activeAliases: new Map(),
+        }),
+        /corroboration of match .* failed: simulated transport failure/);
+
+      const failedRow = await findCorroborationForMatch(candidate.matchId);
+      assert.ok(failedRow, 'startCorroboration must have persisted a row before the throw');
+      assert.equal(failedRow!.status, 'failed',
+        'a throw must not leave the row at status=running -- ux_corr_match_active would then '
+        + 'permanently block this match from ever being corroborated again');
+
+      // ux_corr_match_active is `UNIQUE (match_id) WHERE status <> 'failed'`.
+      const { outcome } = await corroborateOne(runId, candidate.matchId, deps, {
+        runId, records: new Map(), activeAliases: new Map(),
+      });
+      assert.ok(outcome.verdict.verdict, 'the match must be corroborable again');
     });
 
     test('the reasoning chain stores the RUNTIME digest, not the model\'s word for it', async () => {

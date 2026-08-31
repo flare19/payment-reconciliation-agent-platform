@@ -155,22 +155,22 @@ describe('the agent layer cannot write (ADR-049, ADR-051)', () => {
   const PERMITTED_AGENT_WRITES = [
     'startInvestigation', 'concludeInvestigation', 'failInvestigation',
     'recordDisposition', 'recordQuestion', 'appendAuditEntry',
-    'startCorroboration', 'concludeCorroboration',
+    'startCorroboration', 'concludeCorroboration', 'failCorroboration',
   ];
 
   // Names on this list are called from NOWHERE in apps/api/src today -- not
   // just from phase-a.ts. Listed explicitly so the bidirectional test below
   // cannot pass by silently ignoring dead code; each is a real gap, not a
   // false positive of the test.
-  //   - `failInvestigation` — #57 (companion P2): the failure path this exists
-  //     for is unwired. #57 calls it and removes it from this list.
   //   - `recordDisposition`, `recordQuestion` — found BY this stricter test
   //     (#60), not previously flagged anywhere. `recordQuestion` is plausibly
   //     the Q&A loop's writer (U15, "treat as cut" per CLAUDE.md §11) and
   //     `recordDisposition` plausibly endpoint 21's, but neither is called by
   //     any route or agent module. Left as a real, named gap rather than
-  //     wired here — out of scope for this issue's acceptance criteria.
-  const KNOWN_UNUSED_PERMITTED_WRITES = ['failInvestigation', 'recordDisposition', 'recordQuestion'];
+  //     wired here — out of scope for #60's acceptance criteria.
+  //   - `failInvestigation`/`failCorroboration` were on this list before #57
+  //     wired them; both are now called from phase-a.ts's catch blocks.
+  const KNOWN_UNUSED_PERMITTED_WRITES = ['recordDisposition', 'recordQuestion'];
 
   test('RULE 2: no agent module writes to an ENGINE table', async () => {
     const offenders: string[] = [];
