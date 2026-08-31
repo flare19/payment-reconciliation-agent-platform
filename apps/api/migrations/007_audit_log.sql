@@ -44,9 +44,7 @@ CREATE TABLE audit_log (
 
   -- Tamper-evidence (ADR-042). Chained per run; the first entry of a chain has
   -- prev_hash = 64 zeros. Computed in application code as
-  -- sha256(canonical_json(entry minus sequence_no/prev_hash/entry_hash) || prev_hash).
-  -- sequence_no is excluded because it is DB-assigned at INSERT and therefore
-  -- does not exist yet when the hash is computed (see #25, schema.md §9.0).
+  -- sha256(canonical_json(entry minus hashes) || prev_hash).
   prev_hash      CHAR(64) NOT NULL,
   entry_hash     CHAR(64) NOT NULL,
 
