@@ -50,7 +50,7 @@ Rationale for each is in [docs/adr-log.md](docs/adr-log.md). Don't re-litigate t
 | [docs/agent-design.md](docs/agent-design.md) | **The Analyst (Phase A).** The agentic layer downstream of S14: tool registry, investigation loop, grounding gate, self-correction, how the agent is measured. Read it before touching anything agent-related. |
 | [docs/api-contract.md](docs/api-contract.md) | Every endpoint. Frontend and backend are built on different days — **this contract is binding.** |
 | [docs/ui-spec.md](docs/ui-spec.md) | Screens, states, the demo path, and the pre-agreed degradation order if Day 12 overruns. |
-| [docs/adr-log.md](docs/adr-log.md) | Every locked decision with reasoning. Append-only. 78 entries. |
+| [docs/adr-log.md](docs/adr-log.md) | Every locked decision with reasoning. Append-only. **87 entries** (ADR-084…087 landed on Day 12). |
 | [docs/validation-strategy.md](docs/validation-strategy.md) | Ground-truth generation, precision/recall scoring, the scale benchmark, the honesty protocols. |
 | [docs/testing-strategy.md](docs/testing-strategy.md) | What gets tested and what deliberately doesn't. |
 | [docs/deployment.md](docs/deployment.md) | Hosting, env vars, secrets, deploy steps. |
@@ -214,54 +214,76 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 
 ## 10. Current state
 
-**As of 2026-08-31 (Day 12), latest: U12 is complete — the Analyst has its nine read-only tools, and "read-only" is a database guarantee rather than a claim.**
+**As of 2026-08-31 (Day 12): U11, U12 and U13 are complete. The Analyst is FEATURE-COMPLETE and has never been measured.** Branch `day12-explain-layer`, 15 commits, **unmerged**. 722 tests in `apps/api`, 235 at root, typecheck and both builds clean.
+
+### Read this first if you are a fresh session
 
 ```
-withReadOnlyTransaction  BEGIN TRANSACTION READ ONLY -> a write from any tool
-                         fails SQLSTATE 25006, whatever the calling code thinks
-structural guard         no agent module may contain DML, import a mutating
-                         repository fn, or reach getPool() (that last one is the
-                         escape a read-only transaction cannot see)
-score_pair               agrees with scorePair component-for-component, 144 pairs
-re-score                 BYTE-IDENTICAL to U11 — the agent layer moved nothing
+THE ENGINE            S0-S14, all wired, UNCHANGED all day.
+                      284 matches - 212 exceptions - 65.22% - 612 audit entries
+                      precision 1.0000 - FP 0 - recall 0.6075 - unresolvable recall 1.0
+                      Verified byte-identical across every commit on this branch.
+
+S13 EXPLAIN (U11)     Wired. RUN LIVE against real Gemini: 21/21 signatures
+                      generated, 3 API calls, and a SECOND run made ZERO calls
+                      (cache). The score report was BYTE-IDENTICAL to the
+                      keyless run -- a real model wrote all 212 explanations
+                      and the accuracy number did not move one character.
+
+THE ANALYST (U12+U13) Feature-complete, NOT measured.
+                      A1 triage - A2 investigate - A2 corroborate - A3 gate - A4 persist
+                      Nine read-only tools, read-only ENFORCED by Postgres.
+                      One real end-to-end verdict produced (see below).
+                      NEVER scored against the answer key.
 ```
 
-> **ADR-085 came out of a one-word doc fix.** §4's `rerun_subset_search` row said "meet-in-the-middle" (stale since ADR-060) **and** let the agent pass `budgetMs`. The second is the real defect: a wall-clock bound inside the evidence a reasoning chain cites makes `searchExhausted` vs `searchBoundExceeded` — different claims about the DATA — a property of the hardware. The tool now widens a NODE budget, ceiling 5,200,000, and that ceiling is explicitly **not** a dominance proof: it is sized so the 2 s safety valve can never fire.
+### The single most important open item
 
-> **`getCachedExplanation` is on the agent's mutating-function denylist.** It reads like a lookup and is an `UPDATE … hit_count + 1 … RETURNING` (U11 wanted one round trip). A read-looking name that writes is the entry a denylist built from intuition would miss.
+**The Analyst has no measured number.** `tools/score` does not score it, so `validation-strategy.md` §7's figures — false-despair recovered, proposal precision, **hallucinated resolutions (must be 0, ADR-053)**, unresolvable agreement — do not exist. Everything below is a claim about code. **Do not describe the Analyst as working in the submission until this exists.**
 
-**THE LIVE MODEL PATH HAS NOW RUN.** A real `GEMINI_API_KEY` is in `apps/api/.env` and S13 has been exercised end to end through the route:
+### What a live model actually did
 
-```
-21/21 signatures GENERATED · 212 exceptions explanation_source = 'llm' · 0 templates
-3 API calls · 2,744 in / 1,745 out · ~39 s · failures []
-SECOND identical run: 0 API calls, 21/21 from cache, ~6 s   (ADR-018, measured)
-score report BYTE-IDENTICAL to the keyless run
-```
-
-> **A real language model wrote all 212 explanations and the accuracy report did not move by one character.** ADR-017 stopped being a claim about pipeline position and became a diffed artifact. Engine invariants held exactly: 284 matches, 212 exceptions, 612 audit entries, 65.22%, 570 matched, `tierAttribution` unchanged.
-
-> **The first keyed run also found a real defect in U11's own code**, and it is the kind worth remembering: `REQUEST_TIMEOUT_MS` was 20 s, guessed rather than measured, and a 10-signature batch takes ~10 s — so ordinary latency variance aborted 2 of 3 batches and silently served 20 of 21 signatures from templates. **Nothing failed; the run completed and the score was unchanged.** Only `llmCost.failures` and `explanation_source` made it visible. Now 60 s, with the measurements in the comment and the argument stated as a ratio. See `what-broke.md`.
-
-> **[#52](https://github.com/flare19/payment-reconciliation-agent-platform/issues/52) is a NEW P1 and it becomes reachable the moment that key is real.** S13's prompt provably contains no specifics (ADR-018 buckets everything), so **any amount, date or reference id in the model's prose is necessarily fabricated** — and nothing checks. `parseResponse` validates shape only; the text goes straight to `explanation_text` and into the exception list, and a cached row makes it durable across runs. Phase A treats a hallucinated specific as a build blocker (ADR-053); S13, whose output a panelist actually reads, has no equivalent. **Land it before any keyed run's explanations are shown to anyone.**
-
-
-**As of 2026-08-31 (Day 11), latest: U11 is complete — S13 is wired and THE ENGINE HAS NO UNWIRED STAGES. `UNWIRED_STAGES` is `[]`, `stagesNotRun` is `[]`, and `llmCost` is an object rather than `null`.**
+One real investigation completed end to end on `gemini-2.5-flash`:
 
 ```
-212 exceptions -> 21 distinct signatures   (schema.md §10.2 predicted 15-30)
-explanation_text never null · all 212 template-sourced · status open -> explained
-audit chain 591 -> 612   (+21 = one entry per SIGNATURE, not per exception)
-explanation_cache EMPTY after a keyless run   (ADR-084 — templates are never cached)
-score report BYTE-IDENTICAL to a run through main's engine
+UNSPLITTABLE_BATCH, engine reported searchExhausted: true
+-> get_exception -> CONFIRMED_UNRESOLVABLE, high confidence, GROUNDED, 1 citation
 ```
+> *"The engine's batch search was 'EXHAUSTIVE' ... the engine proved no combination works within its declared bounds, rather than running out of search room. Therefore, rerunning the subset search with wider bounds is not applicable."*
 
-> **S13 changed no decision, and that was verified rather than asserted:** a `git worktree` at `main`, a holdout run through the pre-U11 engine, and `npm run score` against both — the two reports diff to nothing. precision **1.0000** · FP **0** · recall **0.6075** · macro P **0.9286** / R **0.8738** · unresolvable recall **1.0** · match rate **65.22%** · `tierAttribution {exact 203, fuzzy 277, batch 25, implied 242}`.
+Correct answer, correct amount of work. Earlier, on a different attempt, **the A3 gate caught a real hallucination**: the model claimed a `rerun_subset_search` step it had never run, and the verdict was rejected and downgraded. ADR-050 is no longer a design argument.
 
-> **`recall 0.6089` further down this file is STALE — the live figure is 0.6075 and always was on `main` too.** #38 and #51 moved pairs into the review band without that headline being updated. Comparing a fresh score against the doc rather than against a `main` run reads as a regression that does not exist. If a number here disagrees with a run, re-derive it from `main` before believing either.
+### Three defects the live runs found that no test could
 
-**There is still no `GEMINI_API_KEY`**, so the model path has never made a live call. It is unit-tested against a fake client; the template path is what actually runs, which is exactly what ADR-017 requires and what the tests pin.
+1. **`gemini-3.7-flash` cannot satisfy `agent-design.md` §8** (ADR-086). It answers a trivial prompt in **53 s**; §8 bounds a WHOLE investigation at 60 s. ADR-080 picked it from Google's description, never a measurement. Default is now `gemini-3.6-flash`; **loop development happens on `gemini-2.5-flash`** because the newer models are capped at **20 requests/day/model** on the free tier.
+2. **`thought_signature`.** Gemini 3.x attaches an opaque signature to each `functionCall` and 400s if the replayed history loses it. Every multi-step investigation was structurally impossible **and every test passed**, because a fake client has no signature to lose. Carried now as an opaque `providerSignature`. Anthropic needs thinking blocks replayed for the same reason — **this survives the swap**.
+3. **The agent could not see its step budget**, so it never stopped, then over-corrected into concluding before it had looked. The countdown's tone now tracks the budget.
 
+> **THE PATTERN, NAMED BECAUSE IT REPEATED THREE TIMES IN ONE DAY.** The 20 s explain timeout, the ceiling-charging triage budget and `gemini-3.7-flash` were all plausible numbers with **nothing measured behind them**. Every *engine* bound in this repo is derived (ADR-063 is a proof about the declared space; ADR-085 is derived from the valve it must not trip); every bound around the *model* was a guess wearing the same clothes. It was invisible because the engine's numbers are scored daily and the model's were not scored at all. **Measure a model bound before adopting it.**
+
+### THE NEXT SESSION: the Anthropic swap
+
+Decided with Tejas. The free tier cannot support iteration (20 req/day/model), so the Analyst was finished on it and the swap happens on a **fresh branch off `day12-explain-layer`, named `swap-for-anthropic-api`**, in a **fresh chat**.
+
+- **Tejas creates the API key himself.** Do not offer to create it. Walk him through `console.anthropic.com` -> Settings -> **Limits** (spend ceiling) -> **Usage** -> **Billing**. He pastes it into `apps/api/.env`, which is gitignored. **You never need to see the value.**
+- Budget agreed: **~$60**. Model: **`claude-opus-5`** for the Analyst with `AGENT_MAX_INVESTIGATIONS_PER_RUN` reduced from 20 to **~5** — that is ~$1.60/run with caching instead of ~$9.50, and a demo needs a few excellent investigations rather than twenty mediocre ones.
+- **`AGENT_QA_MAX_QUESTIONS_PER_HOUR = 100` IS THE BIGGEST FINANCIAL RISK IN THE PROJECT.** On a public unauthenticated endpoint at Opus-5 rates that is **~$25/hour** of exposure. A question-count cap cannot bound spend when question cost varies. **Denominate the public limit in dollars** and add a persistent spend ledger with pre-flight refusal (`messages.count_tokens` + `max_tokens` makes worst-case cost computable *before* the call). The `preflight` hook in `investigation-loop.ts` is the seam it plugs into.
+- The swap itself is small **by construction**: `AgentLlmClient` (`services/agent/agent-client.ts`) and `ExplainLlmClient` (`services/explain/llm-client.ts`) are injected interfaces. One new file each, plus config. **The loop, bounds, audit trail and grounding plumbing contain no provider types.**
+- **Measure the new model's per-turn latency against §8's 60 s bound BEFORE adopting it.** That is ADR-086's real contribution.
+- The prompt is the medium-risk part: tuning done against Gemini may not transfer. Expect a pass on the system prompts.
+
+### What is genuinely NOT done
+
+| | |
+|---|---|
+| **Analyst scoring** (`tools/score`, validation-strategy §7) | **not started** — the biggest gap |
+| Q&A loop (U15) | not started; §11 says **cut first** if time runs out |
+| Endpoints for corroborations | `agent_corroborations` has a repository but no route |
+| [#52](https://github.com/flare19/payment-reconciliation-agent-platform/issues/52) S13 grounding check | open P1 |
+| [#43](https://github.com/flare19/payment-reconciliation-agent-platform/issues/43) `countsTowardEngineMatchRate` | open, must land before the frontend reads it |
+| Deploy, frontend | untouched |
+
+> **A dataset finding the demo needs.** `runs.metrics` reports `batchSearchExhausted: 4, batchSearchBoundExceeded: 0` — every batch search on the holdout ends in a proof. **§5's flagship self-correction story has no instance in this dataset**: `rerun_subset_search` can only ever confirm what the engine already proved. To demo recovery, the generator needs a case where the pool cap binds.
 
 **Classification figures were re-measured at the end of Day 10 (#50) and the earlier ones were WRONG — the scorer, not the engine. Picking an event's prediction by `schema.md` §8.2's precedence instead of by row order gives macro P 0.9286 / macro R 0.8738 (was 0.7891 / 0.8024) and `UNSPLITTABLE_BATCH` 1.000/0.500 (was 0.000/0.000), on byte-identical engine output.**
 
@@ -632,7 +654,7 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 | # | Unit | Model | Why |
 |---|---|---|---|
 | **U12** ✅ | Agent tool registry | **Opus / high** | **Done.** Nine read-only tools. `score_pair`/`rerun_subset_search` call `scorePair`/`decomposeBatch` — asserted to agree with the engine component-for-component over 144 real pairs. **Read-only is enforced by Postgres** (`withReadOnlyTransaction`, SQLSTATE 25006), not declared; a structural guard closes the `getPool()` escape. The doc fix exposed a design bug: §4 let the agent choose a TIME budget — ADR-085. |
-| **U13** | Investigation loop A2 + triage A1 | **Opus / high** (loop), **Sonnet / medium** (triage) | The loop decides whether the grounding gate's per-investigation property holds; #21's `investigationId` plumbing is already in place and must be honoured. Triage's `ORDER BY` is stated exactly. |
+| **U13** ✅ | Investigation loop A2 + triage A1 + CORROBORATE | **Opus / high** | **Done.** A1 triage (two work lists), A2 investigate, A2 corroborate (ADR-081/087, own table + own vocabulary), A4 persist, endpoint 25 live. One real grounded verdict; the A3 gate caught a real hallucination. **Never scored** — that is the open gap. |
 | **AUDIT-3** | Isolated audit of U11–U13 | **Opus / max** | Hallucination is a build blocker (ADR-053), not a metric |
 
 ### Day 13 (Sep 2) — AUDIT-3, scale, and the P2 sweep
