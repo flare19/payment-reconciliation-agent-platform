@@ -6,7 +6,7 @@
  * Optional vars degrade explicitly (see `llmConfigured`).
  */
 
-import { DEFAULT_EXPLAIN_MODEL, DEFAULT_PROMPT_VERSION } from './defaults.js';
+import { AGENT_DEFAULTS, DEFAULT_EXPLAIN_MODEL, DEFAULT_PROMPT_VERSION } from './defaults.js';
 
 function required(name: string): string {
   const v = process.env[name];
@@ -118,10 +118,10 @@ export function loadEnv(): Env {
     staleRunTimeoutMinutes: int('STALE_RUN_TIMEOUT_MINUTES', 5),
 
     agentEnabled: bool('AGENT_ENABLED', true),
-    agentMaxInvestigationsPerRun: int('AGENT_MAX_INVESTIGATIONS_PER_RUN', 20),
+    agentMaxInvestigationsPerRun: int('AGENT_MAX_INVESTIGATIONS_PER_RUN', AGENT_DEFAULTS.maxInvestigationsPerRun),
     agentMaxCostUsdPerRun: num('AGENT_MAX_COST_USD_PER_RUN', 1.0),
-    agentMaxLlmRequestsPerRun: int('AGENT_MAX_LLM_REQUESTS_PER_RUN', 220),
-    agentMaxQueueTriagesPerRun: int('AGENT_MAX_QUEUE_TRIAGES_PER_RUN', 15),
+    agentMaxLlmRequestsPerRun: int('AGENT_MAX_LLM_REQUESTS_PER_RUN', AGENT_DEFAULTS.maxLlmRequestsPerRun),
+    agentMaxQueueTriagesPerRun: int('AGENT_MAX_QUEUE_TRIAGES_PER_RUN', AGENT_DEFAULTS.maxQueueTriagesPerRun),
     agentQaEnabled: bool('AGENT_QA_ENABLED', true),
     agentQaMaxQuestionsPerRun: int('AGENT_QA_MAX_QUESTIONS_PER_RUN', 50),
     agentQaMaxQuestionsPerHour: int('AGENT_QA_MAX_QUESTIONS_PER_HOUR', 100),

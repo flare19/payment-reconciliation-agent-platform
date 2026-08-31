@@ -118,7 +118,24 @@ export const AGENT_DEFAULTS = {
   // becomes the bound and the machine-dependence returns. ~1.08M nodes measures
   // well under 50 ms locally, so ~5.2M is ~250 ms — an 8x margin.
   rerunSubsetCeilings: { poolSize: 64, maxSubsetSize: 10, nodeBudget: 5_200_000 },
+  /**
+   * A2 CORROBORATE (agent-design §3, ADR-081) — "half an investigation".
+   *
+   * Numerically equal to `qa` below and deliberately NOT the same constant:
+   * they bound different loops for different reasons, and collapsing them would
+   * mean a future change to the Q&A budget silently re-tuned review-queue
+   * corroboration.
+   */
+  corroborate: { maxSteps: 6, maxToolCalls: 8 },
   qa: { maxSteps: 6, maxToolCalls: 8, maxOutputTokens: 1024 },
+  /** ADR-081. Cut FIRST when the request budget binds — the pre-agreed degradation. */
+  maxQueueTriagesPerRun: 15,
+  /**
+   * The bound that actually binds on a free tier (ADR-080 consequence 2):
+   * requests per day, not dollars. Lives here rather than only in `env.ts` so
+   * the default has one home — the same reason `DEFAULT_EXPLAIN_MODEL` does.
+   */
+  maxLlmRequestsPerRun: 220,
   /** A1 triage: which categories are worth an investigation (agent-design §3). */
   eligibleCategories: [
     'AMBIGUOUS_MATCH', 'UNSPLITTABLE_BATCH', 'MISSING_IN_BANK',

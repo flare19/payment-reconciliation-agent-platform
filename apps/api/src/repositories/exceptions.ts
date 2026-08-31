@@ -425,3 +425,75 @@ export async function findSimilarExceptions(
     createdAt: r.created_at,
   }));
 }
+
+/**
+ * A1 TRIAGE — the exceptions worth investigating (agent-design §3, U13).
+ *
+ * READ-ONLY. Selection is DETERMINISTIC even though the investigations it feeds
+ * are not, and that is the whole point of doing it in SQL with an explicit
+ * ORDER BY: the Analyst's *work list* is reproducible from the run alone, so two
+ * people asking "why did it investigate those twenty?" get the same answer
+ * (ADR-032 rule 9).
+ *
+ * §3's order, exactly: `severity DESC, amount_at_risk_paise DESC,
+ * (source_system, source_row_number) ASC`.
+ *
+ * Three things that sentence does not say and this query has to decide:
+ *
+ *  · **`severity DESC` is a taxonomy order, not a string order.** Alphabetically
+ *    DESC would be medium > low > high, which is worse than useless. The CASE
+ *    ranks high/medium/low the way `listExceptions` already does.
+ *  · **`amount_at_risk_paise` is nullable** (group-level exceptions with no single
+ *    amount). NULLS LAST: an exception with no stated amount must not outrank a
+ *    proved ₹5,00,000 discrepancy by accident of a missing column.
+ *  · **`transaction_id` is nullable too**, so the canonical tie-break needs a LEFT
+ *    JOIN and its own NULLS LAST. `e.id` closes the order so it is TOTAL — a
+ *    non-total order here would silently change which exceptions get the budget
+ *    between two runs of the same data.
+ */
+export interface TriageCandidate {
+  exceptionId: string;
+  transactionId: string | null;
+  category: ExceptionCategory;
+  severity: Severity;
+  amountAtRiskPaise: number | null;
+  signatureHash: string | null;
+}
+
+export async function listExceptionTriageCandidates(
+  runId: string,
+  eligibleCategories: readonly ExceptionCategory[],
+  limit: number,
+  client?: TxClient,
+): Promise<TriageCandidate[]> {
+  if (eligibleCategories.length === 0 || limit <= 0) return [];
+  const { rows } = await (client ?? getPool()).query<{
+    id: string; transaction_id: string | null; category: ExceptionCategory;
+    severity: Severity; amount_at_risk_paise: number | null; signature_hash: string | null;
+  }>(
+    `SELECT e.id, e.transaction_id, e.category, e.severity,
+            e.amount_at_risk_paise, e.signature_hash
+       FROM exceptions e
+       LEFT JOIN transactions t ON t.id = e.transaction_id
+      WHERE e.run_id = $1
+        AND e.category = ANY($2::text[])
+        -- Already dispositioned by a human: the Analyst adds nothing, and
+        -- spending an investigation on a closed question is the one way this
+        -- budget can be wasted without anybody noticing.
+        AND e.status IN ('open', 'explained')
+      ORDER BY CASE e.severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+               e.amount_at_risk_paise DESC NULLS LAST,
+               source_rank(t.source_system) NULLS LAST, t.source_row_number NULLS LAST,
+               e.id
+      LIMIT $3`,
+    [runId, [...eligibleCategories], limit]);
+
+  return rows.map((r) => ({
+    exceptionId: r.id,
+    transactionId: r.transaction_id,
+    category: r.category,
+    severity: r.severity,
+    amountAtRiskPaise: r.amount_at_risk_paise,
+    signatureHash: r.signature_hash,
+  }));
+}
