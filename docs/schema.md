@@ -231,11 +231,13 @@ Every anchor the parser could extract, from structured fields *and* from regex o
   "settlement_id": "setl_QK2AAb91xxKK01",
   "invoice_no":    "INV/2026/00123",
   "entry_id":      "JE-004417",
-  "extracted_from_description": ["234567890123", "SETL", "AMZN RETAIL"]
+  "extracted_from_description": ["234567890123", "setl_QK2AAb91xxKK01"]
 }
 ```
 
 Keys are omitted when absent — never present-with-null. `extracted_from_description` holds low-confidence regex hits and is always treated as `weak`.
+
+Merchant-name words and rail tokens (`NEFT`, `SETL`, `BATCH12`) are deliberately **not** collected here. They are the counterparty component's input (§3.3); admitting them to the anchor bag would let a name coincidence — or the literal string `SETL`, present on nearly every bank row — score as reference evidence.
 
 ### 3.2 `anchor_strength`
 
