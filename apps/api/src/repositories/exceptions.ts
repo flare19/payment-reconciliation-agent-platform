@@ -152,8 +152,10 @@ export async function insertExceptions(
   return written;
 }
 
-export async function findException(id: string): Promise<ExceptionRecord | null> {
-  const { rows } = await getPool().query<ExcRow>(
+export async function findException(
+  id: string, client?: TxClient,
+): Promise<ExceptionRecord | null> {
+  const { rows } = await (client ?? getPool()).query<ExcRow>(
     `SELECT ${COLUMNS} FROM exceptions WHERE id = $1`, [id]);
   return rows.length === 0 ? null : toException(rows[0]!);
 }
@@ -371,7 +373,7 @@ export interface SimilarException {
 }
 
 export async function findSimilarExceptions(
-  query: SimilarExceptionQuery, limit: number,
+  query: SimilarExceptionQuery, limit: number, client?: TxClient,
 ): Promise<SimilarException[]> {
   const where: string[] = [];
   const params: unknown[] = [];
@@ -394,7 +396,7 @@ export async function findSimilarExceptions(
       'this is an unfiltered scan rather than a similarity lookup.');
   }
 
-  const { rows } = await getPool().query<{
+  const { rows } = await (client ?? getPool()).query<{
     id: string; run_id: string; category: ExceptionCategory; severity: Severity;
     signature_hash: string | null; status: ExceptionStatus; resolved_by: string | null;
     resolution_note: string | null; amount_at_risk_paise: number | null; created_at: Date;

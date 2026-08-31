@@ -169,8 +169,10 @@ export async function listTransactions(runId: string): Promise<NormalizedTransac
   return rows.map(toTransaction);
 }
 
-export async function findTransaction(id: string): Promise<NormalizedTransaction | null> {
-  const { rows } = await getPool().query<TxnRow>(
+export async function findTransaction(
+  id: string, client?: TxClient,
+): Promise<NormalizedTransaction | null> {
+  const { rows } = await (client ?? getPool()).query<TxnRow>(
     `SELECT ${COLUMNS} FROM transactions WHERE id = $1`, [id]);
   return rows.length === 0 ? null : toTransaction(rows[0]!);
 }
@@ -284,7 +286,7 @@ export interface TransactionSearchFilter {
  * is the same reproducibility property ADR-085 protects one layer up.
  */
 export async function searchTransactionsForAgent(
-  runId: string, filter: TransactionSearchFilter, limit: number,
+  runId: string, filter: TransactionSearchFilter, limit: number, client?: TxClient,
 ): Promise<{ transactions: NormalizedTransaction[]; totalMatching: number }> {
   const where: string[] = ['t.run_id = $1'];
   const params: unknown[] = [runId];
@@ -310,9 +312,9 @@ export async function searchTransactionsForAgent(
   }
   const predicate = where.join(' AND ');
 
-  const pool = getPool();
+  const q = client ?? getPool();
   const [page, count] = await Promise.all([
-    pool.query<TxnRow>(
+    q.query<TxnRow>(
       `SELECT ${COLUMNS_T} FROM transactions t
         WHERE ${predicate}
         ORDER BY source_rank(t.source_system), t.source_row_number
@@ -321,7 +323,7 @@ export async function searchTransactionsForAgent(
     // Reported so the agent is TOLD when its view was truncated. A tool that
     // silently returns 50 of 300 invites a conclusion drawn from a sample the
     // model believes is the population (agent-design §4, "result digests").
-    pool.query<{ count: number }>(
+    q.query<{ count: number }>(
       `SELECT count(*)::int AS count FROM transactions t WHERE ${predicate}`, params),
   ]);
   return {
@@ -346,9 +348,9 @@ export async function searchTransactionsForAgent(
  * per run (agent budgets, §8).
  */
 export async function findTransactionsByAnchorValue(
-  runId: string, value: string,
+  runId: string, value: string, client?: TxClient,
 ): Promise<NormalizedTransaction[]> {
-  const { rows } = await getPool().query<TxnRow>(
+  const { rows } = await (client ?? getPool()).query<TxnRow>(
     `SELECT ${COLUMNS_T} FROM transactions t
       WHERE t.run_id = $1
         AND EXISTS (SELECT 1 FROM jsonb_each_text(t.reference_ids) AS kv(k, v)
@@ -372,9 +374,9 @@ export async function findTransactionsByAnchorValue(
  * the same reason: the blocking constant has one home (ADR-033 / §7.2).
  */
 export async function findTransactionsByAnchorPrefix(
-  runId: string, prefix: string, prefixLen: number,
+  runId: string, prefix: string, prefixLen: number, client?: TxClient,
 ): Promise<{ transaction: NormalizedTransaction; anchorValues: string[] }[]> {
-  const { rows } = await getPool().query<TxnRow & { anchor_values: string[] }>(
+  const { rows } = await (client ?? getPool()).query<TxnRow & { anchor_values: string[] }>(
     `SELECT ${COLUMNS_T},
             ARRAY(SELECT kv.v FROM jsonb_each_text(t.reference_ids) AS kv(k, v)
                    WHERE left(kv.v, $3) = $2 ORDER BY kv.v) AS anchor_values
@@ -385,6 +387,26 @@ export async function findTransactionsByAnchorPrefix(
       ORDER BY source_rank(t.source_system), t.source_row_number`,
     [runId, prefix, prefixLen]);
   return rows.map((r) => ({ transaction: toTransaction(r), anchorValues: r.anchor_values }));
+}
+
+/**
+ * How many records in the run carry this counterparty — `check_alias`'s
+ * `wouldAlsoResolve` figure (agent-design §4).
+ *
+ * The honest way to size a proposed alias before a human approves it: an alias
+ * that would resolve one record is a footnote, and one that would resolve forty
+ * is a decision. Counted over `counterparty_norm` (pre-alias) rather than
+ * `counterparty_key` (post-alias), because the question is what the alias WOULD
+ * do, and the key already reflects aliases that have been applied.
+ */
+export async function countRecordsWithCounterparty(
+  runId: string, counterpartyNorm: string, client?: TxClient,
+): Promise<number> {
+  const { rows } = await (client ?? getPool()).query<{ count: number }>(
+    `SELECT count(*)::int AS count FROM transactions
+      WHERE run_id = $1 AND counterparty_norm = $2`,
+    [runId, counterpartyNorm]);
+  return rows[0]!.count;
 }
 
 /** Exported so a caller can assert the SQL order matches the TS comparator. */

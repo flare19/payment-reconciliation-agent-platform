@@ -173,9 +173,9 @@ const ENTRY_COLUMNS = `
  * not have to join or scan `details`.
  */
 export async function readTransactionTrail(
-  transactionId: string, limit: number, offset: number,
+  transactionId: string, limit: number, offset: number, client?: TxClient,
 ): Promise<{ entries: StoredAuditEntry[]; total: number }> {
-  const pool = getPool();
+  const pool = client ?? getPool();
   const [page, count] = await Promise.all([
     pool.query(
       `SELECT ${ENTRY_COLUMNS} FROM audit_log
@@ -215,6 +215,35 @@ export async function readRunTrail(
       `SELECT count(*)::int AS count FROM audit_log WHERE ${predicate}`, params),
   ]);
   return { entries: page.rows.map(toStored), total: count.rows[0]!.count };
+}
+
+/**
+ * One SUBJECT's trail — `get_audit_trail` (agent-design §4, U12).
+ *
+ * The engine's own account of why it did what it did, which is the thing that
+ * stops the Analyst re-deriving a conclusion the engine already recorded. Served
+ * by `ix_audit_subj (subject_type, subject_id, sequence_no)`.
+ *
+ * `readTransactionTrail` answers a different question — everything that happened
+ * to a RECORD — and neither replaces the other: a match's or an exception's
+ * entries carry `subject_id` of the match/exception, and its `transaction_id` is
+ * only ever the one denormalized record.
+ *
+ * `ORDER BY sequence_no` ascending, always: chronological, and deterministic
+ * even for entries written inside the same millisecond, which `occurred_at` is
+ * not (several hundred are written per run inside one transaction).
+ */
+export async function readSubjectTrail(
+  subjectType: string, subjectId: string, limit: number, client?: TxClient,
+): Promise<StoredAuditEntry[]> {
+  const { rows } = await (client ?? getPool()).query(
+    `SELECT ${ENTRY_COLUMNS} FROM audit_log
+      WHERE subject_type = $1 AND subject_id = $2
+      ORDER BY sequence_no
+      LIMIT $3`,
+    [subjectType, subjectId, limit],
+  );
+  return rows.map(toStored);
 }
 
 /**

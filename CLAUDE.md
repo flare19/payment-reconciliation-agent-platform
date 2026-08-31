@@ -214,6 +214,25 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 
 ## 10. Current state
 
+**As of 2026-08-31 (Day 12), latest: U12 is complete — the Analyst has its nine read-only tools, and "read-only" is a database guarantee rather than a claim.**
+
+```
+withReadOnlyTransaction  BEGIN TRANSACTION READ ONLY -> a write from any tool
+                         fails SQLSTATE 25006, whatever the calling code thinks
+structural guard         no agent module may contain DML, import a mutating
+                         repository fn, or reach getPool() (that last one is the
+                         escape a read-only transaction cannot see)
+score_pair               agrees with scorePair component-for-component, 144 pairs
+re-score                 BYTE-IDENTICAL to U11 — the agent layer moved nothing
+```
+
+> **ADR-085 came out of a one-word doc fix.** §4's `rerun_subset_search` row said "meet-in-the-middle" (stale since ADR-060) **and** let the agent pass `budgetMs`. The second is the real defect: a wall-clock bound inside the evidence a reasoning chain cites makes `searchExhausted` vs `searchBoundExceeded` — different claims about the DATA — a property of the hardware. The tool now widens a NODE budget, ceiling 5,200,000, and that ceiling is explicitly **not** a dominance proof: it is sized so the 2 s safety valve can never fire.
+
+> **`getCachedExplanation` is on the agent's mutating-function denylist.** It reads like a lookup and is an `UPDATE … hit_count + 1 … RETURNING` (U11 wanted one round trip). A read-looking name that writes is the entry a denylist built from intuition would miss.
+
+**A `GEMINI_API_KEY` is now present in `apps/api/.env`** and `/api/health` reports `llmConfigured: true`. **No live model call has been made yet** — every test calls `executeRun` without explain deps, so they all still exercise the template path. The first route-driven run will attempt a real Gemini call.
+
+
 **As of 2026-08-31 (Day 11), latest: U11 is complete — S13 is wired and THE ENGINE HAS NO UNWIRED STAGES. `UNWIRED_STAGES` is `[]`, `stagesNotRun` is `[]`, and `llmCost` is an object rather than `null`.**
 
 ```
@@ -599,7 +618,7 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 
 | # | Unit | Model | Why |
 |---|---|---|---|
-| **U12** | Agent tool registry | **Opus / high** | `score_pair`/`rerun_subset_search` must call locked engine code (ADR-049) — the first `services/agent` → `services/matching` import, which is legal and required. `agent-design.md` §4 still says "meet-in-the-middle"; ADR-060 replaced that with depth-first. Fix the doc. |
+| **U12** ✅ | Agent tool registry | **Opus / high** | **Done.** Nine read-only tools. `score_pair`/`rerun_subset_search` call `scorePair`/`decomposeBatch` — asserted to agree with the engine component-for-component over 144 real pairs. **Read-only is enforced by Postgres** (`withReadOnlyTransaction`, SQLSTATE 25006), not declared; a structural guard closes the `getPool()` escape. The doc fix exposed a design bug: §4 let the agent choose a TIME budget — ADR-085. |
 | **U13** | Investigation loop A2 + triage A1 | **Opus / high** (loop), **Sonnet / medium** (triage) | The loop decides whether the grounding gate's per-investigation property holds; #21's `investigationId` plumbing is already in place and must be honoured. Triage's `ORDER BY` is stated exactly. |
 | **AUDIT-3** | Isolated audit of U11–U13 | **Opus / max** | Hallucination is a build blocker (ADR-053), not a metric |
 
