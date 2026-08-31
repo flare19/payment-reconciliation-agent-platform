@@ -29,6 +29,11 @@ function call(over: Partial<ToolCallRecord> = {}): ToolCallRecord {
   };
 }
 
+/** Two `check_alias` lookups grounding a CREATE_ALIAS proposal's values (#58). */
+function aliasLookups(...values: string[]): ToolCallRecord[] {
+  return values.map((value) => call({ tool: 'check_alias', arguments: { value }, returnedIds: [] }));
+}
+
 function context(over: Partial<GateContext> = {}): GateContext {
   const record = (sourceSystem: SourceSystem, direction: Direction = 'credit',
                   alreadyMatched = false) => ({ runId: RUN, sourceSystem, direction, alreadyMatched });
@@ -169,7 +174,11 @@ describe('A3 — citation grounding (the anti-hallucination check)', () => {
   });
 
   test('a conclusion drawn from no tool calls at all is rejected', () => {
-    for (const v of ['RESOLUTION_PROPOSED', 'CONFIRMED_UNRESOLVABLE'] as const) {
+    // NEEDS_EXTERNAL_DATA joins this set (#58): before the fix it was reachable
+    // with zero reasoning and zero tool calls, which made it the cheapest verdict
+    // in the vocabulary -- the same failure mode NO_NEW_EVIDENCE's corroboration
+    // reasoning already names.
+    for (const v of ['RESOLUTION_PROPOSED', 'CONFIRMED_UNRESOLVABLE', 'NEEDS_EXTERNAL_DATA'] as const) {
       const body = v === 'RESOLUTION_PROPOSED'
         ? verdict({ verdict: v, reasoning: [], citations: [],
             proposedAction: { type: 'MARK_WONT_FIX', rationale: 'because' } })
@@ -178,6 +187,28 @@ describe('A3 — citation grounding (the anti-hallucination check)', () => {
       assert.equal(r.verdict.groundingPassed, false, `${v} with no reasoning must be rejected`);
       assert.match(r.verdict.groundingFailure!, /requires a reasoning chain/);
     }
+  });
+
+  test('NEEDS_EXTERNAL_DATA with zero tool calls at all is rejected, not merely empty reasoning',
+    () => {
+      // The exact reproducer from #58: an investigation that called NO TOOL is
+      // recorded as a grounded, high-confidence verdict before this fix.
+      const r = validateVerdict(verdict({
+        verdict: 'NEEDS_EXTERNAL_DATA', confidence: 'high',
+        summary: 'we need the settlement advice from the bank',
+        citations: [], reasoning: [],
+      }), context({ toolCalls: [] }));
+      assert.equal(r.verdict.groundingPassed, false);
+      assert.match(r.verdict.groundingFailure!, /requires a reasoning chain/);
+    });
+
+  test('NEEDS_EXTERNAL_DATA with a real reasoning chain is accepted', () => {
+    // The paired positive: the fix must not make the verdict unreachable, only
+    // ungrounded-and-free unreachable.
+    assert.equal(passes(verdict({
+      verdict: 'NEEDS_EXTERNAL_DATA', confidence: 'high',
+      summary: 'we need the settlement advice from the bank', citations: [G1],
+    })), true);
   });
 
   test('ids inside a PROPOSAL are grounded too, not just citations', () => {
@@ -321,7 +352,10 @@ describe('A3 — constraints on a proposal', () => {
 
   test('an alias contradicting an active one must go to a human, not be proposed', () => {
     // ADR-013's supersede-with-penalty is a human decision through endpoint 16.
-    const ctx = context({ activeAliases: new Map([['merchant_name::AMZN', 'AMAZON PAY']]) });
+    const ctx = context({
+      activeAliases: new Map([['merchant_name::AMZN', 'AMAZON PAY']]),
+      toolCalls: [call(), ...aliasLookups('AMZN', 'AMAZON RETAIL')],
+    });
     const r = validateVerdict(verdict({
       verdict: 'RESOLUTION_PROPOSED', citations: [G1],
       proposedAction: { type: 'CREATE_ALIAS', aliasType: 'merchant_name',
@@ -331,12 +365,91 @@ describe('A3 — constraints on a proposal', () => {
     assert.match(r.verdict.groundingFailure!, /must be confirmed by a human/);
   });
 
+  test('a contradicting alias is caught case- and whitespace-insensitively (#58)', () => {
+    // check_alias normalizes with the SAME helper the gate now uses — before
+    // this fix the gate compared the model's raw value against a map keyed by
+    // the already-normalized value, so this exact case silently missed.
+    const ctx = context({
+      activeAliases: new Map([['merchant_name::AMAZON SELLER SERVICES', 'AMAZON PAY']]),
+      toolCalls: [call(), ...aliasLookups('amazon seller services  ', 'AMAZON RETAIL')],
+    });
+    const r = validateVerdict(verdict({
+      verdict: 'RESOLUTION_PROPOSED', citations: [G1],
+      proposedAction: { type: 'CREATE_ALIAS', aliasType: 'merchant_name',
+        rawValue: 'amazon seller services  ', canonicalValue: 'AMAZON RETAIL',
+        rationale: 'same merchant' },
+    }), ctx);
+    assert.equal(r.verdict.groundingPassed, false);
+    assert.match(r.verdict.groundingFailure!, /must be confirmed by a human/);
+  });
+
   test('a self-referential alias is rejected', () => {
+    const ctx = context({ toolCalls: [call(), ...aliasLookups('AMZN')] });
     assert.equal(passes(verdict({
       verdict: 'RESOLUTION_PROPOSED', citations: [G1],
       proposedAction: { type: 'CREATE_ALIAS', aliasType: 'merchant_name',
         rawValue: 'AMZN', canonicalValue: 'AMZN', rationale: 'x' },
-    })), false);
+    }), ctx), false);
+  });
+});
+
+describe('A3 — CREATE_ALIAS values must be grounded, not merely well-shaped (#58)', () => {
+  test('rawValue/canonicalValue never looked up via check_alias or search_transactions: rejected', () => {
+    const r = validateVerdict(verdict({
+      verdict: 'RESOLUTION_PROPOSED', citations: [G1],
+      proposedAction: { type: 'CREATE_ALIAS', aliasType: 'merchant_name',
+        rawValue: 'ACME WHOLLY INVENTED PVT LTD', canonicalValue: 'TOTALLY MADE UP LTD',
+        rationale: 'these look alike to me' },
+    }), context());
+    assert.equal(r.verdict.groundingPassed, false);
+    assert.match(r.verdict.groundingFailure!, /rawValue.*never looked up/);
+  });
+
+  test('only rawValue looked up, canonicalValue not: still rejected', () => {
+    const ctx = context({ toolCalls: [call(), ...aliasLookups('AMZN')] });
+    const r = validateVerdict(verdict({
+      verdict: 'RESOLUTION_PROPOSED', citations: [G1],
+      proposedAction: { type: 'CREATE_ALIAS', aliasType: 'merchant_name',
+        rawValue: 'AMZN', canonicalValue: 'AMAZON RETAIL', rationale: 'x' },
+    }), ctx);
+    assert.equal(r.verdict.groundingPassed, false);
+    assert.match(r.verdict.groundingFailure!, /canonicalValue.*never looked up/);
+  });
+
+  test('both values looked up via check_alias: accepted', () => {
+    const ctx = context({ toolCalls: [call(), ...aliasLookups('AMZN', 'AMAZON RETAIL')] });
+    assert.equal(passes(verdict({
+      verdict: 'RESOLUTION_PROPOSED', citations: [G1],
+      proposedAction: { type: 'CREATE_ALIAS', aliasType: 'merchant_name',
+        rawValue: 'AMZN', canonicalValue: 'AMAZON RETAIL', rationale: 'x' },
+    }), ctx), true);
+  });
+
+  test('canonicalValue looked up via search_transactions instead of check_alias: accepted', () => {
+    const ctx = context({
+      toolCalls: [call(), ...aliasLookups('AMZN'),
+        call({ tool: 'search_transactions', arguments: { counterparty: 'AMAZON RETAIL' },
+          returnedIds: [] })],
+    });
+    assert.equal(passes(verdict({
+      verdict: 'RESOLUTION_PROPOSED', citations: [G1],
+      proposedAction: { type: 'CREATE_ALIAS', aliasType: 'merchant_name',
+        rawValue: 'AMZN', canonicalValue: 'AMAZON RETAIL', rationale: 'x' },
+    }), ctx), true);
+  });
+
+  test('get_transaction does not ground an alias value -- it carries no such argument', () => {
+    // get_transaction takes only transactionId/includeRawPayload, so even a
+    // call naming the right value elsewhere cannot ground it this way.
+    const ctx = context({
+      toolCalls: [call(), call({ tool: 'get_transaction', arguments: { transactionId: G1 } })],
+    });
+    const r = validateVerdict(verdict({
+      verdict: 'RESOLUTION_PROPOSED', citations: [G1],
+      proposedAction: { type: 'CREATE_ALIAS', aliasType: 'merchant_name',
+        rawValue: 'AMZN', canonicalValue: 'AMAZON RETAIL', rationale: 'x' },
+    }), ctx);
+    assert.equal(r.verdict.groundingPassed, false);
   });
 });
 
@@ -434,9 +547,16 @@ describe('A3 — rejection behaviour', () => {
       },
     ];
 
+    // CREATE_ALIAS's well-formed variant uses rawValue 'AMZN' / canonicalValue
+    // 'AMAZON RETAIL' (#58 requires both be looked up); harmless to the other
+    // three variants, which ignore extra tool calls they don't reference.
+    const groundedCtx = context({
+      toolCalls: [call(), call({ tool: 'check_alias', arguments: { value: 'AMZN' }, returnedIds: [] }),
+        call({ tool: 'check_alias', arguments: { value: 'AMAZON RETAIL' }, returnedIds: [] })],
+    });
     const propose = (action: unknown): boolean => passes(verdict({
       verdict: 'RESOLUTION_PROPOSED', citations: [G1, B1], proposedAction: action as never,
-    }));
+    }), groundedCtx);
 
     let swept = 0;
     for (const { name, action, fields } of variants) {

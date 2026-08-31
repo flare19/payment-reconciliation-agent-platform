@@ -160,6 +160,11 @@ Three checks, all deterministic:
 
 Any failure downgrades the verdict to `INSUFFICIENT_EVIDENCE` with `groundingFailure: true`, records the reason, and **does not retry** — a second attempt at a hallucinated answer is still an attempt at a hallucinated answer. Grounding failures are counted and reported (§7); a rising count is a signal the prompt or tools need work, not something to suppress.
 
+**Two negative-space rules the table above doesn't spell out (#58):**
+
+- **`NEEDS_EXTERNAL_DATA` requires a reasoning chain, the same as `RESOLUTION_PROPOSED` and `CONFIRMED_UNRESOLVABLE`.** All three verdicts assert something about the data — that it can be resolved, that it cannot, or that something specific outside the three files is needed — and an investigation that called no tool has not earned any of the three. Without this, `NEEDS_EXTERNAL_DATA` was reachable for free, which made it the cheapest verdict in the vocabulary.
+- **`CREATE_ALIAS`'s `rawValue` and `canonicalValue` must each have been looked up**, via a `check_alias` call or a `search_transactions` call naming the same value (case- and whitespace-insensitively) — not merely well-shaped strings the model invented. Grounded on the tool call's *arguments*, since `rawValue`/`canonicalValue` are not entity ids and cannot appear in `returnedIds`, and the full tool *result* is not part of the persisted `ToolCallRecord`. `MARK_WONT_FIX` carries no id or value of its own to ground this way — its rationale is read by a human, not cited — so it requires no citation beyond the reasoning-chain rule every `RESOLUTION_PROPOSED` already carries.
+
 ### A4 — Propose
 
 Verdicts are persisted to `agent_investigations`. Proposals appear in the UI attached to their exception, and are actioned by a human through endpoints that **already exist**:

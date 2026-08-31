@@ -53,6 +53,19 @@ export const ALIAS_TYPES: readonly AliasType[] =
   ['merchant_name', 'counterparty_name', 'reference_id', 'description_token'];
 
 /**
+ * The ONE normalization every alias-value comparison in the agent layer must
+ * share (#58). Before this, `check_alias` normalized with `.trim().toUpperCase()`
+ * and the gate's contradiction check compared the model's raw `rawValue`
+ * against a map keyed by the ALREADY-normalized `normalizedValue` — so
+ * `"amazon seller services"` silently missed an active alias stored as
+ * `"AMAZON SELLER SERVICES"` and the one check written to reject a
+ * contradiction passed it instead.
+ */
+export function normalizeAliasValue(value: string): string {
+  return value.trim().toUpperCase();
+}
+
+/**
  * The field names `checkActionSchema` requires, per variant. Declared as data
  * beside the checks that enforce them so the prompt test can iterate them.
  * `rationale` is required on every variant and is therefore listed once, below.
@@ -322,10 +335,32 @@ function checkGrounding(verdict: RawVerdict, context: GateContext): string | nul
     }
   }
 
+  // CREATE_ALIAS names two strings, not entity ids (#58) — `rawValue` and
+  // `canonicalValue` cannot appear in `returnedIds` (a NEW alias has no row to
+  // return), so `idsInAction` above cannot ground them. What CAN be checked is
+  // that the model actually looked them up: `check_alias` exists precisely for
+  // this, and a genuine lookup leaves the value in the call's own ARGUMENTS
+  // even though the full tool RESULT is not persisted on `ToolCallRecord`.
+  // `!= null`, not `!== null` — `checkSchema` already treats an ABSENT
+  // `proposedAction` as equivalent to a null one, and `checkConstraints` below
+  // learned this lesson once already (issue #21): `!== null` reads `.type` off
+  // `undefined` and throws, which `validateVerdict` is documented to do only
+  // for a caller bug.
+  if (verdict.proposedAction != null && verdict.proposedAction.type === 'CREATE_ALIAS') {
+    const aliasGrounding = checkAliasValuesGrounded(verdict.proposedAction, context.toolCalls);
+    if (aliasGrounding !== null) return aliasGrounding;
+  }
+
   // A conclusion drawn from nothing is not a conclusion. Verdicts that assert
-  // something about the data must show they looked at some.
+  // something about the data must show they looked at some. NEEDS_EXTERNAL_DATA
+  // joins this set (#58) — it is a claim that a specific outside record is
+  // needed, and that claim is unearned from zero tool calls. Left out before,
+  // it was reachable with an empty reasoning chain and no tool call at all,
+  // which made it the cheapest verdict in the vocabulary — the same failure
+  // mode the corroboration gate's NO_NEW_EVIDENCE reasoning already names.
   const assertsSomething = verdict.verdict === 'RESOLUTION_PROPOSED'
-    || verdict.verdict === 'CONFIRMED_UNRESOLVABLE';
+    || verdict.verdict === 'CONFIRMED_UNRESOLVABLE'
+    || verdict.verdict === 'NEEDS_EXTERNAL_DATA';
   if (assertsSomething && verdict.reasoning.length === 0) {
     return `${verdict.verdict} requires a reasoning chain; none was recorded`;
   }
@@ -400,6 +435,41 @@ function idsInAction(action: ProposedAction | null): string[] {
   return action.type === 'MANUAL_MATCH' ? action.members.map((m) => m.transactionId) : [];
 }
 
+/**
+ * Did the model actually look up `rawValue` and `canonicalValue` before
+ * proposing to map one to the other (#58)? Grounded on `check_alias`'s
+ * `value` argument and `search_transactions`'s `counterparty` argument — the
+ * two tools whose arguments carry a counterparty-shaped string at all.
+ * `get_transaction` takes only a `transactionId`, so it cannot ground a
+ * text value this way; if it did, the value would live in the tool's
+ * RESULT, which is not part of `ToolCallRecord` (only `returnedIds`,
+ * `resultDigest` and `arguments` are).
+ */
+function checkAliasValuesGrounded(
+  action: Extract<ProposedAction, { type: 'CREATE_ALIAS' }>,
+  calls: readonly ToolCallRecord[],
+): string | null {
+  const looked = new Set<string>();
+  for (const call of calls) {
+    const args = call.arguments;
+    if (call.tool === 'check_alias' && typeof args['value'] === 'string') {
+      looked.add(normalizeAliasValue(args['value']));
+    }
+    if (call.tool === 'search_transactions' && typeof args['counterparty'] === 'string') {
+      looked.add(normalizeAliasValue(args['counterparty']));
+    }
+  }
+  if (!looked.has(normalizeAliasValue(action.rawValue))) {
+    return `CREATE_ALIAS.rawValue "${action.rawValue}" was never looked up via check_alias `
+      + 'or search_transactions in this investigation';
+  }
+  if (!looked.has(normalizeAliasValue(action.canonicalValue))) {
+    return `CREATE_ALIAS.canonicalValue "${action.canonicalValue}" was never looked up via `
+      + 'check_alias or search_transactions in this investigation';
+  }
+  return null;
+}
+
 // ─── 3. Constraints ──────────────────────────────────────────────────────────
 
 /**
@@ -459,7 +529,11 @@ function checkConstraints(verdict: RawVerdict, context: GateContext): string | n
   }
 
   if (action.type === 'CREATE_ALIAS') {
-    const key = `${action.aliasType}::${action.rawValue}`;
+    // Normalized, same as the map's own keys (#58) — `activeAliases` is built
+    // from `learned_aliases.normalized_value`, and comparing a raw model value
+    // against it made this check fail open on anything but a byte-identical
+    // match.
+    const key = `${action.aliasType}::${normalizeAliasValue(action.rawValue)}`;
     const existing = context.activeAliases.get(key);
     if (existing !== undefined && existing !== action.canonicalValue) {
       // Not silently superseded here: ADR-013's supersede-with-penalty flow is a
