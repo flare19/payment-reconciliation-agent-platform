@@ -107,7 +107,17 @@ export const ENGINE_DEFAULTS: Omit<RunConfig, 'referenceDate' | 'aliasCountAtSta
 export const AGENT_DEFAULTS = {
   maxInvestigationsPerRun: 20,
   budget: { maxSteps: 10, maxToolCalls: 16, maxWallMs: 60_000, maxTokens: 40_000 },
-  rerunSubsetCeilings: { poolSize: 64, maxSubsetSize: 10, budgetMs: 2_000 },
+  // ADR-085. The agent widens the NODE budget, never a time budget: a
+  // wall-clock bound would make `searchExhausted` vs `searchBoundExceeded` a
+  // property of the hardware, inside the evidence a reasoning chain cites.
+  //
+  // 5,200,000 is NOT a dominance proof (unlike the engine's figure, ADR-063 —
+  // at pool 64 / subset 10 the declared space is ~1.5e11 and no budget covers
+  // it). It is derived from the opposite constraint: the node budget must stay
+  // small enough that the 2 s safety valve NEVER fires, or the valve silently
+  // becomes the bound and the machine-dependence returns. ~1.08M nodes measures
+  // well under 50 ms locally, so ~5.2M is ~250 ms — an 8x margin.
+  rerunSubsetCeilings: { poolSize: 64, maxSubsetSize: 10, nodeBudget: 5_200_000 },
   qa: { maxSteps: 6, maxToolCalls: 8, maxOutputTokens: 1024 },
   /** A1 triage: which categories are worth an investigation (agent-design §3). */
   eligibleCategories: [

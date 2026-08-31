@@ -424,12 +424,12 @@ describe('A3 — rejection behaviour', () => {
       {
         name: 'ADJUST_SEARCH_BOUNDS',
         action: { type: 'ADJUST_SEARCH_BOUNDS', rationale: 'r',
-          poolSize: 32, maxSubsetSize: 6, budgetMs: 1_500 },
+          poolSize: 32, maxSubsetSize: 6, nodeBudget: 1_000_000 },
         fields: [
           ['rationale', NOT_TEXT],
           ['poolSize', NOT_BOUND],
           ['maxSubsetSize', NOT_BOUND],
-          ['budgetMs', NOT_BOUND],
+          ['nodeBudget', NOT_BOUND],
         ],
       },
     ];
@@ -460,25 +460,38 @@ describe('A3 — rejection behaviour', () => {
     assert.ok(swept >= 60, `the sweep must actually sweep; it covered ${swept}`);
   });
 
-  test('ADR-054 ceilings are enforced on a proposal, not merely on the tool', () => {
+  test('ADR-054/085 ceilings are enforced on a proposal, not merely on the tool', () => {
     // The gate is the only deterministic check on the proposal a human sees, so a
     // request for a pool of a billion must not reach them looking actionable.
     for (const over of [
-      { poolSize: 65 }, { maxSubsetSize: 11 }, { budgetMs: 2_001 },
-      { poolSize: 1e9, maxSubsetSize: 500, budgetMs: 86_400_000 },
+      { poolSize: 65 }, { maxSubsetSize: 11 }, { nodeBudget: 5_200_001 },
+      { poolSize: 1e9, maxSubsetSize: 500, nodeBudget: 1e12 },
     ]) {
       assert.equal(passes(verdict({
         verdict: 'RESOLUTION_PROPOSED', citations: [G1],
         proposedAction: { type: 'ADJUST_SEARCH_BOUNDS', rationale: 'wider',
-          poolSize: 32, maxSubsetSize: 6, budgetMs: 1_500, ...over } as never,
-      })), false, `bounds above ADR-054's ceiling were accepted: ${JSON.stringify(over)}`);
+          poolSize: 32, maxSubsetSize: 6, nodeBudget: 1_000_000, ...over } as never,
+      })), false, `bounds above the ceiling were accepted: ${JSON.stringify(over)}`);
     }
     // Exactly at the ceiling is legal.
     assert.equal(passes(verdict({
       verdict: 'RESOLUTION_PROPOSED', citations: [G1],
       proposedAction: { type: 'ADJUST_SEARCH_BOUNDS', rationale: 'wider',
-        poolSize: 64, maxSubsetSize: 10, budgetMs: 2_000 },
+        poolSize: 64, maxSubsetSize: 10, nodeBudget: 5_200_000 },
     })), true);
+  });
+
+  test('ADR-085: a TIME budget is not an adjustable bound and cannot be proposed', () => {
+    // The defect this replaced: with `budgetMs` selectable, the operative bound
+    // sat on the wall clock INSIDE the evidence a reasoning chain cites, and
+    // `searchExhausted` vs `searchBoundExceeded` — two different claims about the
+    // DATA — would have been decided by how fast the box was. §5's whole payoff
+    // is that "exhaustive at wider bounds" is reproducible on a second machine.
+    assert.equal(passes(verdict({
+      verdict: 'RESOLUTION_PROPOSED', citations: [G1],
+      proposedAction: { type: 'ADJUST_SEARCH_BOUNDS', rationale: 'wider',
+        poolSize: 32, maxSubsetSize: 6, budgetMs: 1_500 } as never,
+    })), false, 'a proposal carrying budgetMs instead of nodeBudget must not validate');
   });
 
   test('an unknown alias type is rejected', () => {

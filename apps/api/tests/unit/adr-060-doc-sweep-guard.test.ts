@@ -31,7 +31,11 @@ const EXCLUDED_DOCS = new Set(['adr-log.md', 'what-broke.md', 'p1-batch-agent-lo
 
 const STALE_PATTERNS: { name: string; pattern: RegExp }[] = [
   { name: '250 ms figure from the old ADR-038 bound', pattern: /250\s?ms/i },
-  { name: '200,000-node figure from the old ADR-060 bound', pattern: /200,000|200k nodes/i },
+  // The lookbehind is load-bearing: without it this matched INSIDE any longer
+  // number ending in the same digits, and ADR-085's 5,200,000-node agent ceiling
+  // tripped it. A guard that fires on a correct new number teaches the next
+  // person to weaken the guard, which is how a stale-figure check dies.
+  { name: '200,000-node figure from the old ADR-060 bound', pattern: /(?<![\d,])200,000(?![\d,])|200k nodes/i },
   { name: 'searchBoundExceeded described as a boolean', pattern: /searchBoundExceeded[:`]*\s*`?\s*:?\s*true/ },
 ];
 
@@ -52,6 +56,27 @@ test('no doc (other than the append-only ADR log and what-broke.md) states the p
       assert.doesNotMatch(text, pattern, `${path} still states the ${name}`);
     }
   }
+});
+
+test('the stale-figure patterns still FIRE on the figures they exist to catch', () => {
+  // A check corrected until it stops firing is indistinguishable from a check
+  // that cannot fire (the Day 9 scorer lesson). Loosening the 200,000 pattern to
+  // stop it matching inside ADR-085's 5,200,000 is exactly the kind of edit that
+  // could have gutted it, so both directions are asserted here.
+  const nodes = STALE_PATTERNS.find((p) => p.name.startsWith('200,000'))!.pattern;
+  for (const stale of ['a budget of 200,000 nodes', 'bounded at 200k nodes', '200,000.']) {
+    assert.match(stale, nodes, `the guard stopped catching "${stale}"`);
+  }
+  for (const fine of ['5,200,000 nodes', '1,200,000', '200,0000']) {
+    assert.doesNotMatch(fine, nodes, `the guard false-positives on "${fine}"`);
+  }
+
+  const ms = STALE_PATTERNS.find((p) => p.name.startsWith('250 ms'))!.pattern;
+  assert.match('a 250ms budget', ms);
+  assert.match('a 250 ms budget', ms);
+
+  const bool = STALE_PATTERNS.find((p) => p.name.startsWith('searchBoundExceeded'))!.pattern;
+  assert.match('searchBoundExceeded: true', bool);
 });
 
 test('config/env.ts does not default BATCH_SUBSET_BUDGET_MS to the stale 250 ms figure', async () => {

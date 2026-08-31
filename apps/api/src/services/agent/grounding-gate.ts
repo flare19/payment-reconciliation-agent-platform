@@ -239,7 +239,7 @@ function checkActionSchema(action: unknown): string | null {
       return null;
 
     case 'ADJUST_SEARCH_BOUNDS': {
-      for (const field of ['poolSize', 'maxSubsetSize', 'budgetMs'] as const) {
+      for (const field of ['poolSize', 'maxSubsetSize', 'nodeBudget'] as const) {
         const value = a[field];
         if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
           return `ADJUST_SEARCH_BOUNDS.${field} must be a positive integer`;
@@ -249,7 +249,7 @@ function checkActionSchema(action: unknown): string | null {
         // a billion must not reach them looking actionable.
         const ceiling = AGENT_DEFAULTS.rerunSubsetCeilings[field];
         if (value > ceiling) {
-          return `ADJUST_SEARCH_BOUNDS.${field} is ${value}, above the ADR-054 ceiling of ${ceiling}`;
+          return `ADJUST_SEARCH_BOUNDS.${field} is ${value}, above the ADR-054/085 ceiling of ${ceiling}`;
         }
       }
       return null;

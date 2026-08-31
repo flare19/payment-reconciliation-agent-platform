@@ -26,7 +26,12 @@ export type ProposedAction =
   | { type: 'MANUAL_MATCH'; members: { transactionId: string; role: MemberRole }[]; rationale: string }
   | { type: 'CREATE_ALIAS'; aliasType: string; rawValue: string; canonicalValue: string; rationale: string }
   | { type: 'MARK_WONT_FIX'; rationale: string }
-  | { type: 'ADJUST_SEARCH_BOUNDS'; poolSize: number; maxSubsetSize: number; budgetMs: number; rationale: string };
+  /**
+   * ADR-085: the agent widens the NODE budget, never a time budget. A wall-clock
+   * bound would make `searchExhausted` vs `searchBoundExceeded` a property of the
+   * hardware, inside the evidence a reasoning chain cites.
+   */
+  | { type: 'ADJUST_SEARCH_BOUNDS'; poolSize: number; maxSubsetSize: number; nodeBudget: number; rationale: string };
 
 export interface ReasoningStep {
   step: number;
