@@ -465,6 +465,37 @@ describe('A3 — rejection behaviour', () => {
     assert.deepEqual(r.verdict.citations, [], 'an ungrounded verdict keeps no citations');
   });
 
+  test('#22: a malformed reasoning step on the reject path is dropped, not smuggled through', () => {
+    // The reproducer from #22: a hallucinated step with the wrong shape,
+    // rejected by checkSchema, must not carry its raw shape into the
+    // persisted reasoning array -- ValidatedVerdict.reasoning is typed
+    // ReasoningStep[], and this is the thing that makes that type honest.
+    const r = validateVerdict({
+      verdict: 'CONFIRMED_UNRESOLVABLE', confidence: 'low', proposedAction: null,
+      reasoning: [{ hallucinated: true, tool: 42, prose: 'I deleted the ledger' }],
+      citations: ['ghost'], summary: 'x',
+    }, context());
+    assert.equal(r.verdict.groundingPassed, false);
+    assert.equal(r.rejection!.check, 'schema');
+    assert.deepEqual(r.verdict.reasoning, [],
+      'a malformed step must not reach the persisted array in its raw shape');
+  });
+
+  test('#22: a mix of malformed and well-shaped steps keeps only the well-shaped ones', () => {
+    const r = validateVerdict({
+      verdict: 'CONFIRMED_UNRESOLVABLE', confidence: 'low', proposedAction: null,
+      reasoning: [
+        { hallucinated: true, tool: 42, prose: 'invented' },
+        { step: 1, tool: 'get_exception', resultDigest: 'x', inference: 'legit', arguments: {} },
+      ],
+      citations: ['ghost'], summary: 'x',
+    }, context());
+    assert.equal(r.verdict.groundingPassed, false);
+    assert.deepEqual(r.verdict.reasoning, [
+      { step: 1, tool: 'get_exception', resultDigest: 'x', inference: 'legit', arguments: {} },
+    ]);
+  });
+
   test('the failure names which check rejected it', () => {
     assert.equal(validateVerdict({ ...verdict(), confidence: 1 as never }, context()).rejection!.check, 'schema');
     assert.equal(validateVerdict(verdict({ citations: ['x'] }), context()).rejection!.check, 'grounding');

@@ -557,6 +557,37 @@ function checkConstraints(verdict: RawVerdict, context: GateContext): string | n
 
 // ─── rejection ───────────────────────────────────────────────────────────────
 
+/**
+ * A rejected verdict still carries `reasoning` (#22): the reasoning array is
+ * shown on the exception drill-down and typed `ReasoningStep[]`, so it must
+ * actually BE that shape even when it came from output that just failed
+ * `checkSchema` — which is precisely the case most likely to hand this
+ * function a malformed entry (a bad `tool`, a missing `resultDigest`, an
+ * arbitrary extra key). Each entry is checked individually and kept only if
+ * it is well-shaped; a single malformed step no longer voids the whole array,
+ * and a malformed one is silently dropped rather than smuggled through
+ * `Array.isArray` alone. The exact per-field checks `checkSchema` and
+ * `checkCorroborationSchema` both already apply on the accept path.
+ */
+function sanitizeReasoning(value: unknown): ReasoningStep[] {
+  if (!Array.isArray(value)) return [];
+  const out: ReasoningStep[] = [];
+  for (const step of value) {
+    const s = step as Record<string, unknown> | null;
+    if (s === null || typeof s !== 'object') continue;
+    if (typeof s['tool'] !== 'string' || s['tool'] === '') continue;
+    if (typeof s['resultDigest'] !== 'string') continue;
+    if (typeof s['inference'] !== 'string') continue;
+    out.push({
+      step: typeof s['step'] === 'number' ? s['step'] : out.length + 1,
+      tool: s['tool'], resultDigest: s['resultDigest'], inference: s['inference'],
+      arguments: (typeof s['arguments'] === 'object' && s['arguments'] !== null
+        ? s['arguments'] : {}) as Record<string, unknown>,
+    });
+  }
+  return out;
+}
+
 function reject(raw: unknown, check: GateResult['rejection'] extends null ? never
   : 'schema' | 'grounding' | 'constraint', reason: string): GateResult {
   const source = (raw ?? {}) as Partial<RawVerdict>;
@@ -569,7 +600,7 @@ function reject(raw: unknown, check: GateResult['rejection'] extends null ? neve
       verdict: 'INSUFFICIENT_EVIDENCE',
       confidence: 'low',
       proposedAction: null,
-      reasoning: Array.isArray(source.reasoning) ? source.reasoning : [],
+      reasoning: sanitizeReasoning(source.reasoning),
       citations: [],
       summary: typeof source.summary === 'string' ? source.summary : '',
       groundingPassed: false,
@@ -693,7 +724,9 @@ function rejectCorroboration(
       // CONTRADICTED, which is a positive claim about evidence AGAINST a match.
       verdict: 'NO_NEW_EVIDENCE',
       confidence: 'low',
-      reasoning: Array.isArray(source.reasoning) ? source.reasoning : [],
+      // #22, same fix as the investigation gate's reject(): individually
+      // shape-checked, not merely Array.isArray.
+      reasoning: sanitizeReasoning(source.reasoning),
       citations: [],
       summary: typeof source.summary === 'string' ? source.summary : '',
       groundingPassed: false,

@@ -160,6 +160,8 @@ Three checks, all deterministic:
 
 Any failure downgrades the verdict to `INSUFFICIENT_EVIDENCE` with `groundingFailure: true`, records the reason, and **does not retry** — a second attempt at a hallucinated answer is still an attempt at a hallucinated answer. Grounding failures are counted and reported (§7); a rising count is a signal the prompt or tools need work, not something to suppress.
 
+**A rejected verdict's `reasoning` is individually shape-checked, not merely `Array.isArray` (#22).** A verdict rejected by the schema check is, by definition, the case most likely to carry a malformed `reasoning` entry — that is often *why* it was rejected. Each entry is kept only if it passes the same per-field checks the accept path applies (`tool`/`resultDigest`/`inference` all present strings); a malformed entry is dropped rather than carried through to the persisted, typed `ReasoningStep[]` array unchanged. `summary` is kept on a plain `typeof === 'string'` check and nothing further — it is not persisted to any column today (`agent_investigations` has no `summary` field) and no route serves it, so there is no downstream reader for stricter content validation to protect yet; if that changes, this is the place to revisit.
+
 **Two negative-space rules the table above doesn't spell out (#58):**
 
 - **`NEEDS_EXTERNAL_DATA` requires a reasoning chain, the same as `RESOLUTION_PROPOSED` and `CONFIRMED_UNRESOLVABLE`.** All three verdicts assert something about the data — that it can be resolved, that it cannot, or that something specific outside the three files is needed — and an investigation that called no tool has not earned any of the three. Without this, `NEEDS_EXTERNAL_DATA` was reachable for free, which made it the cheapest verdict in the vocabulary.
