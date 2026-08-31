@@ -420,3 +420,86 @@ test('early turns push RETRIEVAL, late turns push CONCLUSION', async () => {
   assert.match(textAt(4), /Wrap up/);
   assert.match(textAt(5), /FINAL STEP/);
 });
+
+/**
+ * ── THE PERSISTED CHAIN ATTACHES EACH INFERENCE TO ITS OWN EVIDENCE (#54) ──
+ *
+ * `reasoningChain` keyed inferences on the model's `step` number while the
+ * runtime stamped every call in a turn with the same number. On holdout run
+ * 80ddde9d, corroboration 4d7bfc85 made three `get_transaction` calls in one
+ * turn and all three were persisted carrying the SAME inference — text that
+ * described exactly one of them. A reader checking the chain had no way to tell.
+ */
+describe('reasoningChain attaches inferences by evidence, not by number (#54)', () => {
+  const rec = (step: number, tool: string, digest: string): ToolCallRecord => ({
+    investigationId: 'inv-1', step, tool, arguments: {}, returnedIds: [],
+    resultDigest: digest, durationMs: 1,
+  });
+
+  test('three calls of one tool keep three distinct inferences', () => {
+    const calls = [
+      rec(1, 'get_transaction', 'get_transaction: {"id":"gateway"}'),
+      rec(2, 'get_transaction', 'get_transaction: {"id":"bank"}'),
+      rec(3, 'get_transaction', 'get_transaction: {"id":"ledger"}'),
+    ];
+    const chain = reasoningChain(calls, {
+      reasoning: [
+        { step: 1, tool: 'get_transaction',
+          resultDigest: 'get_transaction: {"id":"gateway"}', inference: 'the gateway leg' },
+        { step: 2, tool: 'get_transaction',
+          resultDigest: 'get_transaction: {"id":"bank"}', inference: 'the bank leg' },
+        { step: 3, tool: 'get_transaction',
+          resultDigest: 'get_transaction: {"id":"ledger"}', inference: 'the ledger leg' },
+      ],
+    } as unknown as RawVerdict);
+
+    assert.deepEqual(chain.map((c) => c.inference),
+      ['the gateway leg', 'the bank leg', 'the ledger leg']);
+  });
+
+  test('a narrative written out of order still lands on the right evidence', () => {
+    const calls = [
+      rec(1, 'get_exception', 'get_exception: {"found":true}'),
+      rec(2, 'find_by_anchor', 'find_by_anchor: {"exact":1}'),
+    ];
+    const chain = reasoningChain(calls, {
+      reasoning: [
+        { step: 1, tool: 'find_by_anchor',
+          resultDigest: 'find_by_anchor: {"exact":1}', inference: 'found the anchor' },
+        { step: 2, tool: 'get_exception',
+          resultDigest: 'get_exception: {"found":true}', inference: 'read the exception' },
+      ],
+    } as unknown as RawVerdict);
+
+    assert.equal(chain[0]!.inference, 'read the exception');
+    assert.equal(chain[1]!.inference, 'found the anchor');
+  });
+
+  test('a call the model never narrated gets a BLANK inference, never a borrowed one', () => {
+    // The chain is the transcript of what was done. A call with no write-up is
+    // shown with none — inventing one, or reusing a neighbour's, would make the
+    // transcript read as though the agent reasoned about evidence it ignored.
+    const calls = [
+      rec(1, 'get_exception', 'get_exception: {"found":true}'),
+      rec(2, 'get_audit_trail', 'get_audit_trail: {"entries":3}'),
+    ];
+    const chain = reasoningChain(calls, {
+      reasoning: [{ step: 1, tool: 'get_exception',
+        resultDigest: 'get_exception: {"found":true}', inference: 'read the exception' }],
+    } as unknown as RawVerdict);
+
+    assert.equal(chain[0]!.inference, 'read the exception');
+    assert.equal(chain[1]!.inference, '');
+  });
+
+  test('the call ordinal is per CALL, so a multi-call turn is legible', () => {
+    // `step` is no longer a join key anywhere, so it means the thing a reader
+    // assumes: the Nth thing this investigation did. Turn count stays separate.
+    const calls = [
+      rec(1, 'get_transaction', 'get_transaction: {"id":"a"}'),
+      rec(2, 'get_transaction', 'get_transaction: {"id":"b"}'),
+    ];
+    assert.deepEqual(reasoningChain(calls, { reasoning: [] } as unknown as RawVerdict)
+      .map((c) => c.step), [1, 2]);
+  });
+});

@@ -337,7 +337,7 @@ function checkGrounding(verdict: RawVerdict, context: GateContext): string | nul
     if (!calledTools.has(step.tool)) {
       return `reasoning step ${i + 1} cites tool "${step.tool}", which was never called`;
     }
-    const digestMismatch = digestFor(context.toolCalls, step);
+    const digestMismatch = digestFor(context.toolCalls, step, i + 1);
     if (digestMismatch !== null) return digestMismatch;
   }
   return null;
@@ -348,16 +348,50 @@ function checkGrounding(verdict: RawVerdict, context: GateContext): string | nul
  * it. Keeping them in separate fields is what lets a reader check the reasoning
  * against the evidence; letting the model write both would make the chain
  * self-consistent and unverifiable at the same time.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * THE JOIN KEY IS (tool, resultDigest). IT USED TO INCLUDE `step`, AND THAT WAS
+ * A BUG THAT REJECTED TRUTHFUL VERDICTS (issue #54).
+ *
+ * `step.step` is model-authored — the index in the narrative it chose to write.
+ * `ToolCallRecord.step` was the runtime's counter. Nothing kept them in sync, and
+ * they came apart on two ordinary events: the model omitting a call from its
+ * write-up (a call that returned nothing useful is naturally left out), and a
+ * single turn issuing more than one tool call (all of them stamped identically,
+ * so no narrative numbering could address them individually).
+ *
+ * Measured on holdout run 80ddde9d: 10 of 10 corroborations and 3 of the 5
+ * verdict-producing investigations were rejected this way — 13 of 15 — every one
+ * of them citing a tool it really called and echoing a digest the runtime really
+ * produced. agent-design.md §7 reads the grounding-failure count as a signal that
+ * the prompt or the tools need work, and this file's own words apply: "A metric
+ * that counts our own bugs as the model's hallucinations is worse than no metric."
+ *
+ * ── WHY THIS DOES NOT WEAKEN THE GATE ──
+ * The checksum property is unchanged, because the DIGEST was always the thing
+ * doing the work. A model narrating a step it never took still cannot produce the
+ * digest for it: digests are long, tool-prefixed (`digestOf`) and handed over
+ * verbatim, so they cannot be guessed, and copying one from a different tool's
+ * result fails the `c.tool === step.tool` half. What is dropped is only the
+ * requirement that the model number its narrative the way the runtime happened to
+ * count turns — which was never evidence of anything.
+ *
+ * Ordering is not lost either: the persisted chain is rebuilt from the tool calls
+ * themselves (`reasoningChain`), in the order they were actually made, so the
+ * transcript's order comes from the runtime and never from the model.
+ * ══════════════════════════════════════════════════════════════════════════════
  */
-function digestFor(calls: readonly ToolCallRecord[], step: ReasoningStep): string | null {
-  const call = calls.find((c) => c.step === step.step && c.tool === step.tool);
-  if (call === undefined) {
-    return `reasoning step ${step.step} has no matching tool call`;
-  }
-  if (call.resultDigest !== step.resultDigest) {
-    return `reasoning step ${step.step} reports a result the runtime did not record`;
-  }
-  return null;
+function digestFor(
+  calls: readonly ToolCallRecord[], step: ReasoningStep, position: number,
+): string | null {
+  // `position` is the index in the reasoning array, not `step.step`. The message
+  // has to name something well-defined, and a model-supplied number is not.
+  const sameTool = calls.filter((c) => c.tool === step.tool);
+  if (sameTool.some((c) => c.resultDigest === step.resultDigest)) return null;
+  // Reached only when the tool WAS called (checkGrounding tests that first), so
+  // this is the specific claim: a result no call of that tool actually returned.
+  return `reasoning step ${position} reports a "${step.tool}" result the runtime `
+    + 'did not record';
 }
 
 function idsInAction(action: ProposedAction | null): string[] {

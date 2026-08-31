@@ -399,9 +399,17 @@ export async function runAgentLoop(
       }
 
       // Stamped with THIS investigation's id. The gate verifies it (#21).
+      //
+      // `step` is the CALL ordinal, not the turn counter (issue #54). A turn may
+      // issue several tool calls, and stamping them all with the turn number made
+      // them indistinguishable in the persisted chain and in the audit trail —
+      // three rows all reading "step 2: called get_transaction". It is no longer
+      // a join key anywhere (A3 joins on the digest), so it is free to mean the
+      // thing a reader assumes it means: the Nth thing this investigation did.
+      // Turn count is still reported separately, as `steps`.
       const record: ToolCallRecord = {
         investigationId: request.investigationId,
-        step: steps,
+        step: toolCalls.length + 1,
         tool: call.name,
         arguments: call.args,
         returnedIds: result.returnedIds,
@@ -467,14 +475,30 @@ export async function investigate(
   };
 }
 
-/** The reasoning chain as persisted (§6): what was CALLED, not what was claimed. */
+/**
+ * The reasoning chain as persisted (§6): what was CALLED, not what was claimed.
+ *
+ * Inferences are attached on `(tool, resultDigest)` — THE SAME JOIN THE A3 GATE
+ * USES, deliberately, so a step the gate accepted as grounded is the step whose
+ * inference is shown next to it. Keying on the model's `step` number instead
+ * mis-attributed prose whenever one turn made several calls: on holdout run
+ * 80ddde9d, corroboration 4d7bfc85 made three `get_transaction` calls in one
+ * turn and all three were persisted carrying the SAME inference, describing one
+ * of them (issue #54). An inference beside the wrong evidence is worse than a
+ * blank one, because a reader checking the chain has no way to tell.
+ */
 export function reasoningChain(
   toolCalls: readonly ToolCallRecord[], verdict: RawVerdict,
 ): ReasoningStep[] {
-  const inferenceFor = new Map<number, string>();
+  const inferenceFor = new Map<string, string>();
+  const key = (tool: string, digest: string): string => `${tool} ${digest}`;
   for (const r of verdict.reasoning) {
-    if (typeof r?.step === 'number' && typeof r?.inference === 'string') {
-      inferenceFor.set(r.step, r.inference);
+    if (typeof r?.tool === 'string' && typeof r?.resultDigest === 'string'
+      && typeof r?.inference === 'string' && r.inference !== '') {
+      // First writer wins: if the model narrated two steps against identical
+      // evidence, the earlier one is the one it reached first.
+      const k = key(r.tool, r.resultDigest);
+      if (!inferenceFor.has(k)) inferenceFor.set(k, r.inference);
     }
   }
   // Built from the TOOL CALLS, not from the model's `reasoning` array: the
@@ -485,6 +509,6 @@ export function reasoningChain(
     tool: c.tool,
     arguments: c.arguments,
     resultDigest: c.resultDigest,
-    inference: inferenceFor.get(c.step) ?? '',
+    inference: inferenceFor.get(key(c.tool, c.resultDigest)) ?? '',
   }));
 }
