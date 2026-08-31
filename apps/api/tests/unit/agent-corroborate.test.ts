@@ -89,12 +89,52 @@ describe('rerun_subset_search is EXCLUDED from corroboration (§3)', () => {
     assert.ok(trimmed.get('score_pair'));
   });
 
-  test('the real registry loses exactly one of its nine tools', () => {
+  test('the real registry loses exactly two of its nine tools', () => {
     const full = createToolRegistry({
       runId: 'r', config: { ...ENGINE_DEFAULTS, referenceDate: '2026-08-21', aliasCountAtStart: 0 },
     });
     assert.equal(full.tools.length, 9);
-    assert.equal(corroborationRegistry(full).tools.length, 8);
+    assert.equal(corroborationRegistry(full).tools.length, 7);
+  });
+});
+
+// #59: get_exception describes itself as "the starting point of every
+// investigation" -- a sentence written for A2 INVESTIGATE. A corroboration's
+// subject is a pending_review MATCH, so it has no exception id to pass, and
+// 10 of 10 live corroborations opened with a guaranteed found:false call on
+// it before this fix. A test that only checked the registry's SIZE could pass
+// with a different tool removed by mistake, so this asserts the exact name.
+describe('get_exception is EXCLUDED from corroboration (#59)', () => {
+  test('the registry the model is shown does not contain it', () => {
+    const full = createToolRegistry({
+      runId: 'r', config: { ...ENGINE_DEFAULTS, referenceDate: '2026-08-21', aliasCountAtStart: 0 },
+    });
+    const trimmed = corroborationRegistry(full);
+    assert.equal(trimmed.get('get_exception'), undefined);
+    assert.equal(trimmed.declarations().some((d) => d.name === 'get_exception'), false);
+  });
+
+  test('the corroboration registry is exactly the seven tools useful for a match', () => {
+    const full = createToolRegistry({
+      runId: 'r', config: { ...ENGINE_DEFAULTS, referenceDate: '2026-08-21', aliasCountAtStart: 0 },
+    });
+    const names = corroborationRegistry(full).tools.map((t) => t.name).sort();
+    assert.deepEqual(names, [
+      'check_alias', 'find_by_anchor', 'find_similar_exceptions', 'get_audit_trail',
+      'get_transaction', 'score_pair', 'search_transactions',
+    ]);
+  });
+
+  test('the system prompt names every tool actually in the registry', () => {
+    const full = createToolRegistry({
+      runId: 'r', config: { ...ENGINE_DEFAULTS, referenceDate: '2026-08-21', aliasCountAtStart: 0 },
+    });
+    const prompt = corroborationSystemPrompt();
+    for (const tool of corroborationRegistry(full).tools) {
+      assert.ok(prompt.includes(tool.name), `system prompt never mentions ${tool.name}`);
+    }
+    assert.equal(prompt.includes('get_exception'), false,
+      'the prompt should not point the model at a tool it does not have');
   });
 });
 
