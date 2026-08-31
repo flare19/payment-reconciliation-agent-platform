@@ -230,7 +230,18 @@ re-score                 BYTE-IDENTICAL to U11 — the agent layer moved nothing
 
 > **`getCachedExplanation` is on the agent's mutating-function denylist.** It reads like a lookup and is an `UPDATE … hit_count + 1 … RETURNING` (U11 wanted one round trip). A read-looking name that writes is the entry a denylist built from intuition would miss.
 
-**A `GEMINI_API_KEY` is now present in `apps/api/.env`** and `/api/health` reports `llmConfigured: true`. **No live model call has been made yet** — every test calls `executeRun` without explain deps, so they all still exercise the template path. The first route-driven run will attempt a real Gemini call.
+**THE LIVE MODEL PATH HAS NOW RUN.** A real `GEMINI_API_KEY` is in `apps/api/.env` and S13 has been exercised end to end through the route:
+
+```
+21/21 signatures GENERATED · 212 exceptions explanation_source = 'llm' · 0 templates
+3 API calls · 2,744 in / 1,745 out · ~39 s · failures []
+SECOND identical run: 0 API calls, 21/21 from cache, ~6 s   (ADR-018, measured)
+score report BYTE-IDENTICAL to the keyless run
+```
+
+> **A real language model wrote all 212 explanations and the accuracy report did not move by one character.** ADR-017 stopped being a claim about pipeline position and became a diffed artifact. Engine invariants held exactly: 284 matches, 212 exceptions, 612 audit entries, 65.22%, 570 matched, `tierAttribution` unchanged.
+
+> **The first keyed run also found a real defect in U11's own code**, and it is the kind worth remembering: `REQUEST_TIMEOUT_MS` was 20 s, guessed rather than measured, and a 10-signature batch takes ~10 s — so ordinary latency variance aborted 2 of 3 batches and silently served 20 of 21 signatures from templates. **Nothing failed; the run completed and the score was unchanged.** Only `llmCost.failures` and `explanation_source` made it visible. Now 60 s, with the measurements in the comment and the argument stated as a ratio. See `what-broke.md`.
 
 > **[#52](https://github.com/flare19/payment-reconciliation-agent-platform/issues/52) is a NEW P1 and it becomes reachable the moment that key is real.** S13's prompt provably contains no specifics (ADR-018 buckets everything), so **any amount, date or reference id in the model's prose is necessarily fabricated** — and nothing checks. `parseResponse` validates shape only; the text goes straight to `explanation_text` and into the exception list, and a cached row makes it durable across runs. Phase A treats a hallucinated specific as a build blocker (ADR-053); S13, whose output a panelist actually reads, has no equivalent. **Land it before any keyed run's explanations are shown to anyone.**
 

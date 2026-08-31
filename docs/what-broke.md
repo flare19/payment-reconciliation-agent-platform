@@ -746,3 +746,32 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
   **Also noticed, and now filed as a P1 — [#52](https://github.com/flare19/payment-reconciliation-agent-platform/issues/52).** A `GEMINI_API_KEY` is now present in `apps/api/.env`, so `/api/health` reports `llmConfigured: true` where it reported `false` earlier today. No live call has been made from this session, and every test still exercises the template path because they call `executeRun` without explain deps — but the live path is now REACHABLE and has never been run.
 
   What that makes urgent is a gap I flagged during U11 and deliberately did not fix: **S13 has no grounding check.** Phase A treats a hallucinated specific as a build blocker (ADR-053). S13 — the layer whose prose a panelist actually reads — relies entirely on a prompt instruction (§10.4 rule 2, "never invent amounts"). The inference is unusually clean and that is what makes it worth a P1 rather than a P2: ADR-018's signature is bucketed by construction and a test already asserts no long digit run reaches the prompt, **so any rupee figure, date or reference id in S13's output is *necessarily* fabricated.** There is no legitimate way for one to be there. `parseResponse` validates shape only; the text is written straight to `explanation_text` and into the exception list, and because `explanation_cache` is run-independent, one fabricated figure is then served to every later run sharing that signature with a `hit_count` that makes it look well-established. A handful of regexes and a template fallback closes it.
+
+- **2026-08-31** — **Day 12, the first keyed run: S13's live path executed for the first time, and it exposed a bound I had picked without measuring.**
+
+  A real `GEMINI_API_KEY` went in, so the model path that had existed since U11 — unit-tested against a fake client, never once executed — finally ran. **It half-worked, and the half that failed was mine.**
+
+  **What happened.** 21 signatures batch into 10 / 10 / 1. Two of the three batches came back `"This operation was aborted"` — my own `AbortSignal.timeout`. The run completed correctly with **20 of 21 signatures served from templates**, `explanation_source` reading `template` for 211 of 212 exceptions, and every engine number untouched. The degradation worked exactly as ADR-017 requires; what it was degrading *from* was a working API.
+
+  **`REQUEST_TIMEOUT_MS` was 20,000, and there was nothing behind that number.** I wrote it as a demo-safety bound — "a hung connection must not stall a run in front of a panel" — and picked 20s because it sounded obviously sufficient. Measured afterwards on `gemini-3.5-flash`, full 10-signature batches: **9.8s / 10.7s / 9.7s / 9.5s** at ~900 output tokens each, and 9.2s for a 2-signature batch. Three fired back-to-back showed no throttling, so the median is ~10s and the two aborts were ordinary latency variance against a bound sitting only **2×** above the median.
+
+  **The lesson is not "20s was too small". It is that a timeout is a threshold on a distribution, and I had measured neither.** Every other bound in this repo is derived — ADR-063's node budget is a proof about the declared space, ADR-085's ceiling is derived from the safety valve it must not trip. This one was a guess wearing the same clothes. Raised to 60,000 with the measurements written into the comment, and the argument stated as a **ratio** (~6× the median) rather than a number, because the number is worthless to the next person and the ratio is not. 60s is also not a new magnitude here — `AGENT_DEFAULTS` already bounds an investigation at exactly 60,000 ms.
+
+  **What a timeout does when it is too tight is the worst thing a timeout can do:** it converts a working response into a silent fallback. Nothing failed. The run completed, every exception had prose, the score was unchanged, and the only evidence was `signaturesTemplated: 20` in a metrics object nobody had a reason to read. **The honest reporting that U11 built is the only reason this was visible at all** — `llmCost.failures` carried two `transport` entries with their detail string, and `explanation_source` distinguished `template` from `llm`. A design that had just written the text and moved on would have shipped this to a panel.
+
+  **After the fix, re-run against the real key:**
+
+  ```
+  21/21 signatures GENERATED · 212 exceptions explanation_source = 'llm' · 0 templates
+  3 API calls · 2,744 tokens in / 1,745 out · failures []
+  audit: 21 EXPLANATION_GENERATED   (one per SIGNATURE, as designed)
+  engine: 284 matches · 212 exceptions · 612 audit · 65.22% · 570 matched
+          tierAttribution {exact 203, fuzzy 277, batch 25, implied 242}  — UNCHANGED
+  score report BYTE-IDENTICAL to the keyless run
+  ```
+
+  > **That last line is the point of the whole architecture.** A real language model wrote all 212 explanations and the measured accuracy report did not move by a single character. ADR-017 is no longer a claim about where the LLM sits in the pipeline; it is a diffed artifact.
+
+  **ADR-018's economy, demonstrated live for the first time.** A second identical run made **zero API calls**: 21/21 signatures served from `explanation_cache`, all 212 exceptions `explanation_source = 'llm_cache'`, 21 `EXPLANATION_CACHE_HIT` entries, and the run finished in **~6s instead of ~39s**. "Re-running the full batch is free" stops being an argument and becomes a measurement — which matters because the track disqualifies cherry-picking, and the whole reason to make re-runs free was to remove any incentive not to do them.
+
+  **On [#52](https://github.com/flare19/payment-reconciliation-agent-platform/issues/52), one real data point and no more than that.** Scanning all 21 generated explanations for rupee amounts, reference ids and dates found **zero**. The model rendered bucket labels faithfully into prose — `3_to_10pct` became "by three to ten percent" — which is exactly the behaviour the prompt asks for. That is encouraging and it is **not** a reason to close the issue: one clean sample from one model at one temperature is not a guarantee, and the whole argument for #52 is that the check should not depend on the model's good behaviour. Recorded so the next session knows the current state is "no observed fabrication", not "verified safe".

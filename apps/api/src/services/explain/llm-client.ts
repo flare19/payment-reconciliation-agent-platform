@@ -53,11 +53,32 @@ export const MAX_SIGNATURES_PER_REQUEST = 10;
  *
  * Not a decision input (ADR-039 governs the DECISION path; this reaches only
  * whether prose or a template is written), but it is a demo-safety bound: a
- * hung connection must not stall a run in front of a panel. Eight batches at
- * this ceiling is the worst case, and the template fallback makes an abort
- * cheap rather than fatal.
+ * hung connection must not stall a run in front of a panel. The template
+ * fallback makes an abort cheap rather than fatal.
+ *
+ * ── 20s WAS TOO TIGHT, AND THE FIRST KEYED RUN PROVED IT ──
+ * This was 20,000 when it was written, picked as "obviously enough" with nothing
+ * measured behind it. The first run against a real key aborted TWO of its three
+ * batches and served 20 of 21 signatures from templates — a working response
+ * turned into a fallback by a bound nobody had measured.
+ *
+ * Measured afterwards on `gemini-3.5-flash`, free tier, full 10-signature
+ * batches: 9.8s / 10.7s / 9.7s / 9.5s (~900 output tokens each), and 9.2s for a
+ * 2-signature batch. Three back-to-back showed no throttling, so the median is
+ * ~10s and the aborts were latency variance, not rate limiting.
+ *
+ * 60s is ~6x that median. The point is the RATIO, not the number: a timeout
+ * sitting 2x above the median on a free-tier API with no latency SLA converts
+ * ordinary variance into silent degradation, which is the worst thing a timeout
+ * can do. 60s is also not a new magnitude in this system — `AGENT_DEFAULTS`
+ * bounds an investigation at the same 60,000 ms.
+ *
+ * A timeout is a TRANSIENT failure where a 401 or an exhausted quota is not,
+ * so there is an argument for retrying this one specifically. Deliberately not
+ * done: a retry costs a request from a budget whose binding resource is
+ * requests per day (ADR-080), and a bound with real headroom removes the need.
  */
-const REQUEST_TIMEOUT_MS = 20_000;
+const REQUEST_TIMEOUT_MS = 60_000;
 
 /** One signature as the model sees it — buckets and counts, never a specific. */
 export interface SignaturePrompt {
