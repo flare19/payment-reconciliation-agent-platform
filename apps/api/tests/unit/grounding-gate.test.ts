@@ -502,6 +502,26 @@ describe('A3 — rejection behaviour', () => {
     })), false);
   });
 
+  test('an OMITTED proposedAction is rejected, never thrown on', () => {
+    // `checkSchema` treats absent as equivalent to null; `checkConstraints`
+    // guarded only `=== null` and then read `action.type`, so an omitted field
+    // THREW. `validateVerdict` is documented to throw only for a CALLER bug, so
+    // the loop does not catch it and the whole investigation was recorded as
+    // failed rather than downgraded. A live run lost 2 of 17 this way.
+    const { proposedAction: _dropped, ...without } = verdict({
+      verdict: 'CONFIRMED_UNRESOLVABLE', citations: [G1] });
+    assert.doesNotThrow(() => validateVerdict(without, context()));
+    // And it still VALIDATES: a non-proposal verdict with no action is legal.
+    assert.equal(passes(without as never), true);
+  });
+
+  test('an omitted action on a PROPOSAL is still rejected by the schema', () => {
+    // The other direction: absent must not become a free pass.
+    const { proposedAction: _d, ...without } = verdict({
+      verdict: 'RESOLUTION_PROPOSED', citations: [G1] });
+    assert.equal(passes(without as never), false);
+  });
+
   test('validation is pure — the same input always gives the same result', () => {
     const v = verdict({ citations: [G1, B1] });
     const first = JSON.stringify(validateVerdict(v, context()));

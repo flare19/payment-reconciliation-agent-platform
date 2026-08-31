@@ -788,6 +788,40 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
   > **THE SAME MISTAKE, THREE TIMES IN ONE DAY, AND I DID NOT SEE THE PATTERN UNTIL THE THIRD.** The 20 s explain timeout, the ceiling-charging triage budget, and `gemini-3.7-flash` were all plausible numbers with nothing measured behind them. Every *engine* bound in this repo is derived — ADR-063's node budget is a proof about the declared space, ADR-085's ceiling is derived from the valve it must not trip — and every bound around the *model* was a guess wearing the same clothes. The asymmetry was invisible because the engine's numbers are scored daily and the model's were not scored at all. **The rule going into the Anthropic swap: a per-turn latency and cost figure is measured against §8's bound before a model is adopted, never read off a description.**
 
-  **Then the free tier's daily quota ran out** (`429`), mid-diagnosis, which ends live iteration for today. So the budget-pacing fix in (3) is **unit-tested and has never been seen working against a real model** — recorded here rather than implied, because "fixed" and "verified" are different claims and this file exists to keep them apart. The convergence behaviour is the first thing to re-check when quota resets.
+  **Then a `429` ended live iteration** mid-diagnosis. I called it a daily quota; the error text did not actually say so and I had no evidence — see the correction in the next entry, which has the real number. So the budget-pacing fix in (3) is **unit-tested and has never been seen working against a real model** — recorded here rather than implied, because "fixed" and "verified" are different claims and this file exists to keep them apart. The convergence behaviour is the first thing to re-check when quota resets.
 
   **Where that leaves the baseline.** The Analyst is not yet finished per spec: no investigation has produced a schema-valid verdict, CORROBORATE mode is unbuilt, and the Analyst has never been scored against the answer key. The plan is unchanged and was the right one — finish on the cheap tier, branch, then swap — but the baseline it is meant to produce does not exist yet.
+
+- **2026-08-31** — **Day 12, continued: THE ANALYST PRODUCED ITS FIRST VALID VERDICT.** And getting there cost three more corrections, one of them in a module that had been green since Day 4.
+
+  **First, a correction to the entry above.** I wrote "the free tier's daily quota ran out". The `429` text said only *"You exceeded your current quota"*; I inferred "daily" and stated it as fact. Tejas pushed back — RPM and RPD are different, and if it were RPM we could retry immediately. He was right to push and the retry worked. The real figure, from a later error that carried the detail:
+
+  ```
+  quotaId:    GenerateRequestsPerDayPerProjectPerModel-FreeTier
+  quotaValue: 20
+  model:      gemini-3.6-flash
+  ```
+
+  **20 requests per day, per model.** So it *was* daily — but I had asserted it without evidence and happened to be right, which is not the same as having been right. ADR-080 deliberately refused to write an RPD number into the docs because Google's page defers to AI Studio and third-party summaries disagree; the honest move was to measure, and measuring took one request.
+
+  **What that number does to the plan.** One investigation costs 3–10 requests, so 20/day/model is two to four investigations — nowhere near enough to iterate a prompt on. The quota is **per model**, though, and the newer models are the constrained ones: `gemini-2.5-flash` answers a tool-calling prompt in **1.5 s** and has the older generous tier. So loop development moved there. That preserves Tejas's sequencing exactly — iterate on a cheap tier, then swap — it just is not the model ADR-086 named.
+
+  **The gate caught a real hallucination, from a real model, on its first live encounter.** After the pacing fix, `gemini-2.5-flash` jumped straight to a verdict on step 1 and wrote a reasoning step claiming it had called `rerun_subset_search`. It had not. A3 rejected it: *"reasoning step 1 cites tool rerun_subset_search, which was never called"*, and the verdict was downgraded to `INSUFFICIENT_EVIDENCE`. **ADR-050 is no longer a design argument; it is a thing that has now happened and been caught.**
+
+  **My pacing fix had over-corrected, and the second failure was worse than the first.** The countdown urged conclusion from step one, so the model went from *never concluding* to *concluding before it had looked* — and filled the gap by inventing a step. Being cut off loses work; answering early invents it, and only one of those is dishonest. The countdown's tone now tracks the budget: retrieve first, keep going, wrap up, final step. A test pins all four phases.
+
+  **Then a defect in the grounding gate itself, green since Day 4.** `checkSchema` treats an ABSENT `proposedAction` as equivalent to a null one — correctly, because a model omitting an optional-looking field is ordinary. `checkConstraints` guarded only `=== null` and then read `action.type`, so an omitted field **threw**. That is much worse than a rejection: `validateVerdict` is documented to throw only for a *caller* bug, so the loop does not catch it, and **2 of 17 investigations were recorded as failed instead of downgraded**. Fixed to `== null` in both places, with tests in both directions — absent must be handled, and absent must not become a free pass on a `RESOLUTION_PROPOSED`.
+
+  **The first valid verdict, in full:**
+
+  ```
+  UNSPLITTABLE_BATCH, engine reported searchExhausted: true
+  -> get_exception  ->  CONFIRMED_UNRESOLVABLE, confidence high, grounded, 1 citation
+  ```
+  > *"The engine's batch search was 'EXHAUSTIVE' and searchExhausted is true. This means the engine proved no combination works within its declared bounds, rather than running out of search room. Therefore, rerunning the subset search with wider bounds is not applicable."*
+
+  That is the right answer **and the right amount of work**. §5 says the agent's job on a dead end is to decide whether the dead end is a property of the data or of the engine's bounds; it decided *data*, from the engine's own evidence, and correctly declined to spend a subset search. The prompt renders `searchExhausted` and `searchBoundExceeded` as different claims precisely so this distinction is available, and the model used it.
+
+  > **A finding about the DATASET that the demo needs to know.** `runs.metrics` reports `batchSearchExhausted: 4, batchSearchBoundExceeded: 0` — every batch search on the holdout terminates with a proof. So **§5's flagship self-correction story has no instance in this dataset**: there is no exception where widening the bounds could find anything, and `rerun_subset_search` can only ever confirm what the engine already proved. The tool works and the agent reaches for it unprompted, but the demo cannot show it *recovering* a batch unless the generator is given a case where the pool cap binds. Recorded now rather than discovered while recording the video.
+
+  **Status.** One valid grounded verdict end to end. A 17-investigation sample was mostly `429` noise (15 of 17 transport failures at ~20 requests/min) and is **not** a baseline — it measured Google's rate limiter, not the Analyst. CORROBORATE is still unbuilt and the Analyst has still never been scored against the answer key.

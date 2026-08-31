@@ -359,8 +359,8 @@ describe('the agent can SEE its step budget', () => {
       const last = msgs[msgs.length - 1]!;
       return last.role === 'user' ? last.text : '';
     };
-    assert.match(lastTextOf(0), /2 step\(s\) remain/);
-    assert.match(lastTextOf(1), /1 step\(s\) remain/);
+    assert.match(lastTextOf(0), /2 step\(s\) left/);
+    assert.match(lastTextOf(1), /1 step\(s\) left/);
     assert.match(lastTextOf(2), /FINAL STEP\. Do not call any more tools/);
   });
 
@@ -381,7 +381,7 @@ describe('the agent can SEE its step budget', () => {
       { ...AGENT_DEFAULTS.budget, maxSteps: 3, maxToolCalls: 99 });
     const third = client.requests[2]!.messages;
     const countdowns = third.filter(
-      (m) => m.role === 'user' && /step\(s\) remain|FINAL STEP/.test(m.text));
+      (m) => m.role === 'user' && /steps? left|FINAL STEP/.test(m.text));
     assert.equal(countdowns.length, 1, 'exactly one countdown, the current one');
   });
 });
@@ -396,4 +396,27 @@ test('the system prompt states the ADR-049 rule and the four verdicts', () => {
   }
   assert.match(p, /Confidence is a LABEL/);
   assert.match(p, /STEP BUDGET AND YOU CAN SEE IT/);
+  // Both failure directions the live runs found, addressed in the prompt.
+  assert.match(p, /ALWAYS RETRIEVE BEFORE YOU CONCLUDE/);
+  assert.match(p, /naming a tool you did not call voids the verdict/);
+});
+
+test('early turns push RETRIEVAL, late turns push CONCLUSION', async () => {
+  // Live run 1: no countdown -> spent all ten steps, never concluded.
+  // Live run 2: countdown urging conclusion from step one -> concluded
+  // immediately and FABRICATED a reasoning step naming a tool it never called.
+  // The tone has to track the budget, not push one way throughout.
+  const client = fakeClient([toolCall('c1', 'get_exception')]);
+  await investigate(REQUEST, deps({ client }),
+    { ...AGENT_DEFAULTS.budget, maxSteps: 6, maxToolCalls: 99 });
+  const textAt = (i: number): string => {
+    const msgs = client.requests[i]!.messages;
+    const last = msgs[msgs.length - 1]!;
+    return last.role === 'user' ? last.text : '';
+  };
+  assert.match(textAt(0), /Retrieve the exception first/,
+    'with nothing retrieved yet it must not invite a conclusion');
+  assert.match(textAt(1), /Keep investigating/);
+  assert.match(textAt(4), /Wrap up/);
+  assert.match(textAt(5), /FINAL STEP/);
 });

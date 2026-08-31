@@ -333,7 +333,8 @@ function digestFor(calls: readonly ToolCallRecord[], step: ReasoningStep): strin
 }
 
 function idsInAction(action: ProposedAction | null): string[] {
-  if (action === null) return [];
+  // `== null` for the same reason as `checkConstraints` above.
+  if (action == null) return [];
   return action.type === 'MANUAL_MATCH' ? action.members.map((m) => m.transactionId) : [];
 }
 
@@ -347,7 +348,16 @@ function idsInAction(action: ProposedAction | null): string[] {
  */
 function checkConstraints(verdict: RawVerdict, context: GateContext): string | null {
   const action = verdict.proposedAction;
-  if (action === null) return null;
+  // `== null`, NOT `=== null`. `checkSchema` above already treats an ABSENT
+  // `proposedAction` as equivalent to a null one — correctly, because a model
+  // omitting an optional-looking field is ordinary. This guard did not, so an
+  // omitted field reached `action.type` and THREW.
+  //
+  // A throw here is much worse than a rejection: `validateVerdict` is documented
+  // to throw only for a caller bug, so `investigateOne` does not catch it, and
+  // the whole investigation was recorded as failed instead of being downgraded.
+  // Found by a live run — 2 of 17 investigations lost this way.
+  if (action == null) return null;
 
   if (action.type === 'MANUAL_MATCH') {
     const seenRoles = new Set<SourceSystem>();

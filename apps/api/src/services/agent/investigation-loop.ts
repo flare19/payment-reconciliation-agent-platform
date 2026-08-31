@@ -128,12 +128,16 @@ const SYSTEM_PROMPT = [
   '',
   'Confidence is a LABEL: high, medium or low. Never a number.',
   '',
+  'ALWAYS RETRIEVE BEFORE YOU CONCLUDE. Start with get_exception. A verdict reached without',
+  'calling any tool is not an investigation, and every reasoning step you write is checked',
+  'against the tools you ACTUALLY called: naming a tool you did not call voids the verdict',
+  'outright. Do not describe a search you did not run.',
+  '',
   'YOU HAVE A STEP BUDGET AND YOU CAN SEE IT. Each turn tells you how many steps remain.',
-  'Investigating until the budget cuts you off wastes the investigation: you are stopped',
-  'mid-thought and the verdict becomes INSUFFICIENT_EVIDENCE regardless of what you found.',
-  'Pace yourself. Most exceptions need two to four tool calls. When one step remains, STOP',
-  'calling tools and write the verdict with what you have -- CONFIRMED_UNRESOLVABLE with a',
-  'stated reason is a real and valuable answer, and is worth far more than being cut off.',
+  'Use them. Being cut off mid-thought wastes the work, but so does answering before you',
+  'have looked -- and only one of those two is dishonest. When one step remains, stop',
+  'calling tools and write the verdict from what you actually retrieved.',
+  'CONFIRMED_UNRESOLVABLE with a stated reason is a real and valuable answer.',
   '',
   'Every tool result carries a "resultDigest" string. Copy it back VERBATIM in the matching',
   'reasoning step. It is a checksum, not a summary: a deterministic gate compares what you',
@@ -239,14 +243,24 @@ export async function investigate(
     // had found. A bound the agent cannot see is a bound it cannot pace against.
     // Injected as a system-role turn rather than edited into the static prompt,
     // so the stable prefix stays stable.
+    // The countdown's TONE tracks the budget, and getting this wrong cost a live
+    // run in each direction. With no countdown at all the model spent all ten
+    // steps and never concluded. With a countdown that urged conclusion from
+    // step one, it concluded IMMEDIATELY and fabricated a reasoning step naming
+    // a tool it had never called — which the A3 gate caught, but which is the
+    // worse failure of the two: being cut off loses work, answering early
+    // invents it.
     const remaining = budget.maxSteps - steps;
-    const paced: AgentMessage[] = [...messages, {
-      role: 'user',
-      text: remaining === 0
-        ? 'FINAL STEP. Do not call any more tools. Write your verdict JSON now, using what '
-          + 'you already have. If the evidence does not support a proposal, say so honestly.'
-        : `[${remaining} step(s) remain after this one. Conclude as soon as you can answer.]`,
-    }];
+    const pacing = remaining === 0
+      ? 'FINAL STEP. Do not call any more tools. Write your verdict JSON now, using only '
+        + 'what you actually retrieved. If the evidence does not support a proposal, say so.'
+      : remaining <= 2
+        ? `[${remaining} step(s) left. Wrap up: gather anything essential, then conclude.]`
+        : toolCalls.length === 0
+          ? `[${remaining} steps left. Retrieve the exception first — do not conclude yet.]`
+          : `[${remaining} steps left. Keep investigating until you can answer from `
+            + 'evidence you retrieved.]';
+    const paced: AgentMessage[] = [...messages, { role: 'user', text: pacing }];
 
     const turn = await deps.client.turn({
       system: SYSTEM_PROMPT,
