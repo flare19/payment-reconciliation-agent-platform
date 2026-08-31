@@ -9,6 +9,7 @@
 import {
   AGENT_DEFAULTS, DEFAULT_AGENT_MODEL, DEFAULT_EXPLAIN_MODEL, DEFAULT_PROMPT_VERSION,
 } from './defaults.js';
+import { RATE_LIMIT_DEFAULTS } from '../services/agent/rate-limiter.js';
 
 function required(name: string): string {
   const v = process.env[name];
@@ -62,6 +63,9 @@ export interface Env {
   explainModel: string;
   /** Phase A investigation and Q&A loops (ADR-080). */
   agentModel: string;
+  agentMaxRequestsPerMinute: number;
+  agentMaxTokensPerMinute: number;
+  agentMaxRetries: number;
   llmExplainEnabled: boolean;
   llmMaxCallsPerRun: number;
   promptVersion: string;
@@ -128,6 +132,14 @@ export function loadEnv(): Env {
     agentQaMaxQuestionsPerRun: int('AGENT_QA_MAX_QUESTIONS_PER_RUN', 50),
     agentQaMaxQuestionsPerHour: int('AGENT_QA_MAX_QUESTIONS_PER_HOUR', 100),
     agentPromptVersion: optional('AGENT_PROMPT_VERSION', 'agent-v1'),
+    // Paced BELOW the provider ceiling on purpose (rate-limiter.ts). A refused
+    // request still counts against a daily quota, so the margin is what keeps
+    // the budget being spent on work rather than on rejections.
+    agentMaxRequestsPerMinute:
+      int('AGENT_MAX_REQUESTS_PER_MINUTE', RATE_LIMIT_DEFAULTS.maxRequestsPerMinute),
+    agentMaxTokensPerMinute:
+      int('AGENT_MAX_TOKENS_PER_MINUTE', RATE_LIMIT_DEFAULTS.maxTokensPerMinute),
+    agentMaxRetries: int('AGENT_MAX_RETRIES', RATE_LIMIT_DEFAULTS.maxRetries),
 
     devSeed: int('DEV_SEED', 1337),
     holdoutSeed: int('HOLDOUT_SEED', 90210),

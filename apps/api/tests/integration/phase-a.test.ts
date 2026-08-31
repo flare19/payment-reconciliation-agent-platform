@@ -12,6 +12,7 @@ import { verifyRunChain } from '../../src/repositories/audit.js';
 import { executeRun } from '../../src/services/run/orchestrator.js';
 import { runPhaseA, investigateOne, type PhaseADeps } from '../../src/services/agent/phase-a.js';
 import { ELIGIBLE_CATEGORIES } from '../../src/services/agent/triage.js';
+import { withRateLimit } from '../../src/services/agent/rate-limiter.js';
 import type { AgentLlmClient, AgentTurnResult } from '../../src/services/agent/agent-client.js';
 import type { RunConfig } from '../../src/types/engine.js';
 
@@ -246,6 +247,65 @@ describe('Phase A (integration)',
       assert.ok(result.requestsSpent + 10 > 35, 'it stopped exactly when one more could not fit');
       assert.ok(result.requestsSpent <= 35, 'and never exceeded the shared budget');
       assert.equal(result.skippedForBudget, 20 - 13);
+    });
+
+    test('with pacing wired, requestsSpent counts the retry a step count cannot see', async () => {
+      // A retried 429 is a second BILLABLE request inside ONE step. The loop
+      // counts steps, so that request is structurally invisible to it —
+      // harmless against a request quota, and a hole in a dollar-denominated
+      // cap. This pins the fix by running the SAME phase twice: once blind,
+      // once reading the pacing layer's real count.
+      const flaky = (): AgentLlmClient => {
+        const scripted = scriptedClient();
+        let failed = false;
+        return {
+          model: scripted.model,
+          async turn(request) {
+            if (!failed) {
+              failed = true;
+              return {
+                ok: false, reason: 'transport', detail: '429 RESOURCE_EXHAUSTED',
+                usage: { tokensIn: 10, tokensOut: 0 }, retryable: true,
+              } satisfies AgentTurnResult;
+            }
+            return scripted.turn(request);
+          },
+        };
+      };
+      // Limits far above anything this test reaches: the point is the COUNT,
+      // and a binding budget would make the two runs do different amounts of
+      // work rather than the same work counted two ways.
+      const pace = (c: AgentLlmClient) => withRateLimit(c, {
+        maxRetries: 2, baseBackoffMs: 0,
+        maxRequestsPerMinute: 1_000_000, maxTokensPerMinute: Number.MAX_SAFE_INTEGER,
+        now: () => 0, sleep: async () => { /* tests never wait */ },
+      });
+      const opts = { budget: { ...AGENT_DEFAULTS.budget, maxSteps: 4 } };
+
+      await getPool().query(`DELETE FROM agent_investigations WHERE run_id=$1`, [runId]);
+      const blind = pace(flaky());
+      const control = await runPhaseA(runId, { ...deps, client: blind.client, ...opts });
+
+      await getPool().query(`DELETE FROM agent_investigations WHERE run_id=$1`, [runId]);
+      const seen = pace(flaky());
+      const wired = await runPhaseA(runId, {
+        ...deps, client: seen.client, ...opts,
+        requestsIssued: () => seen.stats().requestsIssued,
+      });
+
+      assert.equal(seen.stats().retries, 1, 'exactly one retry to account for');
+      assert.equal(control.investigated, wired.investigated, 'same work both times');
+      // Two turns each, derived rather than hard-coded: earlier tests in this
+      // file leave corroborations behind, so the absolute total is cross-test
+      // state. The RELATIONSHIP is what this test owns.
+      assert.ok(control.requestsSpent > 0);
+      assert.equal(control.requestsSpent,
+        (control.investigated + control.corroborated) * 2,
+        'the step count, blind to the retry');
+      assert.equal(wired.requestsSpent, seen.stats().requestsIssued,
+        'the wired figure IS the billable request count');
+      assert.equal(wired.requestsSpent, control.requestsSpent + 1,
+        'exactly one higher — and that gap is what went unbilled before');
     });
 
     test('a grounding failure is PERSISTED and gets its own audit event', async () => {

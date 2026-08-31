@@ -30,6 +30,7 @@ import type {
   AgentLlmClient, AgentMessage, AgentTurnRequest, AgentTurnResult, AgentUsage,
   ToolDeclaration,
 } from './agent-client.js';
+import { withRateLimit, type RateLimitOptions } from './rate-limiter.js';
 
 /**
  * Per-turn wall clock.
@@ -122,6 +123,55 @@ function signatureFor(
   return undefined;
 }
 
+/**
+ * Whether a thrown SDK error is worth sending again, and when.
+ *
+ * ── WHY THIS READS A STATUS AND NOT A MESSAGE ──
+ * `rate-limiter.ts` is provider-neutral and must not sniff error strings, so the
+ * translation from "what Google said" to "is this retryable" belongs here, in
+ * the one file allowed to know the provider. The limiter consumes the boolean.
+ *
+ * ── THE LIST IS DELIBERATELY SHORT ──
+ * 429 and the transient 5xx family only. A 400 means the request itself is
+ * wrong — replaying it burns quota to be told the same thing, and this is
+ * exactly how a missing `thought_signature` presented. A timeout is excluded
+ * too: `TURN_TIMEOUT_MS` is 90 s, so a retry costs three minutes to maybe
+ * discover the same hung connection, and the loop already degrades a dead turn
+ * into an honest INSUFFICIENT_EVIDENCE.
+ */
+const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+
+export function classifyTransportError(
+  err: unknown,
+): { retryable: boolean; retryAfterMs?: number } {
+  // An aborted turn is our own timeout firing, never the provider's verdict.
+  if (err instanceof Error
+    && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+    return { retryable: false };
+  }
+
+  const message = err instanceof Error ? err.message : String(err);
+  // The SDK surfaces the HTTP status on the error where it can; the message
+  // carries the JSON body otherwise. Both are checked because neither is
+  // guaranteed, and guessing wrong in the retryable direction spends quota.
+  const statusField = (err as { status?: unknown } | null)?.status;
+  const fromField = typeof statusField === 'number' ? statusField : null;
+  const fromBody = /"code"\s*:\s*(\d{3})/.exec(message)?.[1];
+  const status = fromField ?? (fromBody === undefined ? null : Number(fromBody));
+
+  const retryable = status === null
+    ? /RESOURCE_EXHAUSTED|UNAVAILABLE/.test(message)
+    : RETRYABLE_STATUSES.has(status);
+  if (!retryable) return { retryable: false };
+
+  // Google returns RetryInfo as `"retryDelay": "39s"`. Honoured verbatim when
+  // present — it knows when the quota refills and we do not.
+  const delay = /"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/.exec(message)?.[1];
+  return delay === undefined
+    ? { retryable: true }
+    : { retryable: true, retryAfterMs: Math.ceil(Number(delay) * 1000) };
+}
+
 function usageOf(meta: {
   promptTokenCount?: number; candidatesTokenCount?: number;
 } | undefined): AgentUsage {
@@ -164,6 +214,7 @@ export function createGeminiAgentClient(opts: GeminiAgentOptions): AgentLlmClien
         return {
           ok: false, reason: 'transport',
           detail: err instanceof Error ? err.message : String(err),
+          ...classifyTransportError(err),
           // The request may have reached the model before failing, but the SDK
           // gives no usage on a throw. Reported as zero and NOT invented — an
           // estimated token count in a spend ledger is worse than a known gap.
@@ -211,13 +262,33 @@ export function createGeminiAgentClient(opts: GeminiAgentOptions): AgentLlmClien
   };
 }
 
-/** `null` when Phase A has no key or is switched off — a legitimate state. */
+/**
+ * `null` when Phase A has no key or is switched off — a legitimate state.
+ *
+ * The returned client is PACED. Pacing is applied here rather than left to the
+ * caller so there is no unpaced path to the provider: a route that built a raw
+ * client would spend the day's quota on 429s and nobody would notice until the
+ * run stopped producing verdicts.
+ */
 export function createAgentClient(env: {
   geminiApiKey: string | null;
   agentModel: string;
   agentEnabled: boolean;
+  agentMaxRequestsPerMinute?: number;
+  agentMaxTokensPerMinute?: number;
+  agentMaxRetries?: number;
 }): AgentLlmClient | null {
   if (!env.agentEnabled) return null;
   if (env.geminiApiKey === null || env.geminiApiKey === '') return null;
-  return createGeminiAgentClient({ apiKey: env.geminiApiKey, model: env.agentModel });
+  const limits: Partial<RateLimitOptions> = {
+    ...(env.agentMaxRequestsPerMinute === undefined
+      ? {} : { maxRequestsPerMinute: env.agentMaxRequestsPerMinute }),
+    ...(env.agentMaxTokensPerMinute === undefined
+      ? {} : { maxTokensPerMinute: env.agentMaxTokensPerMinute }),
+    ...(env.agentMaxRetries === undefined ? {} : { maxRetries: env.agentMaxRetries }),
+  };
+  return withRateLimit(
+    createGeminiAgentClient({ apiKey: env.geminiApiKey, model: env.agentModel }),
+    limits,
+  ).client;
 }

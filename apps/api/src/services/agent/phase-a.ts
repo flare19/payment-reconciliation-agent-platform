@@ -77,6 +77,21 @@ export interface PhaseADeps {
   budget?: InvestigationBudget;
   maxLlmRequests?: number;
   now?: () => number;
+  /**
+   * The TRUE count of billable requests issued so far, from the pacing layer
+   * (`rate-limiter.ts`). Optional, and the reason it exists is a real gap:
+   *
+   * this loop can only see an investigation's STEPS, and steps are not
+   * requests. A retried 429 is a second billable call the step count never
+   * sees, and an investigation that THREW spent whatever it spent before
+   * throwing and reported nothing at all. Both are real spend that the request
+   * budget believed did not happen — harmless on a free tier, and the exact
+   * shape of hole a dollar-denominated cap must not have.
+   *
+   * When supplied, `requestsSpent` becomes the true issued count. When absent,
+   * the loop falls back to steps plus a worst-case charge for failures.
+   */
+  requestsIssued?: () => number;
 }
 
 export interface PhaseAResult {
@@ -413,7 +428,28 @@ export async function runPhaseA(
   let corroborationGroundingFailures = 0;
   let groundingFailures = 0;
   let budgetExhaustedCount = 0;
-  let requestsSpent = 0;
+  // Steps, as the loop can observe them — the fallback denominator.
+  let stepsSpent = 0;
+  const issued = deps.requestsIssued;
+  const issuedBaseline = issued?.() ?? 0;
+  /**
+   * What has been spent against `maxLlmRequests`.
+   *
+   * Prefers the pacing layer's real count, which sees the two things a step
+   * count structurally cannot: a retried request, and an investigation that
+   * threw after spending. Falls back to steps — RESERVE the worst case, CHARGE
+   * the actual, exactly as before.
+   *
+   * The fallback deliberately charges a failed investigation NOTHING rather
+   * than its ceiling. Charging the ceiling was tried and is wrong twice over:
+   * it is the starve-the-work-list defect ADR-085 removed, and it books a
+   * number nobody measured into the ledger that guards real money — the same
+   * trade `gemini-agent-client.ts` refuses when it reports zero usage on a
+   * throw instead of an estimate. An honest gap beats an invented figure;
+   * closing the gap is what `requestsIssued` is for.
+   */
+  const spent = (): number =>
+    issued === undefined ? stepsSpent : issued() - issuedBaseline;
   let auditEntries = 0;
 
   for (const candidate of plan.investigate) {
@@ -421,14 +457,14 @@ export async function runPhaseA(
     // A whole investigation's worst case must fit, or it is not started —
     // starting one that cannot finish spends requests to produce
     // INSUFFICIENT_EVIDENCE, which is the worst way to run out.
-    if (requestsSpent + budget.maxSteps > maxRequests) break;
+    if (spent() + budget.maxSteps > maxRequests) break;
 
     try {
       const { outcome, auditEntries: n } = await investigateOne(
         runId, candidate.exceptionId, deps, gateContext);
       investigated += 1;
       auditEntries += n;
-      requestsSpent += outcome.steps;
+      stepsSpent += outcome.steps;
       usage.tokensIn += outcome.usage.tokensIn;
       usage.tokensOut += outcome.usage.tokensOut;
       verdicts[outcome.verdict.verdict] = (verdicts[outcome.verdict.verdict] ?? 0) + 1;
@@ -454,13 +490,13 @@ export async function runPhaseA(
   // gets cut, because the exception list is what the track grades. Decided in
   // advance precisely so it is not decided under pressure on submission day.
   for (const candidate of plan.corroborate) {
-    if (requestsSpent + CORROBORATION_BUDGET.maxSteps > maxRequests) break;
+    if (spent() + CORROBORATION_BUDGET.maxSteps > maxRequests) break;
     try {
       const { outcome, auditEntries: n } = await corroborateOne(
         runId, candidate.matchId, deps, gateContext);
       corroborated += 1;
       auditEntries += n;
-      requestsSpent += outcome.steps;
+      stepsSpent += outcome.steps;
       usage.tokensIn += outcome.usage.tokensIn;
       usage.tokensOut += outcome.usage.tokensOut;
       corroborationVerdicts[outcome.verdict.verdict] =
@@ -490,7 +526,7 @@ export async function runPhaseA(
     verdicts,
     groundingFailures,
     budgetExhaustedCount,
-    requestsSpent,
+    requestsSpent: spent(),
     usage,
     costUsd: deps.cost === null ? null : usdFor(usage, deps.cost),
     auditEntries,

@@ -99,6 +99,26 @@ export type AgentTurnResult =
     detail: string;
     /** Non-zero when the request reached the model before failing. */
     usage: AgentUsage;
+    /**
+     * Whether sending the SAME request again could plausibly succeed.
+     *
+     * Set by the provider client, because only it can read a status code — and
+     * consumed by `rate-limiter.ts`, which is provider-neutral and must not
+     * parse `detail` to guess. Rate limits and transient 5xx are retryable; a
+     * refusal, a timeout and a malformed request are not.
+     *
+     * Absent means "do not retry". The conservative default is deliberate: a
+     * wrongly-retried call costs money and quota, a wrongly-abandoned one costs
+     * one investigation that the loop already degrades honestly.
+     */
+    retryable?: boolean;
+    /**
+     * How long the provider said to wait, in ms, when it said so.
+     *
+     * Preferred over any backoff we would compute: the provider knows when the
+     * quota refills. Absent means the caller picks.
+     */
+    retryAfterMs?: number;
   };
 
 export interface AgentTurnRequest {
