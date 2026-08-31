@@ -590,10 +590,16 @@ function buildTools(ctx: ToolContext): AgentTool[] {
         const outcome = await inReadOnlyTx(async (c) => {
           const credit = await txnRepo.findTransaction(a.bankTransactionId, c);
           if (credit === null || credit.runId !== ctx.runId) return null;
-          const { transactions: pool } = await txnRepo.searchTransactionsForAgent(
-            ctx.runId,
-            { sourceSystem: 'gateway', statusNorm: 'reconcilable', unmatchedOnly: true },
-            bounds.poolSize, c);
+          // S10's OWN population, UNCAPPED (issue #55). This used to be
+          // `searchTransactionsForAgent({ unmatchedOnly: true }, bounds.poolSize)`,
+          // which was wrong twice: `unmatchedOnly` asks whether a record is in any
+          // match at all where the engine asks whether its BANK ROLE is open (54
+          // records vs 14 on the holdout), and the LIMIT truncated by row number
+          // BEFORE `buildBatchPool` applied the date window, the counterparty
+          // filter and the date-proximity ranking — so widening `poolSize` widened
+          // an arbitrary prefix rather than the search. `buildBatchPool` does the
+          // capping, at `bounds.poolSize`, exactly as it does for the engine.
+          const pool = await txnRepo.listBatchPoolCandidates(ctx.runId, c);
           // THE ENGINE'S SEARCH (ADR-049), with the run's config and only the
           // three bounds ADR-085 permits the agent to widen. `batchSubsetBudgetMs`
           // is NOT among them — it stays ADR-060's safety valve, so
@@ -615,6 +621,12 @@ function buildTools(ctx: ToolContext): AgentTool[] {
 
         const { credit, outcome: o } = outcome;
         const memberIds = o.kind === 'decomposed' ? o.members.map((m) => m.id) : [];
+        // Every bound at or above the run's. A single narrowed dimension is enough
+        // to make "stronger than the engine's" false, so this is an AND.
+        const widerThanEngine =
+          bounds.poolSize >= ctx.config.batchPoolCap
+          && bounds.maxSubsetSize >= ctx.config.batchMaxSubsetSize
+          && bounds.nodeBudget >= ctx.config.batchNodeBudget;
         const result = {
           bankTransactionId: credit.id,
           creditAmountDisplay: formatPaise(credit.amountPaise),
@@ -632,13 +644,22 @@ function buildTools(ctx: ToolContext): AgentTool[] {
             : [],
           candidateSubsets: o.kind === 'ambiguous' ? o.subsets : null,
           // The honest reading of the result, spelled out so the model does not
-          // have to infer it: exhaustive at wider bounds is a STRONGER claim than
-          // the engine's, and that is a win even when nothing was found (§5).
-          interpretation: o.stats.exhaustive
-            ? 'The whole declared space was searched at these wider bounds. This is a '
-              + 'stronger claim than the engine\'s original one.'
-            : `The search stopped at a bound (${o.stats.boundHit?.bound ?? 'unknown'}). `
-              + 'A decomposition may still exist; this is not a proof.',
+          // have to infer it (§5). CONDITIONAL on the bounds actually being wider
+          // (issue #55): "a stronger claim than the engine's" is only true when
+          // nothing was narrowed, and the agent may pass bounds BELOW the run's.
+          // Asserting it unconditionally handed the model a false statement in
+          // deterministic prose, which is the one place it cannot check us.
+          interpretation: !o.stats.exhaustive
+            ? `The search stopped at a bound (${o.stats.boundHit?.bound ?? 'unknown'}). `
+              + 'A decomposition may still exist; this is not a proof.'
+            : widerThanEngine
+              ? 'The whole declared space was searched, over the same candidate '
+                + 'population the engine uses and at bounds no narrower than its own. '
+                + 'This is a STRONGER claim than the engine\'s original one.'
+              : 'The whole declared space was searched AT THESE BOUNDS, which are '
+                + 'narrower than the engine\'s in at least one dimension (see '
+                + 'engineBounds). This is NOT a stronger claim than the engine\'s. '
+                + 'Re-run at or above the engine\'s bounds before concluding.',
         };
         return {
           result,

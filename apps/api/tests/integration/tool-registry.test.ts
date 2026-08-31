@@ -9,13 +9,16 @@ import {
 import { ENGINE_DEFAULTS } from '../../src/config/defaults.js';
 import { AGENT_DEFAULTS } from '../../src/config/defaults.js';
 import { createRun, findRun } from '../../src/repositories/runs.js';
-import { listTransactions } from '../../src/repositories/transactions.js';
+import {
+  listBatchPoolCandidates, listTransactions,
+} from '../../src/repositories/transactions.js';
 import { listExceptions } from '../../src/repositories/exceptions.js';
 import { executeRun } from '../../src/services/run/orchestrator.js';
 import {
   createToolRegistry, TOOL_NAMES, SEARCH_RESULT_CAP, type ToolContext,
 } from '../../src/services/agent/tool-registry.js';
 import { scorePair } from '../../src/services/matching/scoring.js';
+import { buildBatchPool } from '../../src/services/matching/batch-decomposition.js';
 import type { AgentTool } from '../../src/types/agent.js';
 import type { RunConfig } from '../../src/types/engine.js';
 
@@ -506,6 +509,154 @@ describe('agent tool registry (integration)',
                 (SELECT count(*)::int FROM audit_log WHERE run_id=$1) a`, [runId]);
       assert.deepEqual(after.rows[0], before.rows[0],
         'Phase A reads the engine\'s output and never writes to it (ADR-048)');
+    });
+
+    /**
+     * ── THE SELF-CORRECTION SURFACE MUST NOT BE WEAKER THAN THE ENGINE (#55) ──
+     *
+     * `rerun_subset_search` used `searchTransactionsForAgent({unmatchedOnly})`
+     * capped at `poolSize`. Two divergences from S10, both silent:
+     *
+     *   1. `unmatchedOnly` asks "is this record in ANY non-rejected match".
+     *      `runBatchStage` asks "is its BANK ROLE open". A gateway payment
+     *      matched to a LEDGER row but with no bank leg — the ordinary shape of
+     *      a payment awaiting settlement, and so the typical member of a
+     *      decomposition — is open to the engine and invisible to the tool.
+     *      Measured on the holdout: engine 54, tool 14.
+     *   2. The LIMIT truncated by row number BEFORE `buildBatchPool` applied the
+     *      date window, counterparty filter and date-proximity ranking, so
+     *      widening `poolSize` widened an arbitrary prefix, not the search.
+     *
+     * The tool then told the model, in deterministic prose it cannot check, that
+     * the result was "a stronger claim than the engine's original one".
+     */
+    describe('rerun_subset_search searches the ENGINE\'s population (#55)', () => {
+      test('the pool holds gateway records that are matched but have NO bank leg', async () => {
+        // The 54-vs-14 gap, asserted as the property rather than the number: a
+        // record the old `unmatchedOnly` predicate excluded must be present.
+        const ids = new Set((await listBatchPoolCandidates(runId)).map((t) => t.id));
+        const { rows } = await getPool().query<{ id: string }>(
+          `SELECT t.id FROM transactions t
+            WHERE t.run_id = $1 AND t.source_system = 'gateway'
+              AND t.status_norm = 'reconcilable'
+              AND EXISTS (SELECT 1 FROM match_members mm JOIN matches m ON m.id = mm.match_id
+                           WHERE mm.transaction_id = t.id AND m.status <> 'human_rejected')
+              AND NOT EXISTS (
+                SELECT 1 FROM match_members mm JOIN matches m ON m.id = mm.match_id
+                  JOIN match_members mm2 ON mm2.match_id = m.id
+                  JOIN transactions t2 ON t2.id = mm2.transaction_id
+                 WHERE mm.transaction_id = t.id AND m.status <> 'human_rejected'
+                   AND t2.source_system = 'bank')`, [runId]);
+
+        assert.ok(rows.length > 0,
+          'fixture holds no matched-but-bank-open gateway record, so this cannot fail');
+        for (const r of rows) {
+          assert.ok(ids.has(r.id),
+            `${r.id} is matched but has no bank leg: open to S10, so the pool must hold it`);
+        }
+      });
+
+      test('every pooled record is reconcilable gateway with no bank counterpart', async () => {
+        // Minimality. Over-including would let the search propose a member that
+        // already has a settlement, which S11 would then refuse.
+        const pool = await listBatchPoolCandidates(runId);
+        assert.ok(pool.length > 0);
+        for (const t of pool) {
+          assert.equal(t.sourceSystem, 'gateway');
+          assert.equal(t.statusNorm, 'reconcilable');
+          assert.equal(t.runId, runId);
+        }
+        const { rows } = await getPool().query<{ c: number }>(
+          `SELECT count(*)::int c FROM match_members mm
+             JOIN matches m ON m.id = mm.match_id
+             JOIN match_members mm2 ON mm2.match_id = m.id
+             JOIN transactions t2 ON t2.id = mm2.transaction_id
+            WHERE mm.transaction_id = ANY($1::uuid[])
+              AND m.status <> 'human_rejected' AND t2.source_system = 'bank'`,
+          [pool.map((t) => t.id)]);
+        assert.equal(rows[0]!.c, 0, 'a pooled record already has a bank leg');
+      });
+
+      test('the pool the tool SEARCHES is the one buildBatchPool derives from S10\'s population',
+        async () => {
+        // ── WHY THIS ASSERTS THE POOL AND NOT THE VERDICT ──
+        // The obvious test — "the tool at the engine's bounds agrees with what
+        // S10 recorded" — PASSES ON THE BROKEN CODE, and finding that out is the
+        // reason this test looks like it does. Measured on the holdout, the old
+        // `unmatchedOnly` prefix gave `buildBatchPool` a pool of ZERO for all
+        // four UNSPLITTABLE_BATCH credits, where S10's own population gives 1-2.
+        // An empty search is trivially exhaustive, so the tool agreed with the
+        // engine's `searchExhausted: true` for the opposite reason. Two answers
+        // that match because one of them is vacuous is precisely the check that
+        // cannot fail, and this repo has now shipped six of those.
+        //
+        // So the property under test is the INPUT, where the defect actually
+        // lives and where it is observable.
+        const population = await listBatchPoolCandidates(runId);
+        const all = await listTransactions(runId);
+        const excs = await listExceptions(runId, { category: 'UNSPLITTABLE_BATCH' },
+          'severity', 200, 0);
+        assert.ok(excs.exceptions.length > 0, 'no UNSPLITTABLE_BATCH exception to check against');
+
+        const tool = registry.get('rerun_subset_search')!;
+        let compared = 0;
+        let sawNonEmpty = false;
+        for (const e of excs.exceptions) {
+          if (e.transactionId === null) continue;
+          const credit = all.find((t) => t.id === e.transactionId);
+          if (credit === undefined) continue;
+
+          const expected = buildBatchPool(credit, population, config).pool.length;
+
+          const out = await tool.execute({
+            bankTransactionId: e.transactionId,
+            poolSize: config.batchPoolCap,
+            maxSubsetSize: config.batchMaxSubsetSize,
+            nodeBudget: config.batchNodeBudget,
+          });
+          const r = out.result as { stats?: { poolSize: number } };
+          if (r.stats === undefined) continue;
+
+          assert.equal(r.stats.poolSize, expected,
+            `credit ${e.transactionId}: the tool searched ${r.stats.poolSize} candidates where `
+            + `buildBatchPool over S10's own population yields ${expected}. The tool is not `
+            + 'being handed the engine\'s pool.');
+          if (expected > 0) sawNonEmpty = true;
+          compared += 1;
+        }
+        assert.ok(compared > 0, 'no credit was actually compared');
+        assert.ok(sawNonEmpty,
+          'every pool was empty, so "exhaustive" is vacuous and this test proves nothing');
+      });
+
+      test('"stronger than the engine" is claimed ONLY when no bound was narrowed', async () => {
+        // Deterministic prose the model cannot check, so it must never assert
+        // more than was done. Narrow ONE dimension and the claim is withdrawn.
+        const excs = await listExceptions(runId, { category: 'UNSPLITTABLE_BATCH' },
+          'severity', 10, 0);
+        const subject = excs.exceptions.find((e) => e.transactionId !== null);
+        assert.ok(subject !== undefined, 'no UNSPLITTABLE_BATCH credit available');
+        const tool = registry.get('rerun_subset_search')!;
+        const ceil = AGENT_DEFAULTS.rerunSubsetCeilings;
+        const say = (o: { result: unknown }): string =>
+          (o.result as { interpretation: string }).interpretation;
+
+        const wide = say(await tool.execute({
+          bankTransactionId: subject.transactionId, poolSize: ceil.poolSize,
+          maxSubsetSize: ceil.maxSubsetSize, nodeBudget: ceil.nodeBudget,
+        }));
+        const narrow = say(await tool.execute({
+          bankTransactionId: subject.transactionId, poolSize: ceil.poolSize,
+          maxSubsetSize: 2, nodeBudget: ceil.nodeBudget,   // below the run's
+        }));
+
+        if (wide.includes('whole declared space')) {
+          assert.match(wide, /STRONGER claim/,
+            'an exhaustive search at ceiling bounds should read as stronger');
+        }
+        assert.doesNotMatch(narrow, /STRONGER claim/,
+          'a search with a NARROWED bound must not read as stronger than the engine\'s');
+      });
     });
   });
 

@@ -169,6 +169,61 @@ export async function listTransactions(runId: string): Promise<NormalizedTransac
   return rows.map(toTransaction);
 }
 
+/**
+ * The candidate population for a settlement decomposition (issue #55).
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * THIS IS S10's OWN POPULATION, NOT "RECORDS IN NO MATCH AT ALL".
+ *
+ * `runBatchStage` selects with `openIn('gateway', 'bank')` — reconcilable
+ * gateway records whose BANK ROLE is open. `rerun_subset_search` used
+ * `unmatchedOnly`, which asks whether the record is in ANY non-rejected match,
+ * and those are very different questions: a gateway payment matched to a LEDGER
+ * row but with no bank leg is the ordinary shape of a payment awaiting
+ * settlement, and therefore the typical member of a decomposition. On the
+ * holdout the engine's population is 54 records and `unmatchedOnly` returned 14
+ * — the agent was re-searching 26% of the space and reporting the result as a
+ * stronger proof than the engine's.
+ *
+ * ── ONE DELIBERATE DIFFERENCE FROM THE IN-RUN PREDICATE, STATED ──
+ * `openIn` reads `priorPairs` — what S6–S9 proposed, before S11 assembled
+ * groups. This reads `match_members`, which is what S11 KEPT. So a pair S9
+ * proposed and S11 declined leaves its gateway record looking open here and
+ * closed there. That is the right direction for this caller and the only one
+ * available post-run: the agent is deliberately re-searching a space the engine
+ * has finished with, and "does this payment have a bank leg in a match" is the
+ * question a human asks after the run. It is never NARROWER than the engine's,
+ * which is the property `rerun_subset_search` depends on.
+ *
+ * NOT capped. `buildBatchPool` applies the date window, the counterparty filter,
+ * the date-proximity ranking and `batchPoolCap` — in that order. Truncating here
+ * would hand it an arbitrary prefix ordered by row number, so widening the cap
+ * would widen a prefix rather than the search. Duplicating its predicate in SQL
+ * would be two copies of one rule, free to drift.
+ * ══════════════════════════════════════════════════════════════════════════════
+ */
+export async function listBatchPoolCandidates(
+  runId: string, client?: TxClient,
+): Promise<NormalizedTransaction[]> {
+  const { rows } = await (client ?? getPool()).query<TxnRow>(
+    `SELECT ${COLUMNS} FROM transactions t
+      WHERE t.run_id = $1
+        AND t.source_system = 'gateway'
+        AND t.status_norm = 'reconcilable'
+        AND NOT EXISTS (
+          SELECT 1
+            FROM match_members mm
+            JOIN matches m        ON m.id = mm.match_id
+            JOIN match_members mm2 ON mm2.match_id = m.id
+            JOIN transactions  t2  ON t2.id = mm2.transaction_id
+           WHERE mm.transaction_id = t.id
+             AND m.status <> 'human_rejected'
+             AND t2.source_system = 'bank')
+      ${CANONICAL_ORDER_SQL}`,
+    [runId]);
+  return rows.map(toTransaction);
+}
+
 export async function findTransaction(
   id: string, client?: TxClient,
 ): Promise<NormalizedTransaction | null> {
