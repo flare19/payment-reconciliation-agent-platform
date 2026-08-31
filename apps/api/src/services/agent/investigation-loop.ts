@@ -128,6 +128,13 @@ const SYSTEM_PROMPT = [
   '',
   'Confidence is a LABEL: high, medium or low. Never a number.',
   '',
+  'YOU HAVE A STEP BUDGET AND YOU CAN SEE IT. Each turn tells you how many steps remain.',
+  'Investigating until the budget cuts you off wastes the investigation: you are stopped',
+  'mid-thought and the verdict becomes INSUFFICIENT_EVIDENCE regardless of what you found.',
+  'Pace yourself. Most exceptions need two to four tool calls. When one step remains, STOP',
+  'calling tools and write the verdict with what you have -- CONFIRMED_UNRESOLVABLE with a',
+  'stated reason is a real and valuable answer, and is worth far more than being cut off.',
+  '',
   'Every tool result carries a "resultDigest" string. Copy it back VERBATIM in the matching',
   'reasoning step. It is a checksum, not a summary: a deterministic gate compares what you',
   'echo against what the tool actually returned, so a digest you paraphrase or invent voids',
@@ -225,9 +232,25 @@ export async function investigate(
     }
 
     steps += 1;
+    // ── THE AGENT CAN SEE ITS OWN BUDGET ──
+    // The first live investigation spent all ten steps and never concluded: the
+    // model had no way to know a bound existed, so it investigated until it was
+    // cut off and the verdict became INSUFFICIENT_EVIDENCE regardless of what it
+    // had found. A bound the agent cannot see is a bound it cannot pace against.
+    // Injected as a system-role turn rather than edited into the static prompt,
+    // so the stable prefix stays stable.
+    const remaining = budget.maxSteps - steps;
+    const paced: AgentMessage[] = [...messages, {
+      role: 'user',
+      text: remaining === 0
+        ? 'FINAL STEP. Do not call any more tools. Write your verdict JSON now, using what '
+          + 'you already have. If the evidence does not support a proposal, say so honestly.'
+        : `[${remaining} step(s) remain after this one. Conclude as soon as you can answer.]`,
+    }];
+
     const turn = await deps.client.turn({
       system: SYSTEM_PROMPT,
-      messages,
+      messages: paced,
       tools: declarations,
       maxOutputTokens: 2048,
     });

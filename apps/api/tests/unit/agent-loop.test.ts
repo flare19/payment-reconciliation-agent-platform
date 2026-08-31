@@ -344,6 +344,48 @@ describe('the reasoning chain is a TRANSCRIPT, not narration (§6)', () => {
   });
 });
 
+describe('the agent can SEE its step budget', () => {
+  test('every turn carries a countdown, and the last one forbids more tools', async () => {
+    // The first live investigation spent all ten steps and never concluded,
+    // because the model had no way to know a bound existed. A bound the agent
+    // cannot see is a bound it cannot pace against.
+    const client = fakeClient([toolCall('c1', 'get_exception')]);
+    await investigate(REQUEST, deps({ client }),
+      { ...AGENT_DEFAULTS.budget, maxSteps: 3, maxToolCalls: 99 });
+
+    assert.equal(client.requests.length, 3);
+    const lastTextOf = (i: number): string => {
+      const msgs = client.requests[i]!.messages;
+      const last = msgs[msgs.length - 1]!;
+      return last.role === 'user' ? last.text : '';
+    };
+    assert.match(lastTextOf(0), /2 step\(s\) remain/);
+    assert.match(lastTextOf(1), /1 step\(s\) remain/);
+    assert.match(lastTextOf(2), /FINAL STEP\. Do not call any more tools/);
+  });
+
+  test('the countdown is a separate turn, so the cached prefix stays stable', async () => {
+    // Editing the static system prompt per step would invalidate the prefix on
+    // every turn — the one thing prompt caching cannot survive.
+    const client = fakeClient([finalVerdict()]);
+    await investigate(REQUEST, deps({ client }));
+    assert.equal(client.requests[0]!.system, systemPrompt(),
+      'the system prompt must be byte-identical across turns');
+  });
+
+  test('pacing does not pollute the stored history', async () => {
+    // The countdown is scaffolding, not conversation. If it accumulated, step 10
+    // would carry nine stale countdowns each contradicting the last.
+    const client = fakeClient([toolCall('c1', 'get_exception')]);
+    await investigate(REQUEST, deps({ client }),
+      { ...AGENT_DEFAULTS.budget, maxSteps: 3, maxToolCalls: 99 });
+    const third = client.requests[2]!.messages;
+    const countdowns = third.filter(
+      (m) => m.role === 'user' && /step\(s\) remain|FINAL STEP/.test(m.text));
+    assert.equal(countdowns.length, 1, 'exactly one countdown, the current one');
+  });
+});
+
 test('the system prompt states the ADR-049 rule and the four verdicts', () => {
   const p = systemPrompt();
   assert.match(p, /deterministic code computes/i);
@@ -353,4 +395,5 @@ test('the system prompt states the ADR-049 rule and the four verdicts', () => {
     assert.match(p, new RegExp(v));
   }
   assert.match(p, /Confidence is a LABEL/);
+  assert.match(p, /STEP BUDGET AND YOU CAN SEE IT/);
 });

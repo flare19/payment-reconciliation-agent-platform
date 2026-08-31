@@ -26,6 +26,22 @@ export const DEFAULT_EXPLAIN_MODEL = 'gemini-3.5-flash';
  */
 export const DEFAULT_PROMPT_VERSION = 'v1';
 
+/**
+ * Phase A's model (ADR-080, amended by ADR-086).
+ *
+ * ADR-080 named `gemini-3.7-flash`, chosen from Google's DESCRIPTION of it
+ * ("built for complex coding, agentic workflows") rather than from any
+ * measurement. On this key it answers "reply with the single word: ok" in
+ * **53 seconds** — 63 s with thinking disabled, so the latency is not thinking.
+ * `gemini-3.6-flash` answers the same prompt in **2.4 s**.
+ *
+ * That is not a preference, it is a contradiction: `agent-design.md` §8 bounds an
+ * ENTIRE investigation at 60 s, and one turn on 3.7 exceeds the budget for the
+ * whole investigation. The model ADR-080 picked cannot satisfy the spec ADR-080
+ * sits beside.
+ */
+export const DEFAULT_AGENT_MODEL = 'gemini-3.6-flash';
+
 /** ADR-030. Sum = 1.00. See the ceiling guarantee documented on `ScoreWeights`. */
 export const SCORE_WEIGHTS: ScoreWeights = {
   anchor: 0.30,

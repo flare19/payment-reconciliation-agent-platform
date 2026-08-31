@@ -50,6 +50,24 @@ export interface AgentToolCall {
   id: string;
   name: string;
   args: Record<string, unknown>;
+  /**
+   * OPAQUE provider state that must be replayed with this call, or nothing.
+   *
+   * The loop MUST NOT inspect, interpret, synthesise or log-and-reconstruct
+   * this. It carries it from the turn that produced it back into the history of
+   * the next turn, unchanged, and that is the whole contract.
+   *
+   * It exists because a provider-neutral `{id, name, args}` is not actually
+   * enough to replay a tool call on every provider. Gemini 3.x attaches a
+   * `thoughtSignature` to `functionCall` parts and REJECTS the next request with
+   * a 400 if the signature is missing from the replayed history — discovered by
+   * the first live investigation, which failed on step 2 with "Function call is
+   * missing a thought_signature". Anthropic has the same shape of requirement
+   * for thinking blocks ("pass them back unchanged on the same model"), so this
+   * is a general property of reasoning models rather than a Gemini quirk, and
+   * the field survives the provider swap.
+   */
+  providerSignature?: string;
 }
 
 export interface AgentUsage {

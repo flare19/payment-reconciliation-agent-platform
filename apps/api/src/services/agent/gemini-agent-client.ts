@@ -70,6 +70,12 @@ function toContents(messages: readonly AgentMessage[]): Content[] {
         ...(m.text.trim() === '' ? [] : [{ text: m.text }]),
         ...m.toolCalls.map((c) => ({
           functionCall: { id: c.id, name: c.name, args: c.args },
+          // Replayed VERBATIM. Gemini 3.x rejects the next request with a 400
+          // if a replayed functionCall has lost its thought signature, so this
+          // is not optional bookkeeping — it is what makes a multi-step tool
+          // loop work at all on these models.
+          ...(c.providerSignature === undefined
+            ? {} : { thoughtSignature: c.providerSignature }),
         })),
       ];
       // A model turn with neither text nor a call cannot be replayed; skipping
@@ -92,6 +98,28 @@ function toContents(messages: readonly AgentMessage[]): Content[] {
     });
   }
   return out;
+}
+
+/**
+ * The `thoughtSignature` Gemini attached to a function-call part.
+ *
+ * Read off the raw parts rather than the `functionCalls` accessor, which
+ * projects to `FunctionCall` and drops the sibling field. Matched by tool name:
+ * within one turn a model does not call the same tool twice with different
+ * signatures in a way that matters here, and the alternative — index-matching
+ * two differently-shaped arrays — is the more fragile pairing.
+ */
+function signatureFor(
+  response: { candidates?: { content?: { parts?: {
+    functionCall?: { name?: string }; thoughtSignature?: string }[] } }[] },
+  toolName: string | undefined,
+): string | undefined {
+  for (const part of response.candidates?.[0]?.content?.parts ?? []) {
+    if (part.functionCall?.name === toolName && part.thoughtSignature !== undefined) {
+      return part.thoughtSignature;
+    }
+  }
+  return undefined;
 }
 
 function usageOf(meta: {
@@ -150,13 +178,17 @@ export function createGeminiAgentClient(opts: GeminiAgentOptions): AgentLlmClien
       if (calls.length > 0) {
         return {
           ok: true, kind: 'tool_call', text,
-          calls: calls.map((c, i) => ({
-            // Gemini may omit the id; the loop needs one to pair the result
-            // back, so a positional fallback keeps the pairing total.
-            id: c.id ?? `call_${i + 1}`,
-            name: c.name ?? '',
-            args: c.args ?? {},
-          })),
+          calls: calls.map((c, i) => {
+            const signature = signatureFor(response, c.name);
+            return {
+              // Gemini may omit the id; the loop needs one to pair the result
+              // back, so a positional fallback keeps the pairing total.
+              id: c.id ?? `call_${i + 1}`,
+              name: c.name ?? '',
+              args: c.args ?? {},
+              ...(signature === undefined ? {} : { providerSignature: signature }),
+            };
+          }),
           usage,
         };
       }

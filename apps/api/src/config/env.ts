@@ -6,7 +6,9 @@
  * Optional vars degrade explicitly (see `llmConfigured`).
  */
 
-import { AGENT_DEFAULTS, DEFAULT_EXPLAIN_MODEL, DEFAULT_PROMPT_VERSION } from './defaults.js';
+import {
+  AGENT_DEFAULTS, DEFAULT_AGENT_MODEL, DEFAULT_EXPLAIN_MODEL, DEFAULT_PROMPT_VERSION,
+} from './defaults.js';
 
 function required(name: string): string {
   const v = process.env[name];
@@ -106,7 +108,7 @@ export function loadEnv(): Env {
 
     geminiApiKey: key === undefined || key === '' ? null : key,
     explainModel: optional('GEMINI_EXPLAIN_MODEL', DEFAULT_EXPLAIN_MODEL),
-    agentModel: optional('GEMINI_AGENT_MODEL', 'gemini-3.7-flash'),
+    agentModel: optional('GEMINI_AGENT_MODEL', DEFAULT_AGENT_MODEL),
     llmExplainEnabled: bool('LLM_EXPLAIN_ENABLED', true),
     llmMaxCallsPerRun: int('LLM_MAX_CALLS_PER_RUN', 8),
     promptVersion: optional('PROMPT_VERSION', DEFAULT_PROMPT_VERSION),
