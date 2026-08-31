@@ -214,7 +214,23 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 
 ## 10. Current state
 
-**As of 2026-08-31 (Day 12): U11, U12 and U13 are complete. The Analyst is FEATURE-COMPLETE and has never been measured.** Branch `day12-explain-layer`, 15 commits, **unmerged**. 722 tests in `apps/api`, 235 at root, typecheck and both builds clean.
+**As of 2026-09-01 (Day 13): everything through AUDIT-3 is MERGED TO `main` (`3546b6f`). No unmerged branches remain.** 762 tests in `apps/api`, 235 at root, typecheck and both builds clean.
+
+**The build is now one task away from the frontend: swap Gemini for Anthropic, and make ONE bounded verification run.** Everything else in the backend is either done or deliberately parked.
+
+### What changed on Day 13
+
+**AUDIT-3** (isolated, Opus/max, audit-only) audited U11–U13 and filed nine issues — three P1, four P2, two P3 — plus a re-triage comment on #26. **All three P1s are fixed and closed**, and each one was invisible to a green 741-test suite:
+
+| | What it was | Why no test caught it |
+|---|---|---|
+| [#53](https://github.com/flare19/payment-reconciliation-agent-platform/issues/53) | `RESOLUTION_PROPOSED` was **unreachable** — A3 validated four `proposedAction` variants the prompt never showed the model. 20 live investigations produced 0 proposals; the one attempt died on `proposedAction must be an object`. | The gate's tests build actions by hand against the type. Nothing owned the fact that the schema has to *reach the model*. |
+| [#54](https://github.com/flare19/payment-reconciliation-agent-platform/issues/54) | A3 joined the model's **narrative step number** to the runtime **turn counter**. 13 of 15 verdict-producing runs were rejected by that collision, not by a hallucination. Now joined on `(tool, resultDigest)`. | Fake-client fixtures number `reasoning[].step` to agree with the turn counter, because the fixture author knows the runtime's numbering. A real model does not. |
+| [#55](https://github.com/flare19/payment-reconciliation-agent-platform/issues/55) | `rerun_subset_search` handed `buildBatchPool` a pool of **ZERO** for all four `UNSPLITTABLE_BATCH` credits, returned `exhaustive: true`, and told the model that was a stronger proof than the engine's. Now searches S10's own population. | An empty search is trivially exhaustive, so it *agreed* with the engine's `searchExhausted: true` — for the opposite reason. |
+
+> **#54 REFUTES `docs/analyst-baseline.md` DEFECT 3.** That document concluded from a uniform 10-of-10 failure that corroboration's grounding wiring was at fault. The wiring is correct; the join key was the defect, and it was never corroboration-specific. **That file's DEFECT 3 section is now WRONG and has not yet been corrected — do not cite it.**
+
+> **THE PATTERN AUDIT-3 ADDS, AND IT IS THE SIXTH INSTANCE.** The obvious test for #55 — *"at the engine's own bounds the tool reproduces the engine's verdict"* — **passes on the broken code.** It was written, run against the pre-fix source, seen to pass, and thrown away. **Every behavioural fix on Day 13 was verified by reverting the source and watching the new test fail**, and the failure message is recorded in each issue's closing comment. Do this. A guard nobody has watched fail is indistinguishable from one that cannot.
 
 ### Read this first if you are a fresh session
 
@@ -263,25 +279,56 @@ Correct answer, correct amount of work. Earlier, on a different attempt, **the A
 
 ### THE NEXT SESSION: the Anthropic swap
 
-Decided with Tejas. The free tier cannot support iteration (20 req/day/model), so the Analyst was finished on it and the swap happens on a **fresh branch off `day12-explain-layer`, named `swap-for-anthropic-api`**, in a **fresh chat**.
+Decided with Tejas. The free tier cannot support iteration (20 req/day/model), so the Analyst was finished on it and the swap happens on a **fresh branch off `main`, named `swap-for-anthropic-api`**, in a **fresh chat**.
+
+> **THE KEY IS HARD-CAPPED AND RUNS ARE COUNTABLE. Plan the run before making it.** Every remaining live run has to earn its place. Write down what the run must prove BEFORE spending it, and prefer one run that verifies several things to three that each verify one. Two bounds below must land BEFORE the first paid run or roughly 15 of 20 investigations will be killed mid-reasoning at full Opus rates, buying nothing.
 
 - **Tejas creates the API key himself.** Do not offer to create it. Walk him through `console.anthropic.com` -> Settings -> **Limits** (spend ceiling) -> **Usage** -> **Billing**. He pastes it into `apps/api/.env`, which is gitignored. **You never need to see the value.**
 - Budget agreed: **~$60**. Model: **`claude-opus-5`** for the Analyst with `AGENT_MAX_INVESTIGATIONS_PER_RUN` reduced from 20 to **~5** — that is ~$1.60/run with caching instead of ~$9.50, and a demo needs a few excellent investigations rather than twenty mediocre ones.
 - **`AGENT_QA_MAX_QUESTIONS_PER_HOUR = 100` IS THE BIGGEST FINANCIAL RISK IN THE PROJECT.** On a public unauthenticated endpoint at Opus-5 rates that is **~$25/hour** of exposure. A question-count cap cannot bound spend when question cost varies. **Denominate the public limit in dollars** and add a persistent spend ledger with pre-flight refusal (`messages.count_tokens` + `max_tokens` makes worst-case cost computable *before* the call). The `preflight` hook in `investigation-loop.ts` is the seam it plugs into.
 - The swap itself is small **by construction**: `AgentLlmClient` (`services/agent/agent-client.ts`) and `ExplainLlmClient` (`services/explain/llm-client.ts`) are injected interfaces. One new file each, plus config. **The loop, bounds, audit trail and grounding plumbing contain no provider types.**
 - **Measure the new model's per-turn latency against §8's 60 s bound BEFORE adopting it.** That is ADR-086's real contribution.
-- The prompt is the medium-risk part: tuning done against Gemini may not transfer. Expect a pass on the system prompts.
+- The prompt is the medium-risk part: tuning done against Gemini may not transfer. Expect a pass on the system prompts. **Note #53 grew the investigation system prompt by ~405 tokens/turn** (2,716 -> 4,337 chars) to carry the proposal schema — deliberate, but it makes the token bound below tighter.
+
+#### Two bounds that MUST land before the first paid run
+
+Both are verified real, both are recorded in `docs/analyst-baseline.md`, and **neither is filed as a GitHub issue** — they live only in that document.
+
+1. **The token bound is a spend guard doing a work guard's job.** `AGENT_DEFAULTS.budget` is `maxTokens: 40_000` and `maxSteps: 10`, and `tokensIn` is summed per turn while every turn resends the whole conversation — so the counter grows quadratically in steps. **Measured across 20 live investigations: the 10-step ceiling fired ZERO times and the token ceiling fired 15 times, at steps 6–9.** The two bounds are mutually inconsistent and a fake client never noticed, because it returns a fixed small usage per turn.
+2. **The agent cannot see the bound that actually stops it.** `investigation-loop.ts` computes its pacing signal as `budget.maxSteps - steps`, so the model is told "2 steps left" and then killed by a token ceiling it was never shown. The `remaining === 0` branch carrying *"FINAL STEP. Write your verdict JSON now"* is unreachable whenever tokens bind first — which was 15 of 20.
+
+> **The cheapest fix is also the best one:** a bound that fires should switch the model to *"conclude now"* rather than hard-break. Cutting off at step 8 discards eight steps of real retrieval; telling the model at step 8 that it must conclude recovers a verdict from the same work. The file's own words: *"being cut off loses work, answering early invents it."* There is a third option it does not currently take.
+
+#### What the ONE verification run has to prove
+
+Deferred deliberately from Day 13 so that one run covers everything rather than three runs covering one thing each. Acceptance criteria still open on three closed issues plus the explain layer:
+
+- **#53** — at least one `RESOLUTION_PROPOSED` that passes A3, and a verdict distribution that is no longer 0 proposals out of 20.
+- **#54** — corroboration grounding failures fall from 10/10; the surviving failures are real hallucinations, not numbering collisions.
+- **#55** — `ed3f30c4`'s `CONFIRMED_UNRESOLVABLE` re-checked against a pool that is no longer empty.
+- **ADR-086** — per-turn latency of the new model measured against §8's 60 s whole-investigation bound, BEFORE adopting it.
+- Re-run `npm run analyst` and diff against `data/baselines/analyst-gemini-3.1-flash-lite.json`. **`docs/analyst-baseline.md` is the "before"**, and its DEFECT 3 section must be corrected in the same pass.
 
 ### What is genuinely NOT done
 
-| | |
+| | Status |
 |---|---|
-| **Analyst scoring** (`tools/score`, validation-strategy §7) | **not started** — the biggest gap |
-| Q&A loop (U15) | not started; §11 says **cut first** if time runs out |
+| **The Anthropic swap** | **THE critical path.** See the block below. |
+| **One post-swap verification run** | Three P1 fixes and the explain layer have never met a live model since Day 12. |
+| **Analyst scoring** (`tools/score`, validation-strategy §7) | not started — but see the note below; it may not be affordable |
+| [#52](https://github.com/flare19/payment-reconciliation-agent-platform/issues/52) S13 explain has no grounding check | **open P1.** The only P1 left. |
+| Frontend (U17–U19) | untouched — two days budgeted |
+| Deploy (U14 API, U19 web) | untouched |
+| U16 scale benchmark | not started |
+| Q&A loop (U15) | not started; §11 says **cut first**. Treat as cut. |
 | Endpoints for corroborations | `agent_corroborations` has a repository but no route |
-| [#52](https://github.com/flare19/payment-reconciliation-agent-platform/issues/52) S13 grounding check | open P1 |
-| [#43](https://github.com/flare19/payment-reconciliation-agent-platform/issues/43) `countsTowardEngineMatchRate` | open, must land before the frontend reads it |
-| Deploy, frontend | untouched |
+| 6 open P2/P3 from AUDIT-3 + backlog | a nightly Sonnet cloud routine works these; see below |
+
+> **On Analyst scoring, honestly.** `validation-strategy.md` §7 wants false-despair recovered, proposal precision, hallucinated resolutions (must be 0) and unresolvable agreement. All four need `RESOLUTION_PROPOSED` verdicts to exist, which #53 has only just made possible, and enough runs to be statistically meaningful — on a hard-capped key that is a real cost. **If it cannot be afforded, say in the submission that the Analyst is unmeasured rather than reporting a figure from three investigations.** That is the same discipline ADR-020 applies to cold/warm.
+
+### The nightly P2/P3 sweep (automated)
+
+A Sonnet cloud routine runs daily at **04:00 IST** against `main`, works a fixed prioritized list, and opens ONE PR into `main` for review. It has **no database**, so it cannot run integration tests or `npm run score` — its output is UNVERIFIED until run locally. Order: **#43** (unblocks the frontend), #59, #60, #58, #57 (scoped), #22, #26, #48, #14, #37. Never merge its PR without running the full suite and a re-score.
 
 > **A dataset finding the demo needs.** `runs.metrics` reports `batchSearchExhausted: 4, batchSearchBoundExceeded: 0` — every batch search on the holdout ends in a proof. **§5's flagship self-correction story has no instance in this dataset**: `rerun_subset_search` can only ever confirm what the engine already proved. To demo recovery, the generator needs a case where the pool cap binds.
 
@@ -657,14 +704,37 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 | **U13** ✅ | Investigation loop A2 + triage A1 + CORROBORATE | **Opus / high** | **Done.** A1 triage (two work lists), A2 investigate, A2 corroborate (ADR-081/087, own table + own vocabulary), A4 persist, endpoint 25 live. One real grounded verdict; the A3 gate caught a real hallucination. **Never scored** — that is the open gap. |
 | **AUDIT-3** | Isolated audit of U11–U13 | **Opus / max** | Hallucination is a build blocker (ADR-053), not a metric |
 
-### Day 13 (Sep 2) — AUDIT-3, scale, and the P2 sweep
+### Day 13 (Sep 1) — AUDIT-3 and its three P1s — **COMPLETE**
 
-| # | Unit | Model | Why |
+| # | Unit | Model | Outcome |
 |---|---|---|---|
-| **AUDIT-3** | Isolated audit of U11–U13 | **Opus / max** | Hallucination is a build blocker (ADR-053), not a metric |
-| **U16** | Scale benchmark 1k/10k/100k (ADR-045) | **Sonnet / medium** | Throughput is a judged axis and the curve is the evidence for ADR-033's O(n×k) claim. Generator is already parameterized. |
-| — | **#43** (#38 landed on Day 11) | **Sonnet / high** | #43 must land before the frontend reads `countsTowardEngineMatchRate` |
-| **U15** | Q&A loop | **Sonnet / medium** | Same loop, smaller budget, one tool removed. **First cut candidate if the day overruns.** |
+| **AUDIT-3** | Isolated audit of U11–U13 | **Opus / max** | ✅ Nine issues (#53–#61), three P1. It found that the Analyst's headline verdict was unreachable, that 13 of 15 grounding rejections were our own bookkeeping, and that the self-correction tool searched an empty pool. |
+| **P1** | #53, #54, #55 | **Opus / high** | ✅ `27f8bb2`, `2af12a7`, `4a52661`. Merged to `main` in `3546b6f`. Each verified by reverting the source and watching the new test fail. |
+| — | Merge Day 11–13 to `main` | — | ✅ `3546b6f`. **No unmerged branches remain.** |
+| **U16** | Scale benchmark | — | **Deferred.** Nice-to-have against a hard deadline; see the ordering note below. |
+| **U15** | Q&A loop | — | **Treat as cut** (§11's own pre-agreed degradation order). |
+
+### THE REMAINING CRITICAL PATH — read this before planning a day
+
+Ordered by dependency, not preference. Everything above the line must happen; everything below it is optional and should be cut in this order if time runs short.
+
+| | Task | Depends on | Rough size |
+|---|---|---|---|
+| 1 | **Anthropic swap** — two client files + config, on `swap-for-anthropic-api` off `main` | nothing | 2–3 h |
+| 2 | **The two unfiled bounds** (token/step inconsistency, pacing signal) | — | 1 h, and it must precede task 3 |
+| 3 | **#52** — S13 explain grounding check. **The last open P1.** | nothing | 1.5–2 h |
+| 4 | **ONE bounded verification run** — proves #53, #54, #55, ADR-086 latency, explain | 1, 2, 3 | 1 h |
+| 5 | **Deploy API to Railway** (U14, ADR-061/074) — acceptance is *"a second deploy is one command"* | 4 | 2–3 h |
+| 6 | **Frontend** (U17 design + dashboard, U18 remaining screens) | #43, 5 | 6–8 h |
+| 7 | **Deploy web to Vercel** (U19) | 6 | 1 h |
+| 8 | **AUDIT-4** final pre-submission pass | 7 | 2 h |
+| 9 | **U20** — accuracy report, README, pitch video, build-challenges write-up | 8 | 3–4 h |
+| — | *below the line* | | |
+| | U16 scale benchmark | — | 1–2 h, cut if needed |
+| | Analyst scoring in `tools/score` | 4, and affordable runs | 3 h, may be unaffordable |
+| | U15 Q&A loop | — | **already cut** |
+
+> **#43 gates the frontend and is on the nightly Sonnet routine.** If that routine has not landed it by the time U17 starts, do it by hand first — the browse list otherwise implies a match rate the headline contradicts, and a panelist will see both numbers on the same screen.
 
 ### Day 14 (Sep 3) — frontend
 
