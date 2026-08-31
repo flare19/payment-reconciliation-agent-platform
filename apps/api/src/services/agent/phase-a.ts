@@ -44,6 +44,10 @@ import * as aliasRepo from '../../repositories/aliases.js';
 import * as matchRepo from '../../repositories/matches.js';
 
 import { investigate, reasoningChain, type InvestigationOutcome } from './investigation-loop.js';
+import {
+  corroborate, buildCorroborationPrompt, CORROBORATION_BUDGET,
+} from './corroborate.js';
+import * as corrRepo from '../../repositories/corroborations.js';
 import { buildInvestigationPrompt } from './investigation-prompt.js';
 import { createToolRegistry } from './tool-registry.js';
 import { triageRun, type TriagePlan } from './triage.js';
@@ -79,6 +83,11 @@ export interface PhaseAResult {
   runId: string;
   plan: TriagePlan;
   investigated: number;
+  /** Review-queue matches corroborated (ADR-081). Cut FIRST when requests bind. */
+  corroborated: number;
+  corroborationVerdicts: Record<string, number>;
+  /** Reported SEPARATELY from `groundingFailures` — different populations (ADR-087). */
+  corroborationGroundingFailures: number;
   /** Investigations not attempted because the shared request budget ran out. */
   skippedForBudget: number;
   verdicts: Record<string, number>;
@@ -269,6 +278,116 @@ export async function investigateOne(
   return { outcome, investigationId: investigation.id, auditEntries };
 }
 
+/** One corroboration, start to persisted verdict (ADR-081, ADR-087). */
+export async function corroborateOne(
+  runId: string,
+  matchId: string,
+  deps: PhaseADeps,
+  gateContext: Omit<GateContext, 'investigationId' | 'toolCalls'>,
+): Promise<{ outcome: Awaited<ReturnType<typeof corroborate>>; auditEntries: number }> {
+  const promptVersion = deps.promptVersion ?? 'agent-v1';
+  let auditEntries = 0;
+
+  const match = await matchRepo.findMatch(matchId);
+  if (match === null || match.runId !== runId) {
+    throw new Error(`corroborateOne: match ${matchId} is not in run ${runId}`);
+  }
+  const members = (await Promise.all(
+    match.members.map((m) => txnRepo.findTransaction(m.transactionId))))
+    .filter((t): t is NonNullable<typeof t> => t !== null);
+
+  const row = await corrRepo.startCorroboration({
+    runId, matchId, model: deps.client.model, promptVersion });
+
+  const append = async (
+    entry: Parameters<typeof auditRepo.appendAuditEntry>[0],
+  ): Promise<void> => {
+    await withTransaction((c: TxClient) => auditRepo.appendAuditEntry(entry, c));
+    auditEntries += 1;
+  };
+
+  await append({
+    ...blank, ...ANALYST, runId,
+    eventType: 'INVESTIGATION_STARTED', subjectType: 'investigation', subjectId: row.id,
+    reason: `corroboration opened on pending match ${matchId} `
+      + `(confidence ${match.confidence}, tier ${match.tier}) using ${deps.client.model}`,
+    details: details({ matchId, tier: match.tier, confidence: match.confidence,
+      model: deps.client.model, promptVersion, mode: 'corroborate' }),
+  });
+
+  const registry = createToolRegistry({ runId, config: deps.config });
+  const outcome = await corroborate(
+    { corroborationId: row.id, runId, matchId,
+      prompt: buildCorroborationPrompt(match, members) },
+    {
+      client: deps.client, registry, gateContext,
+      ...(deps.now === undefined ? {} : { now: deps.now }),
+      onToolCall: async (record: ToolCallRecord) => {
+        await append({
+          ...blank, ...ANALYST, runId,
+          eventType: 'AGENT_TOOL_CALLED', subjectType: 'investigation', subjectId: row.id,
+          reason: `step ${record.step}: called ${record.tool}, which returned `
+            + `${record.returnedIds.length} citable id(s) in ${record.durationMs} ms`,
+          details: details({ step: record.step, tool: record.tool,
+            arguments: record.arguments, returnedIds: record.returnedIds,
+            resultDigest: record.resultDigest, durationMs: record.durationMs,
+            mode: 'corroborate' }),
+        });
+      },
+    },
+    deps.budget ?? CORROBORATION_BUDGET);
+
+  const costUsd = deps.cost === null ? null : usdFor(outcome.usage, deps.cost);
+
+  await corrRepo.concludeCorroboration(row.id, {
+    verdict: outcome.verdict.verdict,
+    confidence: outcome.verdict.confidence,
+    reasoning: reasoningChain(outcome.toolCalls, {
+      ...outcome.verdict, verdict: 'CONFIRMED_UNRESOLVABLE', proposedAction: null }),
+    citations: outcome.verdict.citations,
+    groundingPassed: outcome.verdict.groundingPassed,
+    groundingFailure: outcome.verdict.groundingFailure,
+    budgetExhausted: outcome.verdict.budgetExhausted,
+    steps: outcome.steps,
+    toolCalls: outcome.toolCalls.length,
+    tokensIn: outcome.usage.tokensIn,
+    tokensOut: outcome.usage.tokensOut,
+    costUsd,
+  });
+
+  if (!outcome.verdict.groundingPassed) {
+    await append({
+      ...blank, ...ANALYST, runId,
+      eventType: 'AGENT_GROUNDING_FAILED', subjectType: 'investigation', subjectId: row.id,
+      reason: `corroboration rejected by the A3 gate and downgraded: `
+        + `${outcome.verdict.groundingFailure ?? 'unstated'}`,
+      details: details({ matchId, mode: 'corroborate',
+        check: outcome.groundingRejection?.check ?? null }),
+    });
+  }
+  if (outcome.verdict.budgetExhausted) {
+    await append({
+      ...blank, ...ANALYST, runId,
+      eventType: 'AGENT_BUDGET_EXHAUSTED', subjectType: 'investigation', subjectId: row.id,
+      reason: outcome.stopReason,
+      details: details({ matchId, mode: 'corroborate', stopCause: outcome.stopCause }),
+    });
+  }
+
+  await append({
+    ...blank, ...ANALYST, runId,
+    eventType: 'INVESTIGATION_CONCLUDED', subjectType: 'investigation', subjectId: row.id,
+    decision: outcome.verdict.verdict,
+    reason: `${outcome.verdict.verdict} at ${outcome.verdict.confidence} confidence on `
+      + `pending match ${matchId} after ${outcome.steps} step(s): ${outcome.stopReason}`,
+    details: details({ matchId, mode: 'corroborate', verdict: outcome.verdict.verdict,
+      confidence: outcome.verdict.confidence, citations: outcome.verdict.citations,
+      groundingPassed: outcome.verdict.groundingPassed, costUsd }),
+  });
+
+  return { outcome, auditEntries };
+}
+
 /**
  * Run Phase A over a finished run.
  *
@@ -287,8 +406,11 @@ export async function runPhaseA(
   ]);
 
   const verdicts: Record<string, number> = {};
+  const corroborationVerdicts: Record<string, number> = {};
   const usage: AgentUsage = { tokensIn: 0, tokensOut: 0 };
   let investigated = 0;
+  let corroborated = 0;
+  let corroborationGroundingFailures = 0;
   let groundingFailures = 0;
   let budgetExhaustedCount = 0;
   let requestsSpent = 0;
@@ -327,10 +449,43 @@ export async function runPhaseA(
     }
   }
 
+  // ── A1b: the review queue, AFTER exceptions (ADR-081) ──
+  // The pre-agreed degradation: if the shared request budget binds, this is what
+  // gets cut, because the exception list is what the track grades. Decided in
+  // advance precisely so it is not decided under pressure on submission day.
+  for (const candidate of plan.corroborate) {
+    if (requestsSpent + CORROBORATION_BUDGET.maxSteps > maxRequests) break;
+    try {
+      const { outcome, auditEntries: n } = await corroborateOne(
+        runId, candidate.matchId, deps, gateContext);
+      corroborated += 1;
+      auditEntries += n;
+      requestsSpent += outcome.steps;
+      usage.tokensIn += outcome.usage.tokensIn;
+      usage.tokensOut += outcome.usage.tokensOut;
+      corroborationVerdicts[outcome.verdict.verdict] =
+        (corroborationVerdicts[outcome.verdict.verdict] ?? 0) + 1;
+      if (!outcome.verdict.groundingPassed) corroborationGroundingFailures += 1;
+    } catch (err) {
+      await withTransaction((c) => auditRepo.appendAuditEntry({
+        ...blank, ...ANALYST, runId,
+        eventType: 'INVESTIGATION_CONCLUDED', subjectType: 'run', subjectId: runId,
+        decision: 'failed',
+        reason: `corroboration of match ${candidate.matchId} failed: `
+          + `${err instanceof Error ? err.message : String(err)}`,
+        details: { matchId: candidate.matchId },
+      }, c));
+      auditEntries += 1;
+    }
+  }
+
   return {
     runId,
     plan,
     investigated,
+    corroborated,
+    corroborationVerdicts,
+    corroborationGroundingFailures,
     skippedForBudget: plan.investigate.length - investigated,
     verdicts,
     groundingFailures,

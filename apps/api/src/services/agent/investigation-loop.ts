@@ -185,11 +185,31 @@ export function extractVerdict(text: string): unknown {
  * with a stated cause. It throws only for a programming error the caller should
  * see, which is the same line `grounding-gate.ts` draws.
  */
-export async function investigate(
+/**
+ * The turn loop itself, WITHOUT a gate.
+ *
+ * Extracted so investigations and review-queue corroborations share one
+ * implementation of §8's bounds, the tool dispatch and the grounding plumbing,
+ * and differ only in which A3 vocabulary validates the result. Two copies of the
+ * bounds would be two places for a ceiling to drift, and the drift would be
+ * invisible because each copy would keep passing its own tests.
+ */
+export interface RawLoopOutcome {
+  raw: unknown;
+  toolCalls: ToolCallRecord[];
+  steps: number;
+  usage: AgentUsage;
+  stopCause: StopCause;
+  stopReason: string;
+  budgetExhausted: boolean;
+}
+
+export async function runAgentLoop(
   request: InvestigationRequest,
   deps: LoopDeps,
-  budget: InvestigationBudget = AGENT_DEFAULTS.budget,
-): Promise<InvestigationOutcome> {
+  budget: InvestigationBudget,
+  system: string,
+): Promise<RawLoopOutcome> {
   const now = deps.now ?? Date.now;
   const startedAt = now();
   const toolCalls: ToolCallRecord[] = [];
@@ -263,7 +283,7 @@ export async function investigate(
     const paced: AgentMessage[] = [...messages, { role: 'user', text: pacing }];
 
     const turn = await deps.client.turn({
-      system: SYSTEM_PROMPT,
+      system,
       messages: paced,
       tools: declarations,
       maxOutputTokens: 2048,
@@ -366,26 +386,43 @@ export async function investigate(
     }
   }
 
-  const budgetExhausted =
-    stopCause === 'steps' || stopCause === 'tool_calls'
-    || stopCause === 'wall_clock' || stopCause === 'tokens';
-
-  // ── A3 ──
-  // Even a budget-stopped investigation goes through the gate: it produced no
-  // verdict, so the gate downgrades it, and the SAME code path stamps every
-  // outcome. A bypass here would be the one place an unvalidated verdict could
-  // reach the database.
-  const gate = validateVerdict(
-    raw ?? { __missing: stopReason },
-    { ...deps.gateContext, investigationId: request.investigationId, toolCalls });
-
   return {
-    verdict: { ...gate.verdict, budgetExhausted },
+    raw: raw ?? { __missing: stopReason },
     toolCalls,
     steps,
     usage,
     stopCause,
     stopReason,
+    budgetExhausted:
+      stopCause === 'steps' || stopCause === 'tool_calls'
+      || stopCause === 'wall_clock' || stopCause === 'tokens',
+  };
+}
+
+/**
+ * Run one INVESTIGATION: the loop, then A3's investigation vocabulary.
+ *
+ * Even a budget-stopped run goes through the gate — it produced no verdict, so
+ * the gate downgrades it, and the SAME code path stamps every outcome. A bypass
+ * here would be the one place an unvalidated verdict could reach the database.
+ */
+export async function investigate(
+  request: InvestigationRequest,
+  deps: LoopDeps,
+  budget: InvestigationBudget = AGENT_DEFAULTS.budget,
+): Promise<InvestigationOutcome> {
+  const out = await runAgentLoop(request, deps, budget, SYSTEM_PROMPT);
+  const gate = validateVerdict(out.raw, {
+    ...deps.gateContext, investigationId: request.investigationId,
+    toolCalls: out.toolCalls,
+  });
+  return {
+    verdict: { ...gate.verdict, budgetExhausted: out.budgetExhausted },
+    toolCalls: out.toolCalls,
+    steps: out.steps,
+    usage: out.usage,
+    stopCause: out.stopCause,
+    stopReason: out.stopReason,
     groundingRejection: gate.rejection,
   };
 }

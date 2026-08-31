@@ -201,11 +201,21 @@ describe('Phase A (integration)',
         budget: { ...AGENT_DEFAULTS.budget, maxSteps: 4 },
       });
       assert.equal(result.investigated, 20, 'the A1 cap');
+      assert.equal(result.corroborated, 15, 'the A1b cap (ADR-081)');
+      assert.equal(result.corroborationVerdicts['CONFIRMED_UNRESOLVABLE'], undefined,
+        'an investigation verdict must never appear in the corroboration tally');
       assert.equal(result.skippedForBudget, 0);
       assert.equal(result.verdicts['CONFIRMED_UNRESOLVABLE'], 20);
       assert.equal(result.groundingFailures, 0);
       assert.equal(result.budgetExhaustedCount, 0);
-      assert.equal(result.requestsSpent, 40, 'two turns each');
+      // 20 investigations + 15 corroborations, two turns each.
+      assert.equal(result.requestsSpent, 70);
+      // The scripted client emits CONFIRMED_UNRESOLVABLE — an INVESTIGATION
+      // verdict — so every corroboration correctly fails the corroboration
+      // gate. The vocabularies are disjoint and neither accepts the other's.
+      assert.equal(result.corroborationGroundingFailures, 15);
+      assert.equal(result.corroborationVerdicts['NO_NEW_EVIDENCE'], 15,
+        'a rejected corroboration downgrades to the honest floor');
       assert.ok(result.costUsd! > 0);
       assert.ok(result.plan.investigationsSkipped > 0, 'more were eligible than the cap allows');
 
@@ -230,6 +240,8 @@ describe('Phase A (integration)',
       // That distinction is the same one the triage rewrite turned on: charging
       // the ceiling starves the work list on a worst case that rarely happens.
       assert.equal(result.investigated, 13);
+      assert.equal(result.corroborated, 0,
+        'ADR-081: the queue is what gets cut when the request budget binds');
       assert.equal(result.requestsSpent, 26);
       assert.ok(result.requestsSpent + 10 > 35, 'it stopped exactly when one more could not fit');
       assert.ok(result.requestsSpent <= 35, 'and never exceeded the shared budget');
@@ -268,9 +280,12 @@ describe('Phase A (integration)',
       assert.deepEqual(stored!.citations, [], 'no unverified citation reaches the database');
       assert.notEqual(stored!.groundingFailure, null);
 
+      // Scoped to THIS investigation: earlier tests in the file leave their own
+      // grounding failures behind, and a run-wide count would measure them too.
       const { rows } = await getPool().query<{ c: number }>(
         `SELECT count(*)::int c FROM audit_log
-          WHERE run_id=$1 AND event_type='AGENT_GROUNDING_FAILED'`, [runId]);
+          WHERE run_id=$1 AND event_type='AGENT_GROUNDING_FAILED'
+            AND subject_id=$2`, [runId, investigationId]);
       assert.equal(rows[0]!.c, 1);
     });
   });

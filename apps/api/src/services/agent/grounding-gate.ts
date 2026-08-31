@@ -485,8 +485,16 @@ export function validateCorroboration(
 
   // `checkGrounding` takes a `RawVerdict`; a corroboration is the same shape
   // minus the proposal, so it is widened with an explicit null rather than
-  // copied. The cast is narrow and the null is what makes it honest — there is
-  // no action, so `idsInAction` finds none.
+  // copied. There is no action, so `idsInAction` finds none.
+  //
+  // `CONFIRMED_UNRESOLVABLE` is not an arbitrary stand-in: it selects
+  // `checkGrounding`'s "asserts something, so it requires a reasoning chain"
+  // arm, and ALL THREE corroboration verdicts assert something. CORROBORATED
+  // and CONTRADICTED obviously do. NO_NEW_EVIDENCE does too, and that is the
+  // one worth being explicit about — "the engine's score is all there is" is a
+  // claim about HAVING LOOKED, and a model that concludes it without calling a
+  // tool has not looked. Reaching it for free would make it the cheapest
+  // verdict, which is exactly how an agent learns to stop investigating.
   const grounding = checkGrounding(
     { ...corroboration, verdict: 'CONFIRMED_UNRESOLVABLE', proposedAction: null },
     context);
