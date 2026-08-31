@@ -22,8 +22,8 @@
  */
 
 import type {
-  AgentConfidence, ProposedAction, RawVerdict, ReasoningStep, ToolCallRecord,
-  ValidatedVerdict, Verdict,
+  AgentConfidence, CorroborationVerdict, ProposedAction, RawCorroboration, RawVerdict,
+  ReasoningStep, ToolCallRecord, ValidatedCorroboration, ValidatedVerdict, Verdict,
 } from '../../types/agent.js';
 import type { AliasType, Direction, SourceSystem } from '../../types/domain.js';
 import { AGENT_DEFAULTS } from '../../config/defaults.js';
@@ -32,6 +32,8 @@ const VERDICTS: readonly Verdict[] = [
   'RESOLUTION_PROPOSED', 'CONFIRMED_UNRESOLVABLE', 'NEEDS_EXTERNAL_DATA', 'INSUFFICIENT_EVIDENCE',
 ];
 const CONFIDENCES: readonly AgentConfidence[] = ['high', 'medium', 'low'];
+const CORROBORATION_VERDICTS: readonly CorroborationVerdict[] =
+  ['CORROBORATED', 'CONTRADICTED', 'NO_NEW_EVIDENCE'];
 const ACTION_TYPES = ['MANUAL_MATCH', 'CREATE_ALIAS', 'MARK_WONT_FIX', 'ADJUST_SEARCH_BOUNDS'] as const;
 const SOURCE_SYSTEMS: readonly SourceSystem[] = ['gateway', 'bank', 'ledger'];
 /** Mirrors `learned_aliases.alias_type`'s CHECK constraint (migration 005). */
@@ -433,6 +435,122 @@ function reject(raw: unknown, check: GateResult['rejection'] extends null ? neve
       verdict: 'INSUFFICIENT_EVIDENCE',
       confidence: 'low',
       proposedAction: null,
+      reasoning: Array.isArray(source.reasoning) ? source.reasoning : [],
+      citations: [],
+      summary: typeof source.summary === 'string' ? source.summary : '',
+      groundingPassed: false,
+      groundingFailure: `${check}: ${reason}`,
+      budgetExhausted: false,
+    },
+    rejection: { check, reason },
+  };
+}
+
+// ─── A2 CORROBORATE — the same gate, a different vocabulary (ADR-081) ────────
+
+/**
+ * Validate a review-queue corroboration.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * IT REUSES `checkGrounding` VERBATIM, AND THAT IS THE POINT.
+ *
+ * The citation rule, the "cites a tool it never called" rule and the digest
+ * checksum are the substance of A3; a second copy tuned for corroborations would
+ * drift from the original and the drift would be invisible, because both would
+ * keep passing their own tests. Only the SCHEMA differs, because only the
+ * vocabulary differs.
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
+ * ── THERE IS NO PROPOSAL ARM, DELIBERATELY ──
+ * A corroboration carries no `proposedAction` and the schema rejects one if it
+ * appears. agent-design.md §3: "The Analyst does not recommend confirming or
+ * rejecting a match. It never says 'confirm this'." The human still clicks,
+ * through `PATCH /api/matches/:id`. A gate that would accept a recommendation
+ * here is a gate that has stopped enforcing the line ADR-017 draws.
+ */
+export interface CorroborationGateResult {
+  verdict: ValidatedCorroboration;
+  rejection: { check: 'schema' | 'grounding'; reason: string } | null;
+}
+
+export function validateCorroboration(
+  raw: unknown, context: GateContext,
+): CorroborationGateResult {
+  assertContextIsScoped(context);
+
+  const schema = checkCorroborationSchema(raw);
+  if (schema !== null) return rejectCorroboration(raw, 'schema', schema);
+
+  const corroboration = raw as RawCorroboration;
+
+  // `checkGrounding` takes a `RawVerdict`; a corroboration is the same shape
+  // minus the proposal, so it is widened with an explicit null rather than
+  // copied. The cast is narrow and the null is what makes it honest — there is
+  // no action, so `idsInAction` finds none.
+  const grounding = checkGrounding(
+    { ...corroboration, verdict: 'CONFIRMED_UNRESOLVABLE', proposedAction: null },
+    context);
+  if (grounding !== null) return rejectCorroboration(corroboration, 'grounding', grounding);
+
+  return {
+    verdict: {
+      ...corroboration,
+      citations: [...new Set(corroboration.citations)].sort(),
+      groundingPassed: true,
+      groundingFailure: null,
+      budgetExhausted: false,
+    },
+    rejection: null,
+  };
+}
+
+function checkCorroborationSchema(raw: unknown): string | null {
+  if (raw === null || typeof raw !== 'object') return 'corroboration is not an object';
+  const v = raw as Record<string, unknown>;
+
+  if (!CORROBORATION_VERDICTS.includes(v['verdict'] as CorroborationVerdict)) {
+    return `verdict must be one of ${CORROBORATION_VERDICTS.join(', ')}, `
+      + `got ${String(v['verdict'])}`;
+  }
+  if (!CONFIDENCES.includes(v['confidence'] as AgentConfidence)) {
+    return `confidence must be one of ${CONFIDENCES.join(', ')}, got ${String(v['confidence'])}`;
+  }
+  if (typeof v['summary'] !== 'string' || v['summary'].trim() === '') {
+    return 'summary is required';
+  }
+  if (!Array.isArray(v['citations'])
+    || v['citations'].some((c) => typeof c !== 'string')) {
+    return 'citations must be an array of strings';
+  }
+  // A recommendation has no field to live in. If one arrives, the model has been
+  // told the wrong job and the verdict is refused rather than quietly stripped —
+  // stripping it would hide that the prompt has drifted.
+  if (v['proposedAction'] !== undefined && v['proposedAction'] !== null) {
+    return 'a corroboration must not carry a proposedAction: it reports evidence, '
+      + 'it does not recommend confirming or rejecting a match (ADR-081)';
+  }
+  if (!Array.isArray(v['reasoning'])) return 'reasoning must be an array';
+  for (const [i, step] of (v['reasoning'] as unknown[]).entries()) {
+    const s = step as Record<string, unknown>;
+    if (s === null || typeof s !== 'object') return `reasoning[${i}] is not an object`;
+    if (typeof s['tool'] !== 'string' || s['tool'] === '') return `reasoning[${i}].tool is required`;
+    if (typeof s['resultDigest'] !== 'string') return `reasoning[${i}].resultDigest is required`;
+    if (typeof s['inference'] !== 'string') return `reasoning[${i}].inference is required`;
+  }
+  return null;
+}
+
+function rejectCorroboration(
+  raw: unknown, check: 'schema' | 'grounding', reason: string,
+): CorroborationGateResult {
+  const source = (raw ?? {}) as Partial<RawCorroboration>;
+  return {
+    verdict: {
+      // NO_NEW_EVIDENCE is the corroboration analogue of INSUFFICIENT_EVIDENCE:
+      // the honest floor. A rejected corroboration must not read as
+      // CONTRADICTED, which is a positive claim about evidence AGAINST a match.
+      verdict: 'NO_NEW_EVIDENCE',
+      confidence: 'low',
       reasoning: Array.isArray(source.reasoning) ? source.reasoning : [],
       citations: [],
       summary: typeof source.summary === 'string' ? source.summary : '',
