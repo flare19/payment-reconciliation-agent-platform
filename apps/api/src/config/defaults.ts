@@ -8,6 +8,24 @@
 
 import type { RunConfig, ScoreWeights } from '../types/engine.js';
 
+/**
+ * ADR-080's explain model, in ONE place.
+ *
+ * It is hashed into every `signature_hash` (ADR-018), so it must be the same
+ * string whether it arrives from `GEMINI_EXPLAIN_MODEL` or from a default. Two
+ * spellings of the default would be two cache namespaces that look like one.
+ */
+export const DEFAULT_EXPLAIN_MODEL = 'gemini-3.5-flash';
+
+/**
+ * `prompt_version` (schema.md §10.2), in ONE place, for the same reason as the
+ * model above: it is hashed into every `signature_hash`, so two spellings would
+ * be two cache namespaces that look like one. `services/explain/templates.ts`
+ * re-exports this as `PROMPT_VERSION` and owns the prose it versions — bump it
+ * HERE whenever that prompt changes, and every signature re-resolves.
+ */
+export const DEFAULT_PROMPT_VERSION = 'v1';
+
 /** ADR-030. Sum = 1.00. See the ceiling guarantee documented on `ScoreWeights`. */
 export const SCORE_WEIGHTS: ScoreWeights = {
   anchor: 0.30,

@@ -13,8 +13,8 @@
  * survive a model switch (ADR-080 consequence 1).
  *
  * ── Where the bucket inputs come from ──
- * Six of the ten components are on the `ClassifiedException` and its evidence
- * directly (category, anchor strength, alias involvement, candidate count,
+ * Six of the ten components are on the exception and its evidence directly
+ * (category, anchor strength, alias involvement, candidate count,
  * secondary flags). The other two — the amount and date delta buckets — and
  * `sources_present` need the actual records, so the caller passes a
  * `Map<transactionId, tx>` covering the run's pool. Bucketing a known delta into
@@ -31,7 +31,7 @@
 import { createHash } from 'node:crypto';
 
 import type { AnchorStrength, ExceptionCategory, SourceSystem } from '../../types/domain.js';
-import type { ClassifiedException } from '../../types/engine.js';
+import type { ExceptionEvidence } from '../../types/engine.js';
 import { dayDelta } from '../ingestion/dates.js';
 
 /** The minimum a record must expose for signature bucketing. */
@@ -39,6 +39,23 @@ export interface TxForSignature {
   sourceSystem: SourceSystem;
   amountPaise: number;
   txnDate: string;
+}
+
+/**
+ * The minimum an exception must expose to be signed.
+ *
+ * Structural rather than nominal so that BOTH `ClassifiedException` (S12's
+ * in-memory output) and `ExceptionRecord` (the persisted row) satisfy it. S13
+ * runs over the persisted rows — §10.1 requires the explain layer to run after
+ * `exceptions` is already committed — but the signature is the same computation
+ * either way, and a second copy of it would be a second cache namespace.
+ */
+export interface ExceptionForSignature {
+  transactionId: string | null;
+  relatedTransactionIds: string[];
+  category: ExceptionCategory;
+  secondaryFlags: ExceptionCategory[];
+  evidence: ExceptionEvidence;
 }
 
 export type AmountDeltaBucket =
@@ -111,7 +128,7 @@ export function dateDeltaBucket(delta: number): DateDeltaBucket {
 }
 
 function sourcesPresent(
-  exception: ClassifiedException, txById: ReadonlyMap<string, TxForSignature>,
+  exception: ExceptionForSignature, txById: ReadonlyMap<string, TxForSignature>,
 ): string {
   const present = new Set<SourceSystem>();
   const ids = [
@@ -129,7 +146,7 @@ function sourcesPresent(
 
 /** The single related record a value/timing verdict was reached against, if any. */
 function counterpartOf(
-  exception: ClassifiedException, txById: ReadonlyMap<string, TxForSignature>,
+  exception: ExceptionForSignature, txById: ReadonlyMap<string, TxForSignature>,
 ): TxForSignature | null {
   for (const id of exception.relatedTransactionIds) {
     const tx = txById.get(id);
@@ -139,7 +156,7 @@ function counterpartOf(
 }
 
 export function computeSignatureComponents(
-  exception: ClassifiedException,
+  exception: ExceptionForSignature,
   txById: ReadonlyMap<string, TxForSignature>,
   opts: { promptVersion: string; model: string },
 ): SignatureComponents {
@@ -203,7 +220,7 @@ export function hashComponents(c: SignatureComponents): string {
 }
 
 export function computeSignature(
-  exception: ClassifiedException,
+  exception: ExceptionForSignature,
   txById: ReadonlyMap<string, TxForSignature>,
   opts: { promptVersion: string; model: string },
 ): Signature {

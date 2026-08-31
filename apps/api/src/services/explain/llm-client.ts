@@ -104,7 +104,19 @@ export type ExplainBatchResult =
 export interface ExplainLlmClient {
   /** The model this client calls. Hashed into every signature (ADR-018). */
   readonly model: string;
-  explainBatch(signatures: readonly SignaturePrompt[]): Promise<ExplainBatchResult>;
+  /**
+   * `maxRequests` is what remains of `LLM_MAX_CALLS_PER_RUN`, and it bounds the
+   * §10.4 retry as well as the first attempt.
+   *
+   * Passing it in — rather than letting the client always spend up to 2 — is
+   * what makes the cap a TRUE ceiling. With the retry unbounded, a budget of 1
+   * could still spend 2 requests and a "hard cap" of 8 would quietly permit 9.
+   * The last permitted batch simply forgoes its retry and takes the template
+   * floor instead, which is the outcome the cap already promises.
+   */
+  explainBatch(
+    signatures: readonly SignaturePrompt[], opts: { maxRequests: number },
+  ): Promise<ExplainBatchResult>;
 }
 
 /** The response schema, in the SDK's OpenAPI-flavoured dialect. */
@@ -220,8 +232,10 @@ export function createGeminiExplainClient(opts: GeminiClientOptions): ExplainLlm
   return {
     model: opts.model,
 
-    async explainBatch(signatures: readonly SignaturePrompt[]): Promise<ExplainBatchResult> {
-      if (signatures.length === 0) {
+    async explainBatch(
+      signatures: readonly SignaturePrompt[], { maxRequests }: { maxRequests: number },
+    ): Promise<ExplainBatchResult> {
+      if (signatures.length === 0 || maxRequests <= 0) {
         return { ok: true, byId: new Map(), requestsMade: 0, tokensIn: null, tokensOut: null };
       }
       const askedFor = new Set(signatures.map((s) => s.id));
@@ -231,8 +245,10 @@ export function createGeminiExplainClient(opts: GeminiClientOptions): ExplainLlm
       let lastDetail = 'no attempt was made';
 
       // §10.4: malformed JSON -> ONE retry at the same temperature -> give up.
-      // Two attempts total, and both are counted.
-      for (let attempt = 1; attempt <= 2; attempt += 1) {
+      // Two attempts total, both counted, and neither may exceed the run's
+      // remaining budget.
+      const attempts = Math.min(2, maxRequests);
+      for (let attempt = 1; attempt <= attempts; attempt += 1) {
         let response;
         try {
           requestsMade += 1;

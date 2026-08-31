@@ -21,6 +21,7 @@ import type { Env } from '../config/env.js';
 import { ENGINE_DEFAULTS } from '../config/defaults.js';
 import type { RunConfig } from '../types/engine.js';
 import { executeRun, type RunSources } from '../services/run/orchestrator.js';
+import { createExplainClient } from '../services/explain/llm-client.js';
 import * as runsRepo from '../repositories/runs.js';
 import * as txnRepo from '../repositories/transactions.js';
 import * as matchRepo from '../repositories/matches.js';
@@ -68,6 +69,20 @@ export function resolveConfig(
 export function runsRouter(env: Env, readSeedDataset: () => RunSources): Router {
   const r = Router();
 
+  // Built ONCE, not per run: the SDK client is stateless and rebuilding it per
+  // request would be waste. `null` here is the ordinary state on this build —
+  // there is no key, so S13 writes templates and the run completes (ADR-017).
+  //
+  // `model` is passed whether or not a client exists, because it is hashed into
+  // every `signature_hash` (ADR-018). A keyless run must compute the same
+  // hashes a keyed one would, or the cache the keyless runs checked against
+  // would be a different namespace the day a key arrives.
+  const explain = {
+    client: createExplainClient(env),
+    model: env.explainModel,
+    promptVersion: env.promptVersion,
+  };
+
   // 2 · POST /api/runs — 202, then poll.
   r.post('/', handler(async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
@@ -92,7 +107,7 @@ export function runsRouter(env: Env, readSeedDataset: () => RunSources): Router 
     // Deliberately NOT awaited: the contract is 202-then-poll. `executeRun`
     // records its own failure, so a rejection here would be a programming error
     // and is logged rather than lost.
-    void executeRun(run.id, readSeedDataset(), config).catch((err: unknown) => {
+    void executeRun(run.id, readSeedDataset(), config, explain).catch((err: unknown) => {
       console.error('[api] run crashed outside its own error handling', run.id, err);
     });
 

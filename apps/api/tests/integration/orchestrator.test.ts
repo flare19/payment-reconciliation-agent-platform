@@ -115,7 +115,15 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
     assert.equal(v.firstDivergenceSequenceNo, null);
     // Pinned exactly. A loose floor here would hide the thing this test is for:
     // the chain covering every decision the run made, and no more.
-    assert.equal(v.entriesChecked, 591);
+    //
+    // 591 -> 612 when U11 wired S13: +21, which is EXACTLY the run's distinct
+    // signature count. S13 writes one entry per explain DECISION, and the
+    // decision is made once per signature — call the model, reuse the cache, or
+    // take the template — then fanned out to the exceptions sharing it. One
+    // entry per exception would have added 212 and been transcription, which is
+    // the same line this file already draws for ingestion (one entry per source,
+    // not per row) and that §9.1 draws by flooring MATCH_CANDIDATE_REJECTED.
+    assert.equal(v.entriesChecked, 612);
   });
 
   test('the audit trail records DECISIONS, and is not drowned by transcription', async () => {
@@ -200,11 +208,32 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
       m['matchRate']!['reconcilableRecords']);
   });
 
-  test('S14 reports what it did NOT compute, rather than zeroing it', async () => {
+  test('every stage runs now, so stagesNotRun is EMPTY (U11 wired S13)', async () => {
     const run = await findRun(runId);
     const m = run!.metrics as Record<string, unknown>;
-    assert.deepEqual(m['stagesNotRun'], ['S13_EXPLAIN']);
-    assert.equal(m['llmCost'], null);
+    assert.deepEqual(m['stagesNotRun'], []);
+
+    // `llmCost` was `null` for three days meaning "there is no explain layer".
+    // It is now an object, and the distinction the null carried survives inside
+    // it: apiCalls 0 beside signaturesTemplated 21 says "the stage ran and
+    // called no model", which is what a keyless run actually did.
+    const cost = m['llmCost'] as Record<string, unknown>;
+    assert.notEqual(cost, null);
+    assert.equal(cost['apiCalls'], 0, 'no GEMINI_API_KEY in the test environment');
+    assert.equal(cost['signaturesTotal'], 21);
+    assert.equal(cost['signaturesTemplated'], 21);
+    assert.equal(cost['signaturesGenerated'], 0);
+    assert.equal(cost['exceptionsExplained'], 212);
+    // ADR-018's whole argument, measured: 212 exceptions, 21 distinct shapes.
+    // schema.md §10.2 predicted 15-30 signatures for ~75 exceptions; the real
+    // dataset collapses 212 into 21, so a full re-run costs at most 3 requests.
+    assert.equal(cost['collapseRatio'], 10.1);
+    // A free tier has no bill (ADR-080). NULL, never 0.
+    assert.equal(cost['estimatedCostUsd'], null);
+
+    // S13 ran, so its timing is a measurement rather than an absence.
+    const stageMs = (m['throughput'] as Record<string, Record<string, unknown>>)['stageMs']!;
+    assert.equal(typeof stageMs['explain'], 'number');
     // S10 runs since #46, so these are counts. On this dataset every unmatched
     // settlement credit has a candidate pool below the batch-shaped floor, so
     // no batch verdict reaches S12 and both counts are 0 — a real zero from a
@@ -231,6 +260,83 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
     assert.notEqual(t['exact'], 46, 'this is the GROUP-tier count, not the pair count');
   });
 
+  test('S13: explanation_text is NEVER null on a completed run (schema.md §10.4)', async () => {
+    // The floor the whole stage exists to guarantee. There is no GEMINI_API_KEY
+    // here, which is the PRIMARY path for this build, not the fallback — and the
+    // run must still finish with every exception carrying prose.
+    assert.equal(await count(
+      `SELECT count(*)::int c FROM exceptions WHERE run_id=$1 AND explanation_text IS NULL`), 0);
+    assert.equal(await count(
+      `SELECT count(*)::int c FROM exceptions WHERE run_id=$1 AND suggested_action IS NULL`), 0);
+    assert.equal(await count(
+      `SELECT count(*)::int c FROM exceptions WHERE run_id=$1 AND signature_hash IS NULL`), 0);
+    assert.equal(await count(
+      `SELECT count(*)::int c FROM exceptions WHERE run_id=$1 AND trim(explanation_text) = ''`), 0);
+  });
+
+  test('S13: with no key every exception is template-sourced and moves open -> explained', async () => {
+    // `explanation_source` must say which path produced the text. A template
+    // labelled `llm` would misrepresent what the system did in front of a panel.
+    assert.equal(await count(
+      `SELECT count(*)::int c FROM exceptions WHERE run_id=$1 AND explanation_source='template'`), 212);
+    assert.equal(await count(
+      `SELECT count(*)::int c FROM exceptions WHERE run_id=$1 AND status='explained'`), 212);
+    assert.equal(await count(
+      `SELECT count(*)::int c FROM exceptions WHERE run_id=$1 AND status='open'`), 0);
+  });
+
+  test('S13: a template is NEVER written to explanation_cache (ADR-084)', async () => {
+    // The silent poisoning this prevents: the cache is keyed by signature, so a
+    // template row written during a keyless run would be served as a HIT by
+    // every later run — including runs that DO have a key — and that signature
+    // would never reach the model again. One offline afternoon would
+    // permanently downgrade the demo with nothing in the output saying so.
+    // Queried without the `count` helper: `explanation_cache` is deliberately
+    // RUN-INDEPENDENT (schema.md §1) and carries no `run_id`, which is exactly
+    // why a poisoned row would outlive the run that wrote it.
+    const { rows } = await getPool().query<{ c: number }>(
+      `SELECT count(*)::int c FROM explanation_cache`);
+    assert.equal(rows[0]!.c, 0);
+  });
+
+  test('S13: one audit entry per SIGNATURE, and it equals the distinct signature count', async () => {
+    // The +21 in the chain, tied to its cause rather than pinned as a bare
+    // number: 212 exceptions collapse to 21 distinct discrepancy shapes, and the
+    // explain DECISION is made once per shape.
+    const sigs = await count(
+      `SELECT count(DISTINCT signature_hash)::int c FROM exceptions WHERE run_id=$1`);
+    const entries = await count(
+      `SELECT count(*)::int c FROM audit_log WHERE run_id=$1 AND event_type LIKE 'EXPLANATION%'`);
+    assert.equal(sigs, 21);
+    assert.equal(entries, sigs, 'one explain entry per signature, not per exception');
+
+    const { rows } = await getPool().query<{ event_type: string; c: number }>(
+      `SELECT event_type, count(*)::int c FROM audit_log WHERE run_id=$1
+         AND event_type LIKE 'EXPLANATION%' GROUP BY 1`, [runId]);
+    const by = Object.fromEntries(rows.map((r) => [r.event_type, r.c]));
+    // §9.1's three explain events. With no key only the template one fires, and
+    // the other two being ABSENT rather than 0 is the honest report.
+    assert.equal(by['EXPLANATION_FALLBACK_TEMPLATE'], 21);
+    assert.equal(by['EXPLANATION_GENERATED'], undefined);
+    assert.equal(by['EXPLANATION_CACHE_HIT'], undefined);
+  });
+
+  test('S13 changed no decision — ADR-017 held end to end', async () => {
+    // The property that makes the measured accuracy number mean anything. S13
+    // runs after `exceptions` is committed and may only write four narration
+    // columns; if any category, severity or match moved, the boundary leaked.
+    assert.equal(await count(`SELECT count(*)::int c FROM matches WHERE run_id=$1`), 284);
+    assert.equal(await count(`SELECT count(*)::int c FROM exceptions WHERE run_id=$1`), 212);
+    const { rows } = await getPool().query<{ category: string; c: number }>(
+      `SELECT category, count(*)::int c FROM exceptions WHERE run_id=$1 GROUP BY 1 ORDER BY 1`,
+      [runId]);
+    assert.deepEqual(Object.fromEntries(rows.map((r) => [r.category, r.c])), {
+      AMBIGUOUS_MATCH: 22, AMOUNT_MISMATCH: 18, DUPLICATE_RECORD: 9,
+      MISSING_IN_BANK: 40, MISSING_IN_GATEWAY: 53, MISSING_IN_LEDGER: 66,
+      UNSPLITTABLE_BATCH: 4,
+    });
+  });
+
   test('a second identical run produces identical counts (ADR-032)', async () => {
     const second = await createRun({
       label: 'holdout-again', datasetSeed: 90210, configSnapshot: {
@@ -241,7 +347,7 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
     assert.equal(out.matches, 284);
     assert.equal(out.exceptions, 212);
     assert.equal(out.referenceDate, '2026-08-21');
-    assert.equal(out.auditEntries, 591, 'the same inputs must produce the same trail');
+    assert.equal(out.auditEntries, 612, 'the same inputs must produce the same trail');
   });
 
   test('a failed run says so, and its committed phases stay visible (ADR-046)', async () => {

@@ -214,6 +214,23 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 
 ## 10. Current state
 
+**As of 2026-08-31 (Day 11), latest: U11 is complete — S13 is wired and THE ENGINE HAS NO UNWIRED STAGES. `UNWIRED_STAGES` is `[]`, `stagesNotRun` is `[]`, and `llmCost` is an object rather than `null`.**
+
+```
+212 exceptions -> 21 distinct signatures   (schema.md §10.2 predicted 15-30)
+explanation_text never null · all 212 template-sourced · status open -> explained
+audit chain 591 -> 612   (+21 = one entry per SIGNATURE, not per exception)
+explanation_cache EMPTY after a keyless run   (ADR-084 — templates are never cached)
+score report BYTE-IDENTICAL to a run through main's engine
+```
+
+> **S13 changed no decision, and that was verified rather than asserted:** a `git worktree` at `main`, a holdout run through the pre-U11 engine, and `npm run score` against both — the two reports diff to nothing. precision **1.0000** · FP **0** · recall **0.6075** · macro P **0.9286** / R **0.8738** · unresolvable recall **1.0** · match rate **65.22%** · `tierAttribution {exact 203, fuzzy 277, batch 25, implied 242}`.
+
+> **`recall 0.6089` further down this file is STALE — the live figure is 0.6075 and always was on `main` too.** #38 and #51 moved pairs into the review band without that headline being updated. Comparing a fresh score against the doc rather than against a `main` run reads as a regression that does not exist. If a number here disagrees with a run, re-derive it from `main` before believing either.
+
+**There is still no `GEMINI_API_KEY`**, so the model path has never made a live call. It is unit-tested against a fake client; the template path is what actually runs, which is exactly what ADR-017 requires and what the tests pin.
+
+
 **Classification figures were re-measured at the end of Day 10 (#50) and the earlier ones were WRONG — the scorer, not the engine. Picking an event's prediction by `schema.md` §8.2's precedence instead of by row order gives macro P 0.9286 / macro R 0.8738 (was 0.7891 / 0.8024) and `UNSPLITTABLE_BATCH` 1.000/0.500 (was 0.000/0.000), on byte-identical engine output.**
 
 **As of 2026-08-31 (Day 11), later: #51 is fixed and the LLM provider is now GEMINI (ADR-080).**
@@ -226,7 +243,7 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 
 > **The last open P1 that costs recall is closed.** #43 remains open and must land before the frontend reads `countsTowardEngineMatchRate`. `tools/score` has still never had an adversarial pass — four defects in one day on Day 10, all in the module whose job is to be trustworthy.
 
-**As of 2026-08-30 (Day 10): S10 is wired and the whole dependency chain #45 → #49 → #46 is closed. Re-scored: precision 1.0000, FP 0, recall 0.6089, review-queue precision 1.0000, unresolvable recall 1.0, zero build blockers. Match rate 66.48% against a 93% ceiling — DOWN 1.37 points from Day 9, and that is CORRECT: split legs are `pending_review` (ADR-038) and §10 rule 4 makes a group holding a proposal a proposal. Found-at-all rose 81.4% → 86.5%.**
+**As of 2026-08-30 (Day 10): S10 is wired and the whole dependency chain #45 → #49 → #46 is closed. Re-scored: precision 1.0000, FP 0, recall 0.6089, review-queue precision 1.0000, unresolvable recall 1.0, zero build blockers. **(That recall figure is superseded — #38 and #51 later moved pairs into the review band and the current number is 0.6075, on this branch AND on `main`. See the Day 11 U11 entry in `what-broke.md`: comparing against this line instead of against a `main` run would have read as a regression U11 did not cause.)** Match rate 66.48% against a 93% ceiling — DOWN 1.37 points from Day 9, and that is CORRECT: split legs are `pending_review` (ADR-038) and §10 rule 4 makes a group holding a proposal a proposal. Found-at-all rose 81.4% → 86.5%.**
 
 > **Report both figures or neither.** Two days running, the honest headline has moved opposite to the honest improvement. `matchRatePct` counts what the engine will confirm on its own; found-at-all counts what it located. ARCHITECTURE §8.1 has the framing.
 
@@ -375,7 +392,7 @@ reference date 2026-08-21 · no record in two matches
 reconcilable 874 = 920 ingested − 37 excluded − 0 rejected − 9 duplicates
 ```
 
-**Three things deliberately unwired, named rather than hidden** (`UNWIRED_STAGES` in `services/run/orchestrator.ts`):
+**Three things deliberately unwired, named rather than hidden** (`UNWIRED_STAGES` in `services/run/orchestrator.ts`) — **historical: all three matching/metrics stages are wired as of Day 11, and `UNWIRED_STAGES` is now `[]`**:
 - **S10 batch decomposition** — built and tested, but wiring needs a decision U6 should not make alone: which unmatched bank credits enter the pool, and how a decomposition's members interact with S11's role-collision rule. Until then `UNSPLITTABLE_BATCH` is never raised and those 12 legs sit in the presence categories.
 - **S13 explain** (U11) and **S14 metrics** (U8) — status transitions and call sites exist; neither fabricates a value. `runs.metrics` stays `{}`, and endpoint 4's `headline` is `null` rather than zeroed.
 - **`POST /api/runs` variant A** (multipart upload) returns `400 MISSING_REQUIRED_FILE`. Variant B (seeded dataset) is the demo path.
@@ -576,7 +593,7 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 | # | Unit | Model | Why |
 |---|---|---|---|
 | **#38** ✅ | Cross-key anchor agreement in `scoring.ts` | **Opus / high** | **Done.** 11 never-found pairs recovered; 22 found once groups close; FP still 0; found-at-all 86.5% → 89.5%. `matching-engine.md` §7.1 now states that anchors are compared across key types. |
-| **U11** | Explain layer S13: signature, cache, LLM client, templates | **Sonnet / medium** | `schema.md` §10 is the most complete spec in the repo. Run must complete with the API unavailable (`explanation_source = 'template'`). Fills the last unwired stage, so `llmCost` and `stagesNotRun` stop being null. |
+| **U11** ✅ | Explain layer S13: signature, cache, LLM client, templates | **Sonnet / medium** | **Done.** 212 exceptions collapse to **21 signatures**; `explanation_text` never null; keyless run gives all-template + `open → explained`. Audit chain **591 → 612** (= +1 per SIGNATURE, not per exception). `stagesNotRun` is now `[]` and `llmCost` an object. Score report **byte-identical to `main`** — S13 changed no decision. ADR-084. |
 
 ### Day 12 (Sep 1) — the Analyst
 

@@ -17,13 +17,25 @@ import {
 import { runClassification } from '../../src/services/classification/collect.js';
 import {
   computeRunMetrics, assertDenominatorIdentity, matchedRecordIds, tierPairCounts,
-  type MetricsInput, type PopulationCounts, type StageTimings,
+  type ExplainMetricsInput, type MetricsInput, type PopulationCounts, type StageTimings,
 } from '../../src/services/metrics/run-metrics.js';
 
 const TIMINGS: StageTimings = {
   parse: 10, normalize: 0, dedupe: 1, block: 1, tier1: 1, tier15: 1,
   identity: 1, tier2: 20, batch: null, group: 1, classify: 2,
-  explain: null, engineMs: 38, wallClockMs: 100,
+  explain: 4, engineMs: 38, wallClockMs: 100,
+};
+
+/**
+ * S13's outcome, as a KEYLESS run produces it: every signature templated, no
+ * model called. That is the primary path (schema.md §10.1) and the one this
+ * project runs on, so it is what the default fixture asserts against.
+ */
+const EXPLAIN: ExplainMetricsInput = {
+  model: 'gemini-3.5-flash', promptVersion: 'v1',
+  signaturesTotal: 27, cacheHits: 0, generated: 0, templated: 27,
+  apiCalls: 0, exceptionsExplained: 212, tokensIn: 0, tokensOut: 0,
+  callCapPerRun: 8, callCapReached: false, failures: [],
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -162,7 +174,7 @@ describe('computeRunMetrics against the holdout', () => {
     aliasCountAtStart: 0,
     aliasCounts: { active: 0, superseded: 0, revoked: 0 },
     humanCorrectionsToDate: 0,
-    timings: TIMINGS, config,
+    timings: TIMINGS, config, explain: EXPLAIN,
   };
   const m = computeRunMetrics(input);
 
@@ -214,12 +226,46 @@ describe('computeRunMetrics against the holdout', () => {
     assert.equal(allEstablished, 212, 'the inflated number this must never report');
   });
 
-  test('an unrun stage reports null, never zero, and says which stages those are', () => {
-    // `0` is a performance claim: `llmCost: {apiCalls: 0}` says the cache served
-    // everything rather than "there is no explain layer yet".
-    assert.equal(m.llmCost, null);
-    assert.equal(m.throughput.stageMs['explain'], null);
-    assert.deepEqual(m.stagesNotRun, ['S13_EXPLAIN']);
+  test('every stage runs now, so stagesNotRun is EMPTY and llmCost is a report (U11)', () => {
+    // This assertion inverted when U11 wired S13, and the distinction the old
+    // `null` carried had to survive the change rather than be lost with it.
+    // `null` meant "there is no explain layer". An object with `apiCalls: 0`
+    // and `signaturesTemplated: 27` means "the stage ran and called no model" —
+    // which is what a keyless run actually did, and is a claim `null` could not
+    // make.
+    assert.deepEqual(m.stagesNotRun, []);
+    assert.equal(m.throughput.stageMs['explain'], 4);
+    assert.notEqual(m.llmCost, null);
+    assert.equal(m.llmCost.apiCalls, 0);
+    assert.equal(m.llmCost.signaturesTemplated, 27);
+    assert.equal(m.llmCost.signaturesGenerated, 0);
+    assert.equal(m.llmCost.exceptionsExplained, 212);
+    // ADR-018's headline: 212 exceptions covered by 27 distinct shapes.
+    assert.equal(m.llmCost.collapseRatio, 7.85);
+    // A free tier has no bill. NULL, never 0 — a measured zero and an absent
+    // figure are different claims, which is this file's whole discipline.
+    assert.equal(m.llmCost.estimatedCostUsd, null);
+    assert.equal(m.llmCost.model, 'gemini-3.5-flash',
+      'the model is reported beside the counts because it is hashed into every signature');
+  });
+
+  test('llmCost distinguishes "the cap bound" from "no model was configured"', () => {
+    // Both produce templates, and only one of them is a tuning question.
+    const capped = computeRunMetrics({
+      ...input,
+      explain: { ...EXPLAIN, apiCalls: 8, generated: 30, templated: 12, callCapReached: true },
+    });
+    assert.equal(capped.llmCost.callCapReached, true);
+    assert.equal(capped.llmCost.callCapPerRun, 8);
+    assert.equal(m.llmCost.callCapReached, false, 'the keyless run did not hit a cap');
+  });
+
+  test('collapseRatio is NULL, not 0, when there are no signatures at all', () => {
+    const empty = computeRunMetrics({
+      ...input,
+      explain: { ...EXPLAIN, signaturesTotal: 0, templated: 0, exceptionsExplained: 0 },
+    });
+    assert.equal(empty.llmCost.collapseRatio, null);
   });
 
   test('a stage that DID run reports counts, not null — the same rule in reverse (#46)', () => {

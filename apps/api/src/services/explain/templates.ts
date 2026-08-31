@@ -18,6 +18,7 @@
  * will serve prose written against the old instructions (ADR-018).
  */
 
+import { DEFAULT_PROMPT_VERSION } from '../../config/defaults.js';
 import type { ExceptionCategory } from '../../types/domain.js';
 
 export interface TemplateText {
@@ -111,7 +112,7 @@ export function templateFor(category: ExceptionCategory): TemplateText {
  * re-resolves the whole cache. Bump on ANY change to `SYSTEM_PROMPT` or to the
  * category definition table below.
  */
-export const PROMPT_VERSION = 'v1';
+export const PROMPT_VERSION = DEFAULT_PROMPT_VERSION;
 
 /**
  * The static system prompt (schema.md §10.4), sent once per batch. Not assumed
