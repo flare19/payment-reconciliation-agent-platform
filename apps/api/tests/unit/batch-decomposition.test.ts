@@ -311,6 +311,40 @@ describe('S10 — determinism', () => {
     assert.equal(truncated.stats.exhaustive, false, 'a capped pool is never exhaustive');
     assert.equal(truncated.stats.boundHit?.bound, 'pool');
   });
+
+  test('exhaustive === true implies boundHit === null, across pool size, target, ' +
+    'tolerance and node budget (issue #11 — this was previously asserted only by a ' +
+    'classify.ts fixture built to already satisfy it)', () => {
+    // The property classify.ts's comment claims ("exactly one of these is ever
+    // non-null") is real, but it is enforced HERE — every path in
+    // searchSubsetsInBand that sets `complete = false` also sets `boundHit`,
+    // except the two-solutions early stop, which only ever produces an
+    // 'ambiguous' outcome (never reaches an UNSPLITTABLE_BATCH's evidence).
+    // classify.ts itself does not enforce it; it is a faithful passthrough.
+    let checked = 0;
+    for (const poolSize of [0, 1, 2, 5, 9, 16, 24]) {
+      for (const targetPaise of [0, 1, 50_000, 999_999, 12_345_678]) {
+        for (const tolerancePaise of [0, 1, 500]) {
+          for (const nodeBudget of [1, 5, 50, config.batchNodeBudget]) {
+            const contributions = Array.from({ length: poolSize }, (_, i) =>
+              contributionOf(gw(`g${i}`, i, 1_000 + i * 977), config));
+            const cfg = { ...config, batchNodeBudget: nodeBudget };
+            for (const poolCapped of [false, true]) {
+              const { stats } = searchSubsets(contributions, targetPaise, tolerancePaise, cfg, poolCapped);
+              checked += 1;
+              if (stats.exhaustive) {
+                assert.equal(stats.boundHit, null,
+                  `exhaustive=true but boundHit=${JSON.stringify(stats.boundHit)} at ` +
+                  `poolSize=${poolSize} target=${targetPaise} tolerance=${tolerancePaise} ` +
+                  `nodeBudget=${nodeBudget} poolCapped=${poolCapped}`);
+              }
+            }
+          }
+        }
+      }
+    }
+    assert.ok(checked > 0, 'the property must actually be exercised');
+  });
 });
 
 describe('S10.1 — split settlements (the mirror case)', () => {

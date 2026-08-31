@@ -269,7 +269,13 @@ describe('classify — presence uses the reference date, never the wall clock', 
     const g = txn('g1', 'gateway', 1, { refs: { payment_id: PAY_A }, date: '2026-08-14' });
     const out = classify(input({ pool: [g], config: overdue }));
     assert.ok(out.length > 0, 'the verdict flips on the reference date alone');
-    assert.match(out[0]!.reason ?? out[0]!.evidence.severityBasis.base, /.*/);
+    // ClassifiedException has no top-level `reason` field (see #9) — the honest
+    // properties this scenario proves are the primary category, the secondary
+    // flag for the other missing counterpart, and that presence found nothing.
+    assert.equal(out[0]!.transactionId, 'g1');
+    assert.equal(out[0]!.category, 'MISSING_IN_BANK');
+    assert.deepEqual(out[0]!.secondaryFlags, ['MISSING_IN_LEDGER']);
+    assert.equal(out[0]!.evidence.candidatesConsidered, 0);
   });
 
   test('a matched leg is not reported missing', () => {
@@ -438,21 +444,28 @@ describe('classify — batch evidence keeps the two claims distinct', () => {
     assert.deepEqual(out[0]!.evidence.searchBoundExceeded, { bound: 'pool', value: 24 });
   });
 
-  test('the two are never both set', () => {
-    for (const exhaustive of [true, false]) {
-      const out = classify(input({
-        pool: [credit],
-        batches: [{ credit, outcome: {
-          kind: 'unsplittable', reason: 'x',
-          stats: { poolSize: 3, nodesVisited: 1, solutionsFound: 0, exhaustive,
-                   boundHit: exhaustive ? null : { bound: 'nodes', value: 10 },
-                   subsetSizeCapReached: false },
-        } }],
-      }));
-      const ev = out[0]!.evidence;
-      assert.ok(!(ev.searchExhausted === true && ev.searchBoundExceeded !== null),
-        'a proof and a truncation are mutually exclusive claims');
-    }
+  test('classify is a faithful passthrough of stats.exhaustive/boundHit — it does not ' +
+    'itself enforce their exclusivity (see #11)', () => {
+    // The exclusivity ("exactly one of these is ever non-null") is real, but it
+    // is a property of `searchSubsetsInBand` (batch-decomposition.ts — see its
+    // "exhaustive === true implies boundHit === null" property test), not of
+    // classify.ts. The old version of this test built its own fixture with
+    // `boundHit: exhaustive ? null : {...}`, which already satisfied the
+    // invariant before classify ever ran — it could not fail. Feeding classify
+    // a genuinely contradictory stats object (as searchSubsets itself never
+    // produces for an 'unsplittable' outcome) proves classify copies both
+    // fields through rather than silently reconciling bad input.
+    const out = classify(input({
+      pool: [credit],
+      batches: [{ credit, outcome: {
+        kind: 'unsplittable', reason: 'contradictory fixture, on purpose',
+        stats: { poolSize: 3, nodesVisited: 1, solutionsFound: 0, exhaustive: true,
+                 boundHit: { bound: 'nodes', value: 10 }, subsetSizeCapReached: false },
+      } }],
+    }));
+    const ev = out[0]!.evidence;
+    assert.equal(ev.searchExhausted, true);
+    assert.deepEqual(ev.searchBoundExceeded, { bound: 'nodes', value: 10 });
   });
 });
 

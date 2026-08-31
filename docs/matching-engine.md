@@ -270,7 +270,7 @@ NO anchor,   everything else perfect  →  0.00+0.35+0.20+0.15 = 0.70   auto-con
 
 **A pair with no shared reference of any kind can never be auto-confirmed, at any amount, on any date, with any name similarity.** It can reach the review band and ask a human, and that is all it can ever do. That is not a threshold choice that could be tuned away — it falls out of the weights arithmetically, and it is the strongest single honesty guarantee in the engine. Amount-and-date agreement is a coincidence generator; a reference number is evidence.
 
-Thresholds are unchanged: `≥0.85` auto-confirm, `0.65–0.849` review, `<0.65` exception. The ambiguity guard (top two both `≥0.65` and within `0.05`) is unchanged and is evaluated **after** assignment (§7.3).
+Thresholds are unchanged: `≥0.85` auto-confirm, `0.65–0.849` review, `<0.65` exception. The ambiguity guard (top two both `≥0.65` and within `0.05`) is unchanged and is evaluated **before** assignment, blocking the slot rather than revoking a winner after the fact (§7.3 — see #10).
 
 ### 7.2 Near-anchor matching (ADR-031)
 
@@ -295,9 +295,11 @@ Greedy per-record assignment — walk records, give each its best available cand
 **The algorithm:**
 
 1. Generate every candidate pair via blocking (§3) and score all of them. Discard anything below `0.65` or with a contradicted anchor.
-2. Sort all surviving pairs by `(score DESC, source_system ASC, source_row_number ASC)` — the tie-break from §1.2, so equal scores resolve identically on every run.
-3. Walk the sorted list once. Accept a pair only if **both** members are still unassigned for that source-role. Otherwise skip it and record `rejected_because: "counterpart already matched to a stronger candidate (score 0.95)"` in the loser's evidence.
-4. After the walk, evaluate the ambiguity guard **against the candidate list as scored, not as assigned**: if a record's top two candidates were both `≥0.65` and within `0.05`, it raises `AMBIGUOUS_MATCH` even if step 3 happened to assign it one of them. The guard asks "was this decidable?", and that question is about the evidence, not about who won a race.
+2. Evaluate the ambiguity guard **against the candidate list as scored, before any assignment happens**: if a record's top two candidates in a target source are both `≥0.65` and within `0.05`, that `(record, targetSource)` slot is blocked outright — `schema.md` §5.4's "the engine must not pick one" (see #10, which corrected an earlier draft of this section that had the guard running AFTER assignment and merely raising `AMBIGUOUS_MATCH` alongside a winner step 3 had already picked). A blocked slot never gets a chance to be assigned in step 4, so an ambiguous record is never both matched and flagged — those would be a contradiction on the exception list.
+3. Sort all surviving (non-blocked-slot) pairs by `(score DESC, source_system ASC, source_row_number ASC)` — the tie-break from §1.2, so equal scores resolve identically on every run.
+4. Walk the sorted list once. A pair touching an already-blocked slot is displaced with `rejected_because: "record ... had two candidates within 0.05 of each other; the engine did not choose"`, attributed to the pair rather than to its counterpart, which loses nothing (its slot in the OTHER source stays open to other claims). Otherwise accept the pair only if **both** members are still unassigned for that source-role; skip it and record `rejected_because: "counterpart already matched to a stronger candidate (score 0.95)"` in the loser's evidence otherwise.
+
+Computing the guard up front — rather than assigning first and revoking ambiguous winners afterward — keeps the whole stage a pure function of the candidate set: revoke-after-assign would free slots mid-walk and need a second pass whose result depends on the order the revocations happened in. It also means an ambiguous record never consumes a slot, so its rivals stay available to other records, which is the behaviour a reviewer expects: refusing to choose should not punish a third party. The guard asks "was this decidable?", and that question is about the evidence, not about who won a race.
 
 This is a greedy approximation to maximum-weight bipartite matching. It is not globally optimal in the way the Hungarian algorithm would be, and that is a deliberate trade: it is `O(p log p)` in candidate pairs, it is trivially explainable to a panelist in one sentence ("strongest evidence is assigned first"), and every rejection produces a human-readable reason. An optimal assignment would occasionally trade a strong pair for two medium ones — arithmetically better, and much harder to justify in an audit trail, which is the wrong trade for this project.
 

@@ -209,16 +209,17 @@ describe('runTier1 against the holdout', () => {
     },
   });
   const holdoutConfig: RunConfig = { ...ENGINE_DEFAULTS, referenceDate: ing.referenceDate!, aliasCountAtStart: 0 };
-  const pool = dedupe(ing.transactions).pool;
+  const dd = dedupe(ing.transactions);
+  const pool = dd.pool;
   const blocks = buildBlockIndexes(pool);
   const result = runTier1(blocks, holdoutConfig);
+  type RowRef = { sourceSystem: string; sourceRowNumber: number };
+  const rowKey = (r: RowRef) => `${r.sourceSystem}:${r.sourceRowNumber}`;
 
   test('every Tier 1 match is a true positive in the answer key (zero false matches)', () => {
     const key = JSON.parse(readFileSync(TRUTH, 'utf8')) as {
       expectedPairs: { a: RowRef; b: RowRef; shouldMatch: boolean }[];
     };
-    type RowRef = { sourceSystem: string; sourceRowNumber: number };
-    const rowKey = (r: RowRef) => `${r.sourceSystem}:${r.sourceRowNumber}`;
     const shouldMatch = new Set(
       key.expectedPairs.filter((p) => p.shouldMatch).map((p) => [rowKey(p.a), rowKey(p.b)].sort().join('|')),
     );
@@ -231,6 +232,7 @@ describe('runTier1 against the holdout', () => {
   });
 
   test('the exact tier carries a meaningful share of the load, all gateway↔ledger on the ref', () => {
+    // Not the recall test — see below. This just pins the shape of what Tier 1 emits.
     assert.ok(result.matches.length > 150, `expected > 150 exact matches, got ${result.matches.length}`);
     for (const m of result.matches) {
       assert.equal(m.ruleId, 'EXACT_GATEWAY_REF_V1');
@@ -238,6 +240,68 @@ describe('runTier1 against the holdout', () => {
       assert.equal(m.confidence, 1);
       assert.deepEqual([m.aRole, m.bRole].sort(), ['gateway', 'ledger']);
     }
+  });
+
+  test('recall: every gateway<->ledger pair the key labels viaTier exact that Tier 1 misses is an ENUMERATED cause (#33)', () => {
+    // NOT a loose floor (issue #33): `matches.length > 150` above hid nine real
+    // REFUND_REVERSAL misses (issue #30) under a title that claimed a recall
+    // property. This pins the exact numbers, so any regression AND any
+    // unexplained improvement fails, and any miss falling under no named cause
+    // fails too — that is what makes "meaningful share of the load" a checked
+    // claim rather than a magic constant.
+    const key = JSON.parse(readFileSync(TRUTH, 'utf8')) as {
+      expectedPairs: { a: RowRef; b: RowRef; shouldMatch: boolean; viaTier: string }[];
+    };
+    const exactGatewayLedger = key.expectedPairs.filter((p) => p.shouldMatch && p.viaTier === 'exact' &&
+      ((p.a.sourceSystem === 'gateway' && p.b.sourceSystem === 'ledger') ||
+       (p.a.sourceSystem === 'ledger' && p.b.sourceSystem === 'gateway')));
+    assert.equal(exactGatewayLedger.length, 210);
+
+    const produced = new Set(result.matches.map((m) => {
+      const a = blocks.byId.get(m.aId)!;
+      const b = blocks.byId.get(m.bId)!;
+      return [rowKey(a), rowKey(b)].sort().join('|');
+    }));
+    const hit = exactGatewayLedger.filter((p) => produced.has([rowKey(p.a), rowKey(p.b)].sort().join('|'))).length;
+    assert.equal(hit, 192,
+      'gateway<->ledger recall changed. If this is an improvement, raise the number and say ' +
+      'why in the commit; if it is a regression, something upstream stopped generating candidates.');
+
+    // ── every miss, attributed — a floor cannot tell #30's 9 refund misses
+    // apart from ordinary headroom; only a named, exact-count cause can.
+    const rawByRow = new Map(ing.transactions.map((t) => [rowKey(t), t]));
+    const poolByRow = new Set(pool.map((t) => rowKey(t)));
+    const causes = new Map<string, number>();
+    const unattributed: string[] = [];
+
+    for (const p of exactGatewayLedger) {
+      const k = [rowKey(p.a), rowKey(p.b)].sort().join('|');
+      if (produced.has(k)) continue;
+      const inPoolA = poolByRow.has(rowKey(p.a));
+      const inPoolB = poolByRow.has(rowKey(p.b));
+      let cause: string | null = null;
+      if (!inPoolA || !inPoolB) {
+        // A non-primary copy of an exact duplicate never enters the pool
+        // (ADR-032) — Tier 1 correctly cannot produce a pair with a row that
+        // dedupe already declined to reconcile.
+        const dropped = !inPoolA ? rawByRow.get(rowKey(p.a)) : rawByRow.get(rowKey(p.b));
+        const finding = dd.findings.find((f) => f.transactionId === dropped?.id);
+        if (finding?.kind === 'exact') cause = 'non-primary exact duplicate, dropped from the pool before Tier 1 (ADR-032)';
+      } else {
+        // Identity established but the amount genuinely disagrees — S8's
+        // domain, not Tier 1's (ADR-029): a value question, not a presence one.
+        cause = 'AMOUNT_TRUE_MISMATCH, resolved at S8 as IDENTITY_AMOUNT_MISMATCH_V1';
+      }
+      if (cause === null) unattributed.push(k); else causes.set(cause, (causes.get(cause) ?? 0) + 1);
+    }
+
+    assert.deepEqual(unattributed, [], 'every miss must fall under a named cause');
+    assert.deepEqual(Object.fromEntries([...causes].sort()), {
+      'AMOUNT_TRUE_MISMATCH, resolved at S8 as IDENTITY_AMOUNT_MISMATCH_V1': 9,
+      'non-primary exact duplicate, dropped from the pool before Tier 1 (ADR-032)': 9,
+    });
+    assert.equal([...causes.values()].reduce((x, y) => x + y, 0), exactGatewayLedger.length - hit,
+      'the causes must account for every miss, with none double-counted');
   });
 
   test('deterministic across two runs', () => {

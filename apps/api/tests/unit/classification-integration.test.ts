@@ -106,7 +106,7 @@ describe('S12 over the full pipeline (holdout)', () => {
   });
   const config: RunConfig = { ...ENGINE_DEFAULTS, referenceDate: ing.referenceDate!, aliasCountAtStart: 0 };
 
-  function pipeline(): PipelineOutput {
+  function pipeline(): PipelineOutput & { blocks: ReturnType<typeof buildBlockIndexes> } {
     const d = dedupe(ing.transactions);
     const blocks = buildBlockIndexes(d.pool);
     const t1 = runTier1(blocks, config);
@@ -145,6 +145,7 @@ describe('S12 over the full pipeline (holdout)', () => {
     const matched = new Set(out.groups.flatMap((g) => g.members.map((m) => m.transactionId)));
     for (const e of exceptions) {
       if (!e.category.startsWith('MISSING_IN_')) continue;
+      if (e.transactionId === null) continue;
       const inGroup = matched.has(e.transactionId);
       if (!inGroup) continue;
       // Being in a group is fine — the record may still miss a THIRD leg. What
@@ -178,6 +179,7 @@ describe('S12 over the full pipeline (holdout)', () => {
 
     for (const e of exceptions) {
       if (!e.category.startsWith('MISSING_IN_')) continue;
+      if (e.transactionId === null) continue;
       const record = byId.get(e.transactionId);
       if (record === undefined || record.statusNorm !== 'reconcilable') continue;
       if (record.duplicateOfTransactionId !== null) continue;

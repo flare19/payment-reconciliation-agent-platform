@@ -758,14 +758,18 @@ CREATE TRIGGER trg_audit_log_immutable
 ### 9.0 The hash chain (ADR-042)
 
 ```
-entry_hash = sha256( canonical_json(entry minus prev_hash/entry_hash) || prev_hash )
+entry_hash = sha256( canonical_json(entry minus sequence_no/prev_hash/entry_hash) || prev_hash )
 ```
+
+Three fields are excluded from the hash, not two (see #25 — this line, migration 007's comment and ADR-042 previously all said two). `prev_hash`/`entry_hash` are the chain links, excluded for the obvious reason. `sequence_no` is excluded too: it is `BIGSERIAL`, assigned by Postgres at INSERT, so it does not exist yet when the hash must be computed, and it cannot be added afterward either — the append-only trigger forbids the UPDATE. Excluding it costs nothing, because ordering is already enforced by `prev_hash` linkage, which is the stronger guarantee: renumbering rows without breaking the chain is impossible. `occurred_at` is NOT excluded — it IS hashed, which is why the application must supply it explicitly rather than letting the column default to `now()` (§9's mandatory-fields list, above).
 
 `canonical_json` sorts object keys and serializes timestamps as ISO-8601 UTC, so the hash is stable across drivers and platforms. Entries are chained **per run**, in `sequence_no` order; the first entry of a run chains from 64 zeros. Alias-admin entries with `run_id IS NULL` form their own chain.
 
 **Why, given the trigger already exists.** The `BEFORE UPDATE OR DELETE` trigger stops tampering *through the application*. Anyone who can drop the trigger can rewrite history, and nothing in the table would show it. A chain converts that from undetectable to detectable: altering one entry invalidates every subsequent `entry_hash`, and `GET /api/runs/:runId/audit/verify` recomputes the chain and reports the first divergence. That is the difference between "we don't update this table" and "logged immutably", which is what ARCHITECTURE §4.6 actually claims — and in a finance context it is the claim a panelist will probe. It costs roughly fifteen lines, and verifying the chain live during the pitch is a much stronger demonstration than describing a trigger.
 
-Writing is strictly serialized within a run (single writer, single process — see ADR-024 and [matching-engine.md](./matching-engine.md) §1), so there is no concurrent-append race to resolve. The verification endpoint is read-only and can run at any time.
+Writing is serialized within a chain by a **transaction-scoped Postgres advisory lock** (`ADVISORY_LOCK.auditChain`, keyed per chain — see #27), not by an application-level single-writer assumption: `appendAuditEntry` takes the lock before reading the current head, in the same transaction that reads it and inserts the new entry, so two concurrent appends to the same chain cannot both read the same `prev_hash` and produce two entries claiming the same predecessor — which would make an untampered chain verify as broken, the worst possible false positive for this mechanism. The lock is taken on a `TxClient` specifically (`db/pool.ts`'s ADVISORY LOCKS note) — a `pg_advisory_xact_lock` taken on a client outside an explicit transaction is released by the statement that took it and protects nothing, silently, which this repo has shipped twice; `appendAuditEntry` verifies the lock is still held when it reads the head and throws rather than proceed unprotected if it is not.
+
+The lock key is per chain: `hashUuidToInt(runId)` for a run's chain, and `0` for the alias-admin chain (`run_id IS NULL`). Two runs whose UUIDs collide, or a run whose UUID hashes to `0`, serialize against each other — correctness is unaffected, only concurrency. (ADR-024 and [matching-engine.md](./matching-engine.md) §1 are about a different question — that matching stages run in sequence within one run — and do not by themselves establish anything about concurrent audit writers.) The verification endpoint is read-only and can run at any time.
 
 ### 9.1 Event type catalogue
 
