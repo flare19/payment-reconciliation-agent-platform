@@ -6,6 +6,11 @@ import type { ExceptionRecord } from '../../src/repositories/exceptions.js';
 import type { ExceptionEvidence, NormalizedTransaction } from '../../src/types/engine.js';
 import type { ExceptionCategory } from '../../src/types/domain.js';
 import { AGENT_DEFAULTS } from '../../src/config/defaults.js';
+import { systemPrompt } from '../../src/services/agent/investigation-loop.js';
+import {
+  ACTION_REQUIRED_FIELDS, ACTION_TYPES, ALIAS_TYPES, validateVerdict,
+} from '../../src/services/agent/grounding-gate.js';
+import type { ToolCallRecord } from '../../src/types/agent.js';
 
 function evidence(o: Partial<ExceptionEvidence> = {}): ExceptionEvidence {
   return {
@@ -147,5 +152,116 @@ describe('the citation rule is stated in the prompt itself', () => {
     const p = buildInvestigationPrompt({ exception: exception(), subject, engineTrail: [] });
     assert.doesNotMatch(p, /amount at risk: 500000/);
     assert.match(p, /amount at risk: /);
+  });
+});
+
+/**
+ * ── THE PROMPT/GATE CONTRACT (issue #53) ──
+ *
+ * A3 validates four `proposedAction` variants meticulously. Until AUDIT-3 the
+ * system prompt named none of them and showed the model exactly one example of
+ * the field: `"proposedAction":null`. So `RESOLUTION_PROPOSED` — the verdict
+ * agent-design.md §7 calls the agent's entire reason to exist, and the sole
+ * input to false-despair-recovered, proposal precision and ADR-053's
+ * hallucinated-resolutions build blocker — was unreachable. Twenty live
+ * investigations produced zero proposals; the one attempt was rejected with
+ * `schema: proposedAction must be an object`.
+ *
+ * The defect lived in the CONJUNCTION of two correct files, which is the shape
+ * #40 had: `grounding-gate.ts` implemented §3's schema correctly,
+ * `investigation-loop.ts` implemented §3's honesty rules correctly, and no file
+ * owned the fact that the schema has to reach the model.
+ *
+ * These tests iterate the gate's own exported vocabulary, so a fifth action
+ * type or a renamed field fails HERE rather than silently becoming unreachable.
+ */
+describe('the prompt tells the model what the GATE will accept (#53)', () => {
+  test('every action type A3 validates is named in the prompt', () => {
+    const p = systemPrompt();
+    for (const type of ACTION_TYPES) {
+      assert.ok(p.includes(type),
+        `SYSTEM_PROMPT never names ${type}, so the model cannot produce one and the gate `
+        + 'will reject every attempt. Add it to the prompt, not to the gate.');
+    }
+  });
+
+  test('every field A3 REQUIRES is named in the prompt', () => {
+    const p = systemPrompt();
+    for (const [type, fields] of Object.entries(ACTION_REQUIRED_FIELDS)) {
+      for (const field of fields) {
+        assert.ok(p.includes(field),
+          `${type} requires "${field}" and the prompt never mentions it`);
+      }
+    }
+    // Required on every variant, so it is not in the per-variant lists.
+    assert.ok(p.includes('rationale'));
+  });
+
+  test('every alias type the gate accepts is offered to the model', () => {
+    const p = systemPrompt();
+    for (const t of ALIAS_TYPES) assert.ok(p.includes(t), `aliasType ${t} is not in the prompt`);
+  });
+
+  test('the bounds ceilings in the prompt are the ones the gate enforces', () => {
+    // Interpolated, not retyped. A prompt that quotes a stale ceiling teaches the
+    // model to propose something the gate refuses — which reads to a human as
+    // the model being wrong, when the instruction was.
+    const p = systemPrompt();
+    for (const v of Object.values(AGENT_DEFAULTS.rerunSubsetCeilings)) {
+      assert.ok(p.includes(String(v)), `ceiling ${v} is not stated in the prompt`);
+    }
+  });
+
+  test('the prompt says a proposal is the ONLY verdict carrying an action', () => {
+    // The gate rejects `${verdict} must not carry a proposedAction` for the other
+    // three, so the model has to be told which one it belongs to.
+    const p = systemPrompt();
+    assert.match(p, /RESOLUTION_PROPOSED is the ONLY verdict that carries/);
+    assert.match(p, /must set it to null/);
+  });
+
+  test('a proposal built to the prompt PASSES the real gate', () => {
+    // The end-to-end property the four checks above only approximate: an action
+    // shaped the way the prompt describes must survive A3. Without this, the
+    // prompt could name every field and still describe an unusable shape.
+    const txn = '9f1c4d7e-0000-4000-8000-00000000000a';
+    const other = '9f1c4d7e-0000-4000-8000-00000000000b';
+    const call: ToolCallRecord = {
+      investigationId: 'inv-1', step: 1, tool: 'search_transactions', arguments: {},
+      returnedIds: [txn, other], resultDigest: 'search_transactions: {"returned":2}',
+      durationMs: 1,
+    };
+    const result = validateVerdict({
+      verdict: 'RESOLUTION_PROPOSED', confidence: 'high',
+      summary: 'the gateway payment and the bank credit are the same event',
+      citations: [txn, other],
+      reasoning: [{
+        step: 1, tool: 'search_transactions',
+        resultDigest: 'search_transactions: {"returned":2}',
+        inference: 'both legs are unmatched and share the settlement reference',
+      }],
+      proposedAction: {
+        type: 'MANUAL_MATCH',
+        rationale: 'shared settlement_id, same direction, neither already matched',
+        members: [
+          { transactionId: txn, role: 'gateway' },
+          { transactionId: other, role: 'bank' },
+        ],
+      },
+    }, {
+      investigationId: 'inv-1',
+      toolCalls: [call],
+      runId: 'run-1',
+      records: new Map([
+        [txn, { runId: 'run-1', sourceSystem: 'gateway', direction: 'credit', alreadyMatched: false }],
+        [other, { runId: 'run-1', sourceSystem: 'bank', direction: 'credit', alreadyMatched: false }],
+      ]),
+      activeAliases: new Map(),
+    });
+
+    assert.equal(result.rejection, null,
+      `a proposal built to the prompt's own spec was rejected: ${result.verdict.groundingFailure}`);
+    assert.equal(result.verdict.verdict, 'RESOLUTION_PROPOSED');
+    assert.equal(result.verdict.groundingPassed, true);
   });
 });

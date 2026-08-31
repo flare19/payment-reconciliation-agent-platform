@@ -34,11 +34,37 @@ const VERDICTS: readonly Verdict[] = [
 const CONFIDENCES: readonly AgentConfidence[] = ['high', 'medium', 'low'];
 const CORROBORATION_VERDICTS: readonly CorroborationVerdict[] =
   ['CORROBORATED', 'CONTRADICTED', 'NO_NEW_EVIDENCE'];
-const ACTION_TYPES = ['MANUAL_MATCH', 'CREATE_ALIAS', 'MARK_WONT_FIX', 'ADJUST_SEARCH_BOUNDS'] as const;
-const SOURCE_SYSTEMS: readonly SourceSystem[] = ['gateway', 'bank', 'ledger'];
+/**
+ * EXPORTED so the investigation prompt can be checked against it (issue #53).
+ *
+ * A schema the model is never shown is a schema the model cannot satisfy. The
+ * gate validated all four variants meticulously while `SYSTEM_PROMPT` named
+ * none of them, so `RESOLUTION_PROPOSED` — the verdict agent-design.md §7 calls
+ * the agent's entire reason to exist — was unreachable, and the one live
+ * attempt died on `proposedAction must be an object`. `agent-prompt.test.ts`
+ * now asserts every name below appears in the prompt, so a fifth action type
+ * fails a test rather than silently becoming unreachable.
+ */
+export const ACTION_TYPES =
+  ['MANUAL_MATCH', 'CREATE_ALIAS', 'MARK_WONT_FIX', 'ADJUST_SEARCH_BOUNDS'] as const;
+export const SOURCE_SYSTEMS: readonly SourceSystem[] = ['gateway', 'bank', 'ledger'];
 /** Mirrors `learned_aliases.alias_type`'s CHECK constraint (migration 005). */
-const ALIAS_TYPES: readonly AliasType[] =
+export const ALIAS_TYPES: readonly AliasType[] =
   ['merchant_name', 'counterparty_name', 'reference_id', 'description_token'];
+
+/**
+ * The field names `checkActionSchema` requires, per variant. Declared as data
+ * beside the checks that enforce them so the prompt test can iterate them.
+ * `rationale` is required on every variant and is therefore listed once, below.
+ */
+export const ACTION_REQUIRED_FIELDS: Readonly<Record<
+  (typeof ACTION_TYPES)[number], readonly string[]
+>> = {
+  MANUAL_MATCH: ['members', 'transactionId', 'role'],
+  CREATE_ALIAS: ['aliasType', 'rawValue', 'canonicalValue'],
+  MARK_WONT_FIX: [],
+  ADJUST_SEARCH_BOUNDS: ['poolSize', 'maxSubsetSize', 'nodeBudget'],
+};
 
 /** Everything the gate needs about the world, so the gate itself stays pure. */
 export interface GateContext {

@@ -40,7 +40,9 @@ import { AGENT_DEFAULTS } from '../../config/defaults.js';
 import type {
   InvestigationBudget, RawVerdict, ReasoningStep, ToolCallRecord, ValidatedVerdict,
 } from '../../types/agent.js';
-import { validateVerdict, type GateContext } from './grounding-gate.js';
+// ALIAS_TYPES is interpolated into the prompt rather than retyped, for the same
+// reason the ceilings are: the model must be told exactly what the gate accepts.
+import { ALIAS_TYPES, validateVerdict, type GateContext } from './grounding-gate.js';
 import type { ToolRegistry } from './tool-registry.js';
 import {
   ZERO_USAGE, type AgentLlmClient, type AgentMessage, type AgentUsage,
@@ -144,11 +146,49 @@ const SYSTEM_PROMPT = [
   'echo against what the tool actually returned, so a digest you paraphrase or invent voids',
   'the verdict. Do not rewrite it, shorten it, or reformat it.',
   '',
+  // ── THE PROPOSAL SCHEMA (issue #53) ──
+  // Absent until AUDIT-3. The gate validated all four variants and the prompt
+  // named none of them, so RESOLUTION_PROPOSED could not be produced: 20 live
+  // investigations yielded 0 proposals, and the single attempt was rejected
+  // with `proposedAction must be an object`. Three of agent-design.md §7's six
+  // metrics read 0 for that reason alone. The ceilings below are interpolated
+  // from AGENT_DEFAULTS so the prompt cannot drift from what the gate enforces.
+  'RESOLUTION_PROPOSED is the ONLY verdict that carries a "proposedAction". The other three',
+  'must set it to null. There are four shapes, and every one of them requires a "rationale"',
+  'string -- a human reads that sentence before acting on your proposal:',
+  '',
+  '  {"type":"MANUAL_MATCH","rationale":"...",',
+  '   "members":[{"transactionId":"<an id a tool returned>","role":"gateway|bank|ledger"},',
+  '              {"transactionId":"...","role":"..."}]}',
+  '      Two or more members, at most one per role, all the same direction, none of them',
+  '      already in a match. Every transactionId must be one a tool returned to you.',
+  '',
+  '  {"type":"CREATE_ALIAS","rationale":"...",',
+  `   "aliasType":"${ALIAS_TYPES.join('|')}",`,
+  '   "rawValue":"<the value as it appears>","canonicalValue":"<what it should resolve to>"}',
+  '      The two values must differ. Call check_alias first: an alias that contradicts an',
+  '      active one is refused, and check_alias tells you how many records it would resolve.',
+  '',
+  '  {"type":"MARK_WONT_FIX","rationale":"why this exception should be closed unresolved"}',
+  '',
+  '  {"type":"ADJUST_SEARCH_BOUNDS","rationale":"...",',
+  '   "poolSize":N,"maxSubsetSize":N,"nodeBudget":N}',
+  `      Positive integers, at most ${AGENT_DEFAULTS.rerunSubsetCeilings.poolSize} / `
+    + `${AGENT_DEFAULTS.rerunSubsetCeilings.maxSubsetSize} / `
+    + `${AGENT_DEFAULTS.rerunSubsetCeilings.nodeBudget}.`,
+  '',
+  'A proposal you cannot ground is worse than no proposal. CONFIRMED_UNRESOLVABLE with a',
+  'stated reason beats a MANUAL_MATCH on records you did not retrieve.',
+  '',
   'When you are done, reply with ONLY this JSON and no other text:',
   '{"verdict":"...","confidence":"...","summary":"...","citations":["..."],',
   ' "reasoning":[{"step":1,"tool":"...","resultDigest":"<copied verbatim>",',
   '               "inference":"what you concluded from it"}],',
   ' "proposedAction":null}',
+  '',
+  'That last field is null for CONFIRMED_UNRESOLVABLE, NEEDS_EXTERNAL_DATA and',
+  'INSUFFICIENT_EVIDENCE. For RESOLUTION_PROPOSED, replace it with one of the four objects',
+  'above, filled in.',
 ].join('\n');
 
 export function systemPrompt(): string {
