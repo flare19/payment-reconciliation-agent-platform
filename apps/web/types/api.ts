@@ -474,24 +474,38 @@ export interface ReasoningStep {
   resultDigest: string;
 }
 
+/**
+ * MOST OF THIS IS UNPOPULATED WHILE `status === 'running'`, and the types say so.
+ *
+ * `startInvestigation` inserts only run/exception/model/promptVersion; everything
+ * describing a RESULT is written by `concludeInvestigation`. So a running
+ * investigation carries `costUsd: null`, `tokensIn/Out: null`, no verdict, and —
+ * the dangerous one — `groundingPassed: false`, which is the column's DEFAULT
+ * rather than a finding. Rendering that as "Rejected" asserts the gate refused a
+ * verdict that does not exist yet.
+ *
+ * Read `status` FIRST. Nothing below it means anything until it is `concluded`.
+ */
 export interface InvestigationDetail {
   investigationId: string;
   runId: string;
   exceptionId: string;
-  status: string;
+  status: 'running' | 'concluded' | 'failed';
   verdict: Verdict | null;
   confidence: 'high' | 'medium' | 'low' | null;
   proposedAction: Record<string, unknown> | null;
   reasoning: ReasoningStep[];
   citations: string[];
+  /** `false` while running is a DEFAULT, not a result. Gate on `status`. */
   groundingPassed: boolean;
   groundingFailure: string | null;
   budgetExhausted: boolean;
   steps: number;
   toolCalls: number;
-  tokensIn: number;
-  tokensOut: number;
-  costUsd: number;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  /** NULL while running, and NULL on a free-tier key — never 0 (ADR-093). */
+  costUsd: number | null;
   model: string;
   promptVersion: string;
   humanDisposition: string | null;

@@ -37,6 +37,50 @@ export function AnalystPanel(
   { investigation, runQ }: { investigation: InvestigationDetail; runQ: string | undefined },
 ) {
   const inv = investigation;
+
+  /**
+   * STATUS IS READ FIRST, and nothing below it is trusted until `concluded`.
+   *
+   * A running investigation carries `costUsd: null`, `tokensIn/Out: null`, and
+   * `groundingPassed: false` — the last of which is the COLUMN DEFAULT, not a
+   * finding. The first version of this panel rendered all of it: it crashed on
+   * `costUsd.toFixed(4)`, and had it survived that line it would have displayed
+   * "Grounding: Rejected" about a verdict that did not exist yet. On a page
+   * whose subject is not claiming more than the evidence supports, the second
+   * would have been the worse bug.
+   */
+  if (inv.status === 'running') {
+    return (
+      <div className={styles.panel}>
+        <p className="label">Investigating Now</p>
+        <p className={styles.runningTitle}>The Analyst is working on this exception.</p>
+        <p className={styles.runningBody}>
+          It is choosing which questions to ask and answering them with the engine&rsquo;s own
+          locked code. This takes up to a minute; the page refreshes itself. Nothing below is
+          decided yet — there is no verdict, no grounding result and no cost to report until it
+          finishes, and showing placeholders for them would be inventing findings.
+        </p>
+        <p className={styles.runningMeta} translate="no">
+          {inv.model} · started {at(inv.startedAt)}
+        </p>
+      </div>
+    );
+  }
+
+  if (inv.status === 'failed') {
+    return (
+      <div className={styles.panel}>
+        <p className="label">Investigation Failed</p>
+        <p className={styles.runningTitle}>The Analyst did not finish.</p>
+        <p className={styles.runningBody}>
+          The loop threw rather than reaching a verdict. Failure is a state, not an absence — and
+          this one is re-runnable, because memoising it would let a single crash permanently
+          poison the exception.
+        </p>
+      </div>
+    );
+  }
+
   const isProposal = inv.verdict === 'RESOLUTION_PROPOSED';
 
   return (
@@ -72,7 +116,13 @@ export function AnalystPanel(
           </div>
           <div>
             <dt className="label">Cost</dt>
-            <dd className={`${styles.metaValue} num`}>${inv.costUsd.toFixed(4)}</dd>
+            <dd className={`${styles.metaValue} num`}>
+              {inv.costUsd === null
+                // NULL is never rendered as $0.00 — a zero cost reads as a
+                // measured figure, and a free-tier key has not measured one.
+                ? <span className={styles.unmeasured}>not billed</span>
+                : `$${inv.costUsd.toFixed(4)}`}
+            </dd>
           </div>
         </dl>
       </header>
@@ -160,8 +210,12 @@ export function AnalystPanel(
 
       <footer className={styles.footer}>
         <span translate="no">{inv.model}</span> · prompt {inv.promptVersion} ·{' '}
-        <span className="num">{count(inv.tokensIn)}</span> in /{' '}
-        <span className="num">{count(inv.tokensOut)}</span> out
+        {inv.tokensIn === null || inv.tokensOut === null
+          ? <span className={styles.unmeasured}>tokens not reported</span>
+          : <>
+              <span className="num">{count(inv.tokensIn)}</span> in /{' '}
+              <span className="num">{count(inv.tokensOut)}</span> out
+            </>}
         {inv.finishedAt && <> · {at(inv.finishedAt)}</>}
       </footer>
     </div>

@@ -7,6 +7,36 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
 ---
 
+## Day 16 (2026-09-02), night — the Ask button worked, and the panel could not draw the thing it started
+
+The first real use of the new "Ask the Analyst" button ended on the error boundary:
+
+```
+Cannot read properties of null (reading 'toFixed')
+```
+
+**The money was fine** — the investigation ran to completion, `NEEDS_EXTERNAL_DATA`, and cost **$0.0497**, less than half the $0.11 the button quotes. What failed was drawing it *while it was still running*.
+
+`startInvestigation` inserts five columns; every column describing a result is written by `concludeInvestigation`. So mid-flight the row reads `cost_usd NULL`, `tokens_in/out NULL`, and `grounding_passed false` — **the column default, not a finding**. `AnalystPanel` had only ever been written against concluded rows, because until today concluded rows were the only ones a human could reach.
+
+> **THE CRASH WAS THE LESSER BUG.** Had the panel survived `costUsd.toFixed(4)` it would have rendered **"Grounding: Rejected"** about a verdict that did not exist yet — a confident, specific, false claim, on the page whose whole subject is not claiming more than the evidence supports. A schema default is not a measurement. Treating one as a finding is the same error as putting an engine figure in a measured tile, and it would have been far harder to notice than a stack trace.
+
+### Third time a type I wrote was a lie, third time it was a runtime crash
+
+`amountAtRiskDisplay: string` was really `string | null`. `costUsd: number` is really `number | null` — **and I had written the reason down myself**, in a comment in this repo: *"NULL on a free-tier key, never 0."* Widening the declaration to match the schema made `tsc` name all three crash sites in one pass, instantly, having been blind to them for as long as the annotation was wrong.
+
+**The compiler is exactly as honest as its annotations.** All three of these were me typing what I hoped rather than what the table says. That is not a TypeScript limitation; it is a discipline failure with a compiler-shaped alibi.
+
+### The error page blamed the API for a rendering bug
+
+`app/error.tsx` printed *"The API is expected at http://localhost:8080/api — check that it is running and that CORS_ORIGIN allows this origin"* **unconditionally**. So a null-property crash inside a React component told the reader to go and check their network configuration. It now shows that advice only when the message looks like a transport failure, and otherwise says plainly that the data arrived and the page failed to draw it.
+
+**An error surface that names the wrong cause is worse than one that names none** — it sends someone confidently in the wrong direction, which is precisely what it did.
+
+Verified by inserting a `running` row directly and loading the page: renders, no crash, no grounding claim, heading in the present tense. Removed afterwards.
+
+---
+
 ## Day 16 (2026-09-02), later still — two controls that could not do anything, and someone else's files
 
 **A confirmation banner that followed the reviewer.** ADR-107 moved the review flash out of the keyed card so it would survive the card remounting on success. The parent is not keyed either — that is what makes it work — so the message also survived `?page=` navigation and announced an approval made three proposals ago. **The same defect as the unkeyed card it replaced, one level up: state outliving the event it describes.** Now dismissed twice over: a 4-second timer, and an effect on `pagination.page` so paging away clears it. The flash carries an `id`, because two identical messages in a row are the same string and a `[flash]` effect would not re-run on the second.

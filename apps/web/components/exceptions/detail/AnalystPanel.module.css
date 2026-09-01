@@ -168,3 +168,21 @@
   font-size: var(--t-micro);
   color: var(--ink-4);
 }
+
+/* ── in flight ────────────────────────────────────────────────────────────── */
+
+.runningTitle { font-size: var(--t-lead); font-weight: 600; }
+
+.runningBody {
+  max-width: 72ch;
+  font-size: var(--t-meta);
+  line-height: 1.65;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+.runningMeta { font-size: var(--t-micro); color: var(--ink-4); }
+
+/* Absent, not zero — the same rule the headline row applies to an unmeasured
+   accuracy figure. */
+.unmeasured { font-style: italic; color: var(--ink-4); }

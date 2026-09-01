@@ -1013,3 +1013,23 @@ The practical consequence is the one that matters for a demo: **a judge clicking
 **What this is NOT.** It is memoisation — look up before working — not idempotency. Idempotency would require a caller-supplied request key and would make a *repeat* of the same request safe; this makes *any* second request cheap by returning what the first one produced. The distinction decides where the fix lives: in the lookup, not in a key. Worth naming because "make it idempotent" would have sent someone to build request-key plumbing this system does not need.
 
 **Re-running a concluded investigation is not offered at all**, and that is a deliberate omission rather than an oversight. It costs $0.10–0.12, the model is not deterministic, and a second opinion that disagrees with the first raises a question nobody has budget to resolve. If it is ever wanted it should be an explicit, separately-labelled, cost-stating action — never the same button.
+
+### ADR-110 · An investigation's `status` is read before any of its fields; a running one has no findings to show
+
+**Decision:** `AnalystPanel` branches on `status` first and renders `running` and `failed` as their own states. Nothing describing a *result* — verdict, confidence, grounding, cost, tokens, reasoning — is drawn until `status === 'concluded'`. `costUsd` and `tokensIn/Out` are typed `number | null` to match the table.
+
+**Because a running investigation is mostly NULLs and one dangerous default.** `startInvestigation` inserts only `run_id`, `exception_id`, `status`, `model`, `prompt_version`; every result column is written by `concludeInvestigation`. So while the loop is running:
+
+```
+cost_usd          NULL          → `.toFixed(4)` threw, and the page went to the error boundary
+tokens_in/out     NULL          → `count(null)`
+grounding_passed  false         ← the COLUMN DEFAULT, not a finding
+```
+
+The crash was the *lesser* bug. Had the panel survived that line it would have rendered **“Grounding: Rejected”** about a verdict that did not exist yet — a confident, specific, false claim, on the page whose entire subject is not claiming more than the evidence supports. **A schema default is not a measurement**, and treating one as a finding is the same error as putting an engine figure in a measured tile (ADR-098).
+
+> **THIRD TIME A TYPE I WROTE WAS A LIE, AND THE THIRD TIME IT COST A RUNTIME CRASH.** `amountAtRiskDisplay: string` was really `string | null` (ADR-105). `costUsd: number` is really `number | null` — and I had written the reason down myself, in a comment in this very repo: *"NULL on a free-tier key, never 0."* Widening the declaration to the truth made `tsc` immediately name all three crash sites it had been blind to. **The compiler is only as honest as the annotations, and every one of these was a case of me telling it what I hoped rather than what the schema says.**
+
+**The heading follows the status too.** "The Analyst Investigated This" above a panel reading "working on it" is a small lie, and this is the wrong page to keep one.
+
+**And the error boundary stopped blaming the API for its own bugs.** `app/error.tsx` printed *"The API is expected at … check CORS_ORIGIN"* unconditionally, so a React render error sent the reader to debug their network. The advice is now shown only when the message looks like a transport or contract failure; otherwise the page says plainly that the data arrived and the page failed to draw it. **An error surface that names the wrong cause is worse than one that names none**, because it sends someone confidently in the wrong direction — which is exactly what happened.

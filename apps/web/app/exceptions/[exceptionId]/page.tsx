@@ -224,10 +224,20 @@ export default async function ExceptionDetailPage(
           spends the budget by reading it. */}
       <Section
         id="analyst"
-        title={investigation ? 'The Analyst Investigated This' : 'The Analyst'}
-        standfirst={investigation
-          ? 'An agent chose which questions to ask; the engine’s own locked code computed every number it used. Read the runtime’s recorded result beside the model’s inference — they are separate fields on purpose.'
-          : 'An agent that investigates one exception when a human asks for it, and only then.'}
+        // Past tense only once it IS past. A heading reading "Investigated This"
+        // above a panel saying "working on it" is a small lie, and this page is
+        // the wrong place to keep one.
+        title={
+          investigation === null ? 'The Analyst'
+            : investigation.status === 'concluded' ? 'The Analyst Investigated This'
+            : investigation.status === 'running' ? 'The Analyst Is Investigating This'
+            : 'The Analyst'
+        }
+        standfirst={
+          investigation?.status === 'concluded'
+            ? 'An agent chose which questions to ask; the engine’s own locked code computed every number it used. Read the runtime’s recorded result beside the model’s inference — they are separate fields on purpose.'
+            : 'An agent that investigates one exception when a human asks for it, and only then.'
+        }
       >
         {investigation
           ? <AnalystPanel investigation={investigation} runQ={runQ} />
