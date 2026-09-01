@@ -35,6 +35,16 @@ export interface AnthropicExplainClientOptions {
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 
+/** Strip a ```json fence, or fall back to the outermost {...}. */
+export function unwrapJson(text: string): string {
+  const trimmed = text.trim();
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(trimmed);
+  const body = fenced?.[1]?.trim() ?? trimmed;
+  const start = body.indexOf('{');
+  const end = body.lastIndexOf('}');
+  return start === -1 || end <= start ? body : body.slice(start, end + 1);
+}
+
 export function createAnthropicExplainClient(
   opts: AnthropicExplainClientOptions,
 ): ExplainLlmClient {
@@ -101,7 +111,20 @@ export function createAnthropicExplainClient(
           .filter((b): b is Anthropic.TextBlock => b.type === 'text')
           .map((b) => b.text).join('\n');
 
-        const byId = parseResponse(text, askedFor);
+        // LENIENT ABOUT WRAPPING, STRICT ABOUT CONTENT — the same split
+        // `extractVerdict` makes in the agent loop, and for the same reason: a
+        // fenced code block around the JSON is a formatting habit, not a defect
+        // the caller should have to care about, whereas a missing field is a
+        // defect the parser must still see. `parseResponse` stays untouched
+        // because it is provider-neutral and tested; only the unwrapping is
+        // provider-shaped.
+        //
+        // Measured, not guessed: the first live Anthropic explain run generated
+        // 10 of 21 signatures and lost 2 whole batches to "not usable JSON".
+        // The Gemini client never needed this because it constrained output with
+        // a response schema; porting the request without porting the constraint
+        // is what left the gap.
+        const byId = parseResponse(unwrapJson(text), askedFor);
         if (byId !== null) return { ok: true, byId, requestsMade, tokensIn, tokensOut };
         lastDetail = 'the response was not usable JSON';
       }
