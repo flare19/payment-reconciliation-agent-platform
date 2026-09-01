@@ -259,3 +259,21 @@ export interface InvestigateResponse {
 
 export const investigateException = (exceptionId: string) =>
   apiPost<InvestigateResponse>(`/exceptions/${exceptionId}/investigate`, {});
+
+// ── endpoint 2 · start a run ─────────────────────────────────────────────────
+
+/**
+ * Start a reconciliation run over the committed seed dataset.
+ *
+ * The ENGINE costs nothing — no model is involved in matching, classifying or
+ * auditing. The only spend is S13, the explain layer, which is capped at
+ * `llmMaxCallsPerRun` and is why `llmExplainEnabled` is exposed here rather than
+ * assumed: a caller who does not want to spend must be able to say so.
+ *
+ * `202` then poll `GET /api/runs/:runId` until `status === 'completed'`.
+ */
+export const startRun = (body: {
+  label?: string;
+  configOverrides?: { llmExplainEnabled?: boolean };
+}) => apiPost<{ runId: string; status: string; label: string; startedAt: string }>(
+  '/runs', { useSeedDataset: true, ...body });

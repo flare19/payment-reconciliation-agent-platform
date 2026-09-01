@@ -173,3 +173,5 @@
   text-underline-offset: 0.2em;
 }
 .setAsideLink:hover { color: var(--ink); }
+
+.runsNote { margin-top: var(--s4); font-size: var(--t-micro); color: var(--ink-3); }

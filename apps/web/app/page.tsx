@@ -3,11 +3,12 @@ import { AnalystBlock } from '@/components/dashboard/AnalystBlock';
 import { EnginePerformance } from '@/components/dashboard/EnginePerformance';
 import { ExceptionBreakdown } from '@/components/dashboard/ExceptionBreakdown';
 import { HeadlineRow } from '@/components/dashboard/HeadlineRow';
+import { RunLauncher } from '@/components/dashboard/RunLauncher';
 import { RunPicker } from '@/components/dashboard/RunPicker';
 import { TierAttribution } from '@/components/dashboard/TierAttribution';
 import { Section } from '@/components/ui/Section';
 import {
-  getInvestigationsIfAny, getMetricsIfComplete, listRuns,
+  getHealth, getInvestigationsIfAny, getMetricsIfComplete, listRuns,
 } from '@/lib/api-client';
 import { at, count, day, plural } from '@/lib/format';
 import { hrefWith } from '@/lib/run-context';
@@ -59,6 +60,9 @@ export default async function DashboardPage(
 
   const { runs } = await listRuns();
   const run = pickRun(runs, requested);
+  // ONE boolean for both LLM surfaces (ADR-093). The launcher disables the
+  // explain option rather than offering a spend that would silently no-op.
+  const health = await getHealth().catch(() => null);
   const defaultRunId = (runs.find((r) => r.status === 'completed') ?? runs[0])?.runId;
   const runQ = run && run.runId !== defaultRunId ? run.runId : undefined;
 
@@ -234,14 +238,13 @@ export default async function DashboardPage(
         id="runs"
         title="Runs"
         standfirst="Cold and warm runs listed together and labelled, never as two unrelated rows."
-        aside={
-          <>
-            <span className="num">{count(runs.length)}</span>{' '}
-            {plural(runs.length, 'run', 'runs')} recorded
-          </>
-        }
+        aside={<RunLauncher explainAvailable={health?.llmConfigured ?? false} />}
       >
         <RunPicker runs={runs} selectedRunId={run.runId} />
+        <p className={styles.runsNote}>
+          <span className="num">{count(runs.length)}</span>{' '}
+          {plural(runs.length, 'run', 'runs')} recorded.
+        </p>
       </Section>
     </main>
   );

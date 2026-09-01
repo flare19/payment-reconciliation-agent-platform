@@ -375,7 +375,14 @@ export interface ReviewItem {
   matchId: string;
   tier: string;
   confidence: number;
-  scoreBreakdown: Record<string, number | boolean>;
+  /**
+   * NULL for `batch` matches — 7 of 49 in the review queue on the holdout.
+   *
+   * A batch decomposition is not produced by the pair scorer at all: it comes
+   * out of the subset-sum search, so there are no amount/date/anchor components
+   * to break down. The column is nullable and this is why.
+   */
+  scoreBreakdown: Record<string, number | boolean> | null;
   members: (RecordPreview | { transactionId: string; role: string; externalId: string | null;
     amountDisplay: string; txnDate: string; counterpartyRaw: string | null })[];
   whyFlagged: string;

@@ -38,3 +38,17 @@
   color: var(--ink-3);
   text-wrap: pretty;
 }
+
+/* Absent components, explained. Never four bars reading 0.0000 — that would
+   assert the engine measured each one and found nothing. */
+.noBreakdown {
+  max-width: 68ch;
+  padding: var(--s3) var(--s4);
+  background: var(--surface-sunk);
+  border-left: 2px solid var(--rule-strong);
+  border-radius: 0 3px 3px 0;
+  font-size: var(--t-meta);
+  line-height: 1.65;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}

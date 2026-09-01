@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ApiClientError, investigateException } from '@/lib/api-client';
 import styles from './AskAnalyst.module.css';
 
@@ -34,6 +34,13 @@ export function AskAnalyst({ exceptionId }: { exceptionId: string }) {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const pollRef = useRef<number | null>(null);
+
+  // Leaving the page stops the polling. Without this the interval outlives the
+  // component and keeps refreshing a route the reader has already left.
+  useEffect(() => () => {
+    if (pollRef.current !== null) window.clearInterval(pollRef.current);
+  }, []);
 
   async function ask() {
     setBusy(true);
@@ -47,15 +54,26 @@ export function AskAnalyst({ exceptionId }: { exceptionId: string }) {
         return;
       }
 
-      setStatus('Investigating… this takes up to a minute. The page will update itself.');
-      // Endpoint 25 is 202-then-poll. Poll the run's investigation list rather
-      // than holding the request open; a refresh re-renders the panel server-side.
+      setStatus('Investigating… this takes up to a minute. The page updates itself.');
+      // Endpoint 25 is 202-then-poll. Refreshing re-renders the panel from the
+      // database, so the running → concluded transition arrives on its own.
+      //
+      // THE INTERVAL IS CLEARED FROM ONE PLACE. The first version armed a
+      // `setInterval` and a separate `setTimeout` to cancel it, which left the
+      // interval alive on unmount — navigate away mid-investigation and it kept
+      // refreshing a page nobody was looking at. `agent-design.md` §8 bounds an
+      // investigation at 60 s; 90 s of polling covers that with room, and then
+      // stops rather than running forever.
       const started = Date.now();
-      const poll = setInterval(() => {
-        if (Date.now() - started > 90_000) { clearInterval(poll); return; }
+      const poll = window.setInterval(() => {
+        if (Date.now() - started > 90_000) {
+          window.clearInterval(poll);
+          setStatus('Still running after 90 seconds. Reload to see where it got to.');
+          return;
+        }
         router.refresh();
       }, 3000);
-      setTimeout(() => clearInterval(poll), 90_000);
+      pollRef.current = poll;
     } catch (err) {
       if (err instanceof ApiClientError && err.code === 'INVESTIGATION_IN_PROGRESS') {
         setStatus('Someone is already investigating this one. Refreshing when it lands.');
@@ -105,9 +123,10 @@ export function AskAnalyst({ exceptionId }: { exceptionId: string }) {
       ) : (
         <div className={styles.confirm}>
           <p className={styles.cost}>
-            This spends about <strong className="num">$0.11</strong> of real Anthropic credit and
-            takes up to a minute. The result is stored, so opening this exception again — by you or
-            anyone else — is free and shows the same verdict.
+            This spends roughly <strong className="num">$0.05–0.12</strong> of real Anthropic
+            credit — measured, not estimated — and takes up to a minute. The result is stored, so
+            opening this exception again, by you or anyone else, is free and shows the same
+            verdict.
           </p>
           <div className={styles.buttons}>
             <button type="button" className={styles.go} onClick={ask} disabled={busy}>

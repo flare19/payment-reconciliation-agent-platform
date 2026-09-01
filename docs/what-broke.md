@@ -7,6 +7,37 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
 ---
 
+## Day 16 (2026-09-02), night — a type audit that found a live crash in its first minute
+
+After three separate incidents of a hand-written type declaring non-null where Postgres allows NULL, the audit stopped being a good idea and became a command:
+
+```sql
+SELECT table_name, column_name FROM information_schema.columns WHERE is_nullable='YES'
+```
+
+compared against `apps/web/types/api.ts`. **It found a fourth, and it was already live.**
+
+`matches.score_breakdown` is NULL for 39 of 284 matches — every `exact` match, and **all 7 `pending_review` batch matches, which sit in the review queue.** `ScoreBars` indexed it directly, so review pages **23, 26, 28, 29, 30, 31 and 34** threw `Cannot read properties of null (reading 'amount')`. Seven of forty-nine, reachable by paging, and nobody had paged that far.
+
+**The crash was again the lesser bug.** Four bars reading `0.0000` would have asserted the engine measured each component and found nothing. A batch match comes out of the subset-sum search, not the pair scorer — there are no components. The panel now says so, and says the confidence came from the decomposition instead.
+
+> **FOUR INSTANCES, ONE PATTERN.** `amountAtRiskDisplay: string`, `costUsd: number`, `tokensIn/Out: number`, `scoreBreakdown: Record<…>` — all declared non-null, all nullable in the schema, all a crash or a false claim. **TypeScript named every one within seconds of the annotation being corrected, and none of them before.** This is not a limitation of the language. It is writing down the happy path and calling it a type, and the compiler dutifully believing it.
+
+### Phase 4 measured two things that were better than expected
+
+**A run with the explain layer off made 0 API calls and produced byte-identical results** — 65.22%, 212 exceptions, same audit chain. ADR-017 has always said the model only narrates decisions the rules already made; the launcher is where a viewer can prove that by running it both ways.
+
+**And that free run still showed real explanations — 199 of 200 from `llm_cache`.** The signature is a bucketed shape with no record identity in it, so explanations paid for by an earlier run apply to a later one over different rows. **A free run is not a degraded run.**
+
+That second finding rewrites 7c's economics. The fear was that a freshly generated dataset would cost another explain pass every time; it will not, because the same *kinds* of discrepancy hash to the same signatures. Only genuinely novel shapes cost anything.
+
+### Also fixed
+
+- **The polling interval outlived its component.** `AskAnalyst` armed a `setInterval` and a separate `setTimeout` to cancel it, so navigating away mid-investigation left it refreshing a page nobody was looking at. One `useRef` and an unmount cleanup.
+- **The cost quote was wrong in the honest direction.** The button said ~$0.11; the one real investigation cost **$0.0497**. It now quotes the measured range, $0.05–0.12.
+
+---
+
 ## Day 16 (2026-09-02), night — the Ask button worked, and the panel could not draw the thing it started
 
 The first real use of the new "Ask the Analyst" button ended on the error boundary:
