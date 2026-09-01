@@ -250,7 +250,9 @@ Investigations went **1/20 grounded on Gemini → 7/10 on Sonnet 5**.
 
 The architecture already supports it — **endpoint 25 (`POST /api/exceptions/:exceptionId/investigate`) is exactly this**, built on Day 12, 202-then-poll. `runPhaseA` (the CLI) is the MEASUREMENT harness, not the product.
 
-> **This inverts which path is bounded, and that is now the top backend task.** `runPhaseA` carries the request budget and, since ADR-094, the cost cap. **Endpoint 25 — the one the frontend calls on every click — carries neither.** [#61](https://github.com/flare19/payment-reconciliation-agent-platform/issues/61) is re-triaged **P1** and must land BEFORE U17, or a frontend under development can spend the demo budget by clicking.
+> **This inverted which path was bounded, and it is now FIXED (ADR-095).** `runPhaseA` carried the request budget and the cost cap; endpoint 25 — the one the frontend calls on every click — carried neither. It now refuses with `429 AGENT_QUOTA_EXCEEDED` past `AGENT_MAX_COST_USD_PER_HOUR` (default $2), and supplies a spend guard **seeded from the trailing hour's real spend**, derived by summing `cost_usd` rows already written. Per HOUR and not per run, because `POST /api/runs` mints a fresh run on demand and "per run" is a ceiling the caller controls. Derived and not in-memory, because a counter is a ceiling an attacker clears by crashing the process.
+>
+> **The frontend is now safe to build against.** A dev session clicking through investigations cannot spend more than $2/hour.
 
 ### Five defects only a live model could find (Day 14)
 
@@ -770,9 +772,9 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 | ~~2~~ | ~~The two unfiled bounds~~ | | ✅ ADR-094 |
 | ~~3~~ | ~~#52 — S13 explain grounding~~ | | ✅ ADR-092 |
 | ~~4~~ | ~~ONE bounded verification run~~ | | ✅ $2.83, six runs |
-| **5** | **[#61](https://github.com/flare19/payment-reconciliation-agent-platform/issues/61) — bound endpoint 25.** On-demand is the product path and it is unbounded | nothing | **1–2 h, BEFORE the frontend** |
-| 6 | **Deploy API to Railway** (U14, ADR-061/074) — acceptance is *"a second deploy is one command"* | 5 | 2–3 h |
-| 7 | **Frontend** (U17 design + dashboard, U18 remaining screens) | #43 ✅, 5, 6 | 6–8 h |
+| ~~5~~ | ~~#61 — bound endpoint 25~~ | | ✅ ADR-095 |
+| **6** | **Deploy API to Railway** (U14, ADR-061/074) — acceptance is *"a second deploy is one command"* | nothing | 2–3 h |
+| 7 | **Frontend** (U17 design + dashboard, U18 remaining screens) | #43 ✅, 6 | 6–8 h |
 | 8 | **Deploy web to Vercel** (U19) | 7 | 1 h |
 | 9 | **AUDIT-4** final pre-submission pass | 8 | 2 h |
 | 10 | **U20** — accuracy report, README, pitch video, build-challenges write-up | 9 | 3–4 h |
@@ -781,7 +783,7 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 | | U16 scale benchmark | — | 1–2 h |
 | | U15 Q&A loop | — | **already cut** |
 
-**≈ 16–21 hours left, and the frontend is over a third of it.**
+**≈ 15–19 hours left, and the frontend is nearly half of it.**
 
 > **Analyst scoring moved ABOVE "unaffordable".** It was parked because it needed runs nobody could pay for. Today's run persisted **10 investigations and 5 corroborations** in `recon_v2` against the committed answer key, and scoring them is offline work in `tools/score` that costs **$0 of API**. n=15 is small and any figure must be reported as a raw fraction with its denominator (ADR-020's discipline), but "unmeasured" and "measured on fifteen" are different claims and the second is available for free.
 
