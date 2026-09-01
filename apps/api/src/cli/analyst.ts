@@ -55,6 +55,7 @@ import { createGeminiAgentClient } from '../services/agent/gemini-agent-client.j
 import {
   createAnthropicAgentClient, type AgentEffort,
 } from '../services/agent/anthropic-agent-client.js';
+import { createSpendGuard } from '../services/agent/spend-guard.js';
 import { withRateLimit, RATE_LIMIT_DEFAULTS } from '../services/agent/rate-limiter.js';
 import type { AgentLlmClient, CostModel } from '../services/agent/agent-client.js';
 import type { RunConfig } from '../types/engine.js';
@@ -210,9 +211,25 @@ async function main(): Promise<void> {
     { maxRequestsPerMinute: rpm, maxTokensPerMinute: tpm },
   );
 
+  // ADR-094. The cap the CLI actually enforces, and it is announced before the
+  // first call so a run that cannot afford itself is visible immediately.
+  const maxCostUsd = Number(get('AGENT_MAX_COST_USD_PER_RUN') ?? '1.0');
+  const costModel = provider === 'anthropic'
+    ? ((ANTHROPIC_COST_PER_MILLION as Record<string, CostModel | undefined>)[model] ?? null)
+    : null;
+  const spendGuard = createSpendGuard({
+    maxUsd: maxCostUsd, cost: costModel, maxOutputTokensPerTurn: 2048,
+  });
+  process.stdout.write(costModel === null
+    ? 'spend guard  INERT — no published rate for this model, nothing to cap\n\n'
+    : `spend guard  $${maxCostUsd.toFixed(2)} ceiling at `
+      + `$${costModel.inputUsdPerMillion}/$${costModel.outputUsdPerMillion} per MTok, `
+      + 'refused pre-flight on worst case\n\n');
+
   const deps: PhaseADeps = {
     client: paced.client,
     config,
+    spendGuard,
     // The REAL rate when we are actually billed (ADR-093), null on the free
     // tier. A projection at another provider's rates is computed below and
     // LABELLED as such; it must never be reported as this run's cost.

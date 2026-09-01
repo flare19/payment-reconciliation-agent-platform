@@ -344,7 +344,7 @@ describe('the reasoning chain is a TRANSCRIPT, not narration (§6)', () => {
   });
 });
 
-describe('the agent can SEE its step budget', () => {
+describe('the agent can SEE the budget that actually binds (see #64)', () => {
   test('every turn carries a countdown, and the last one forbids more tools', async () => {
     // The first live investigation spent all ten steps and never concluded,
     // because the model had no way to know a bound existed. A bound the agent
@@ -359,9 +359,14 @@ describe('the agent can SEE its step budget', () => {
       const last = msgs[msgs.length - 1]!;
       return last.role === 'user' ? last.text : '';
     };
-    assert.match(lastTextOf(0), /2 step\(s\) left/);
-    assert.match(lastTextOf(1), /1 step\(s\) left/);
+    // "turn(s)", not "step(s)" (see #64): the countdown is now the smaller of the
+    // step ceiling and what the TOKEN ceiling affords, so calling it a step count
+    // would reintroduce the confusion that killed 15 of 20 live investigations.
+    assert.match(lastTextOf(0), /2 turn\(s\) left/);
+    assert.match(lastTextOf(1), /1 turn\(s\) left/);
     assert.match(lastTextOf(2), /FINAL STEP\. Do not call any more tools/);
+    // Withheld, not merely discouraged: the final turn is sent with NO tools.
+    assert.deepEqual(client.requests[2]!.tools, []);
   });
 
   test('the countdown is a separate turn, so the cached prefix stays stable', async () => {
@@ -395,7 +400,7 @@ test('the system prompt states the ADR-049 rule and the four verdicts', () => {
     assert.match(p, new RegExp(v));
   }
   assert.match(p, /Confidence is a LABEL/);
-  assert.match(p, /STEP BUDGET AND YOU CAN SEE IT/);
+  assert.match(p, /TURN BUDGET AND YOU CAN SEE IT/);
   // Both failure directions the live runs found, addressed in the prompt.
   assert.match(p, /ALWAYS RETRIEVE BEFORE YOU CONCLUDE/);
   assert.match(p, /naming a tool you did not call voids the verdict/);
@@ -501,5 +506,94 @@ describe('reasoningChain attaches inferences by evidence, not by number (#54)', 
     ];
     assert.deepEqual(reasoningChain(calls, { reasoning: [] } as unknown as RawVerdict)
       .map((c) => c.step), [1, 2]);
+  });
+});
+
+/**
+ * ── THE TOKEN CEILING NO LONGER KILLS WORK IT ALREADY PAID FOR (see #64) ──
+ *
+ * Measured on holdout run 80ddde9d: the 10-step ceiling fired ZERO times and the
+ * 40,000-token ceiling fired FIFTEEN, at steps 6-9. Fifteen investigations were
+ * cut off mid-reasoning, each discarding 6-9 steps of real retrieval, and the
+ * `remaining === 0` branch carrying "write your verdict now" was unreachable
+ * because the countdown measured steps while tokens did the stopping.
+ */
+describe('a binding token ceiling asks for a verdict instead of cutting off (#64)', () => {
+  /** Reports a fixed, large usage per turn so the token ceiling binds first. */
+  function heavyClient(script: AgentTurnResult[], perTurnTokens: number) {
+    const requests: AgentTurnRequest[] = [];
+    let i = 0;
+    return {
+      requests,
+      model: 'heavy',
+      async turn(req: AgentTurnRequest): Promise<AgentTurnResult> {
+        requests.push(req);
+        const step = script[Math.min(i, script.length - 1)]!;
+        i += 1;
+        return { ...step, usage: { tokensIn: perTurnTokens, tokensOut: 0 } } as AgentTurnResult;
+      },
+    };
+  }
+
+  test('the model is TOLD to conclude, and its verdict is kept', async () => {
+    // 10,000 tokens/turn against a 25,000 ceiling: room for two turns, and the
+    // third would cross. The step ceiling (99) never binds.
+    const client = heavyClient(
+      [toolCall('c1', 'get_exception'), toolCall('c2', 'get_exception'), finalVerdict()],
+      10_000);
+    const out = await investigate(REQUEST, deps({ client }),
+      { ...AGENT_DEFAULTS.budget, maxSteps: 99, maxToolCalls: 99, maxTokens: 25_000 });
+
+    const lastText = (i: number): string => {
+      const msgs = client.requests[i]!.messages;
+      const last = msgs[msgs.length - 1]!;
+      return last.role === 'user' ? last.text : '';
+    };
+    const finalIdx = client.requests.length - 1;
+    assert.match(lastText(finalIdx), /FINAL STEP/,
+      'the turn before the ceiling must ask for a verdict, not be cut off');
+    assert.deepEqual(client.requests[finalIdx]!.tools, [],
+      'tools are WITHHELD on the conclude turn, not merely discouraged');
+    assert.equal(out.stopCause, 'concluded');
+    assert.equal(out.verdict.verdict, 'CONFIRMED_UNRESOLVABLE',
+      'the verdict written on the conclude turn is the one that is kept');
+  });
+
+  test('the countdown reflects TOKENS when tokens bind before steps', async () => {
+    // The defect in one assertion: with a 99-step ceiling and tokens affording
+    // ~3 turns, the old countdown said "98 steps left" right up to the kill.
+    // The SHIPPED config's shape: a 10-step ceiling with tokens funding ~3 turns.
+    // Turn 1 legitimately reports the step bound (nothing is measured yet, and it
+    // is a true upper bound); from turn 2 the countdown must CORRECT DOWNWARD to
+    // what the tokens actually fund. Before this fix it never corrected at all.
+    const client = heavyClient([toolCall('c1', 'get_exception')], 10_000);
+    await investigate(REQUEST, deps({ client }),
+      { ...AGENT_DEFAULTS.budget, maxSteps: 10, maxToolCalls: 99, maxTokens: 30_000 });
+
+    const texts = client.requests.map((r) => {
+      const last = r.messages[r.messages.length - 1]!;
+      return last.role === 'user' ? last.text : '';
+    });
+    assert.match(texts[0]!, /9 turns left/, 'turn 1 reports the step bound');
+    assert.match(texts[1]!, /2 turn\(s\) left/,
+      `turn 2 must correct to what the tokens fund, not stay on the step count: ${texts[1]}`);
+    assert.ok(texts.some((t) => /FINAL STEP/.test(t)), 'it must still reach the conclude turn');
+  });
+
+  test('a SPEND refusal is a hard stop — no extra turn is granted', async () => {
+    // The distinction that matters on a prepaid key with auto-reload off. A
+    // token ceiling is a WORK bound: the money is already spent, so one more
+    // turn to convert it into a verdict is free of regret. A spend ceiling is a
+    // MONEY bound: a "final" turn spends exactly what the guard just refused.
+    const client = fakeClient([toolCall('c', 'get_exception')]);
+    const out = await investigate(REQUEST, deps({
+      client,
+      preflight: ({ step }) => (step > 2 ? 'refused: would cross the run ceiling' : null),
+    }), { ...AGENT_DEFAULTS.budget, maxSteps: 99, maxToolCalls: 99 });
+
+    assert.equal(client.requests.length, 2,
+      'the refused turn must not reach the model, even to conclude');
+    assert.equal(out.verdict.budgetExhausted, true);
+    assert.match(out.stopReason, /would cross the run ceiling/);
   });
 });
