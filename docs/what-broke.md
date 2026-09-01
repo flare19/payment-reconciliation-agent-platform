@@ -7,6 +7,47 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
 ---
 
+## Day 14 (2026-09-02) — the Anthropic swap, and five defects no test could have found
+
+Six live runs, **$2.83**, and every one of the five defects below was invisible to a green 818-test suite. They are recorded in the order they were found, because the order is the finding.
+
+| Cost | Defect |
+|---|---|
+| **$0** | The analyst CLI read `GEMINI_AGENT_MODEL` while `LLM_PROVIDER=anthropic`, so a configured-for-Anthropic run would have sent a Gemini model id to the Anthropic API. Caught by `--dry-run`, which is what dry runs are for. |
+| **$0.017** | The explain client lost 2 of 3 batches to unparseable JSON. The Gemini client constrained its output with a response schema; the port carried the request and not the constraint, so Sonnet fenced its JSON and `JSON.parse` refused it. |
+| **$0.238** | Investigations lost **2 of 2** to prose instead of verdict JSON — after 4–7 real tool calls each, with no bound having bound. Also found: `max_tokens` counts **thinking** tokens, so a turn can spend its whole allowance reasoning and return a half-written verdict. Two causes, one symptom, now distinguished. |
+| **$0.232** | The `resultDigest` A3 requires echoed **verbatim** was **1,192 characters**. The one corroboration that reached a verdict was rejected because the model paraphrased what it could not copy. |
+| **$1.07** | Shortening the digest to `get_exception#9e73…` made it *look* like a record id, and **6 of 10** investigations cited the checksum. The gate was right to refuse them; the prompt had never said what an id looks like. |
+
+### The pattern, and it is the useful part
+
+```
+no matching tool call   10/10   →  #54's join key
+digest mismatch                 →  a 1,192-character verbatim echo
+citation is a digest     6/10   →  a checksum shaped like an id
+grounded                 7/10
+```
+
+**Each fix was confirmed not by errors stopping but by the failure signature MOVING.** A fix confirmed by errors stopping is indistinguishable from a suppressed symptom; a fix confirmed by the error changing shape is not. Every layer peeled revealed the next one, and none of them existed until a real model was on the other end — a fake client copies whatever digest the fixture author wrote.
+
+### Two of the five were caused by the previous fix
+
+The digest was 1,192 characters *because* nothing could confuse it with an id. Shortening it made everything confuse it with an id. Neither state was wrong when it was written; the pair was.
+
+**And the digest defect was ours, not the model's.** A3 demanded a verbatim echo of 1,192 characters while separately handing the model the full result in the same message — the digest carried no information the model lacked. A gate that rejects honest work because the token it demanded was impractical to carry is measuring our design, not the model's honesty.
+
+### One defect the audit found in its own fix
+
+`AGENT_MAX_COST_USD_PER_RUN` was parsed in `env.ts`, listed in `agent-design.md` §8, and enforced **nowhere** — `LoopDeps.preflight` was documented as "the seam the spend guard plugs into" and nothing had ever plugged in. Harmless on a free tier; on a prepaid key with auto-reload off it is a balance that dies mid-run. Fixed in ADR-094 — and the first version of that fix granted a spend-refused turn one last "conclude now" call, which spends exactly what the guard just refused. The pre-existing test *"the refused turn must not reach the model"* caught it. **A work bound can afford a final turn because the money is already spent; a money bound cannot.**
+
+### What the swap did not settle
+
+`tools/score` still does not score the Analyst, so proposal precision, false-despair recovered, unresolvable agreement and hallucinated resolutions **do not exist as numbers**. Both `RESOLUTION_PROPOSED` verdicts were produced and grounded and **neither was accepted** — both proposed matching a record the engine had already matched, and the constraint check refused them. That is ADR-053's guard working, not evidence that proposals are correct.
+
+Engine byte-identical across all six runs: 284 matches, 212 exceptions, precision 1.0000, FP 0, recall 0.6075, exit 0.
+
+---
+
 ## Day 13 (2026-09-01), later — #52: S13's explain layer had a rule with nothing enforcing it
 
 `schema.md` §10.4's system prompt asks the model: *"Never invent amounts, dates, merchant names, or reference numbers."* Nothing checked. On the one layer whose output a panelist reads directly, that was a request.
