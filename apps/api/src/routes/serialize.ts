@@ -282,6 +282,15 @@ export function exceptionDetail(
     ruleVersion: e.ruleVersion,
     relatedRecords: related.map(recordPreview),
     auditEntryCount,
+    // AN EXCEPTION KNOWS WHICH RUN IT BELONGS TO, and every consumer needs it.
+    //
+    // Additive, in the shape of ADR-073: the frontend was deriving the run from
+    // global state (`?run=` or "most recent completed") in order to look up an
+    // exception's investigations, which is correct only while exactly one run
+    // exists. The moment a second run was created, every exception from the
+    // older run reported "no one has investigated this" — the investigations
+    // were real, they were just being looked for under the wrong run id.
+    runId: e.runId,
   };
 }
 

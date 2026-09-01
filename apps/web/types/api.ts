@@ -229,7 +229,13 @@ export interface InvestigationSummary {
 }
 
 export interface InvestigationListResponse {
-  investigations: InvestigationSummary[];
+  /**
+   * Endpoint 26 returns FULL investigation objects, reasoning chain included —
+   * not the trimmed summary the contract's example implies. Typing it as the
+   * detail shape is what lets the Analyst screen show which tools were actually
+   * called without one request per investigation.
+   */
+  investigations: InvestigationDetail[];
   agentMetrics: AgentMetrics;
   pagination: Pagination;
 }
@@ -334,6 +340,14 @@ export interface ExceptionEvidence {
 }
 
 export interface ExceptionDetail extends ExceptionSummary {
+  /**
+   * The run this exception belongs to — ALWAYS use this rather than whatever
+   * run the page happened to resolve from `?run=` or "most recent completed".
+   * Deriving it from global state was correct only while exactly one run
+   * existed; the second run made every older exception report that nobody had
+   * investigated it.
+   */
+  runId: string;
   evidence: ExceptionEvidence;
   detectedByRule: string;
   ruleVersion: string;
@@ -375,7 +389,14 @@ export interface ReviewItem {
   matchId: string;
   tier: string;
   confidence: number;
-  scoreBreakdown: Record<string, number | boolean>;
+  /**
+   * NULL for `batch` matches — 7 of 49 in the review queue on the holdout.
+   *
+   * A batch decomposition is not produced by the pair scorer at all: it comes
+   * out of the subset-sum search, so there are no amount/date/anchor components
+   * to break down. The column is nullable and this is why.
+   */
+  scoreBreakdown: Record<string, number | boolean> | null;
   members: (RecordPreview | { transactionId: string; role: string; externalId: string | null;
     amountDisplay: string; txnDate: string; counterpartyRaw: string | null })[];
   whyFlagged: string;
@@ -474,24 +495,38 @@ export interface ReasoningStep {
   resultDigest: string;
 }
 
+/**
+ * MOST OF THIS IS UNPOPULATED WHILE `status === 'running'`, and the types say so.
+ *
+ * `startInvestigation` inserts only run/exception/model/promptVersion; everything
+ * describing a RESULT is written by `concludeInvestigation`. So a running
+ * investigation carries `costUsd: null`, `tokensIn/Out: null`, no verdict, and —
+ * the dangerous one — `groundingPassed: false`, which is the column's DEFAULT
+ * rather than a finding. Rendering that as "Rejected" asserts the gate refused a
+ * verdict that does not exist yet.
+ *
+ * Read `status` FIRST. Nothing below it means anything until it is `concluded`.
+ */
 export interface InvestigationDetail {
   investigationId: string;
   runId: string;
   exceptionId: string;
-  status: string;
+  status: 'running' | 'concluded' | 'failed';
   verdict: Verdict | null;
   confidence: 'high' | 'medium' | 'low' | null;
   proposedAction: Record<string, unknown> | null;
   reasoning: ReasoningStep[];
   citations: string[];
+  /** `false` while running is a DEFAULT, not a result. Gate on `status`. */
   groundingPassed: boolean;
   groundingFailure: string | null;
   budgetExhausted: boolean;
   steps: number;
   toolCalls: number;
-  tokensIn: number;
-  tokensOut: number;
-  costUsd: number;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  /** NULL while running, and NULL on a free-tier key — never 0 (ADR-093). */
+  costUsd: number | null;
   model: string;
   promptVersion: string;
   humanDisposition: string | null;

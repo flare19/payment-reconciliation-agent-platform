@@ -18,8 +18,32 @@ const COMPONENTS: { key: string; label: string; max: number }[] = [
 ];
 
 export function ScoreBars(
-  { breakdown, total }: { breakdown: Record<string, number | boolean>; total?: number },
+  { breakdown, total }: { breakdown: Record<string, number | boolean> | null; total?: number },
 ) {
+  /**
+   * A NULL BREAKDOWN IS A DIFFERENT KIND OF MATCH, not a match that scored zero.
+   *
+   * `batch` matches come out of the subset-sum search rather than the pair
+   * scorer, so no amount/date/anchor/counterparty components exist for them.
+   * Rendering the table anyway drew four bars reading `0.0000` — which asserts
+   * the engine measured each component and found nothing, the precise opposite
+   * of the truth. It also crashed on `breakdown[key]` before it got that far,
+   * which is the only reason anyone noticed.
+   */
+  if (breakdown === null) {
+    return (
+      <p className={styles.noBreakdown}>
+        No component breakdown: this match was found by decomposing a netted credit into the
+        payments that sum to it, not by scoring a pair. There is no amount-or-date agreement to
+        report — the evidence is the arithmetic, and the members below are the subset it found.
+        {total !== undefined && (
+          <> Its confidence of <span className="num">{ratio4(total)}</span> comes from the
+          decomposition, not from a component score.</>
+        )}
+      </p>
+    );
+  }
+
   return (
     <div className={styles.wrap}>
       <table className={styles.table}>

@@ -55,6 +55,7 @@ Rationale for each is in [docs/adr-log.md](docs/adr-log.md). Don't re-litigate t
 | [docs/testing-strategy.md](docs/testing-strategy.md) | What gets tested and what deliberately doesn't. |
 | [docs/deployment.md](docs/deployment.md) | Hosting, env vars, secrets, deploy steps. |
 | [docs/what-broke.md](docs/what-broke.md) | **Update daily.** Part of the submission. |
+| [docs/day17-backlog.md](docs/day17-backlog.md) | **START HERE ON DAY 17.** Everything the Day 16 walkthrough found, prioritised, with model routing. Self-contained. |
 
 **If code and docs disagree, the docs are right until an ADR says otherwise.** Fix the doc first, add the ADR, then change code.
 
@@ -776,7 +777,8 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 | ~~6~~ | ~~Deploy API to Railway~~ | | ✅ **LIVE.** See the block below |
 | ~~7a~~ | ~~**U17** — design direction + dashboard~~ | | ✅ ADR-098…100 |
 | ~~7b~~ | ~~**U18** — remaining six screens~~ | | ✅ ADR-101…103 |
-| **7c** | **Random generated + measured dataset per run** (ADR-103) — agreed with Tejas: proves the engine on data it has not seen, *with the accuracy still measured* | 7b ✅ | 1 h |
+| ~~7c~~ | ~~LLM spend gating~~ — **DONE**, ADR-109…112, 116. Browsing costs nothing; the only spend is one confirmed click | | ✅ |
+| **8** | **[docs/day17-backlog.md](docs/day17-backlog.md)** — 17 items from the Day 16 walkthrough. **P0 items 1–2 first: runs are not isolated in the UI, and both runs reconcile identical bytes** | | 6–8 h |
 | 8 | **Deploy web to Vercel** (U19) | 7 | 1 h |
 | 9 | **AUDIT-4** final pre-submission pass | 8 | 2 h |
 | 10 | **U20** — accuracy report, README, pitch video, build-challenges write-up | 9 | 3–4 h |

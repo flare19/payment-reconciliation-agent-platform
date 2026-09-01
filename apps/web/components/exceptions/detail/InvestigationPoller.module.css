@@ -1,0 +1,79 @@
+.live {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  font-size: var(--t-meta);
+  color: var(--ink-3);
+}
+
+/* Visibly alive. Opacity only, and the global reduced-motion rule stops it —
+   which is fine, because the elapsed counter is the real signal and it keeps
+   ticking either way. */
+.pulse {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--verified);
+  animation: breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+.manual {
+  padding: 0.1rem var(--s2);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--ink-3);
+  font-size: var(--t-micro);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.manual:hover { background: var(--surface-hover); color: var(--ink); }
+
+.gaveUp {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s3);
+  padding: var(--s4);
+  background: var(--sev-medium-bg);
+  border-left: 2px solid var(--sev-medium);
+  border-radius: 0 4px 4px 0;
+}
+
+.gaveUpText {
+  max-width: 72ch;
+  font-size: var(--t-meta);
+  line-height: 1.65;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+.gaveUpText strong { color: var(--sev-medium); font-weight: 600; }
+
+.reload {
+  padding: var(--s2) var(--s4);
+  border: 1px solid var(--sev-medium);
+  border-radius: 4px;
+  background: var(--sev-medium);
+  color: var(--paper);
+  font-size: var(--t-meta);
+  font-weight: 500;
+  cursor: pointer;
+}
+.reload:hover { filter: brightness(1.08); }
+
+.buttons { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+
+.hardReload {
+  font-size: var(--t-meta);
+  color: var(--ink-2);
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  text-underline-offset: 0.2em;
+}
+.hardReload:hover { color: var(--ink); }

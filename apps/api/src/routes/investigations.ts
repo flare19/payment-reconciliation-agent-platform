@@ -53,13 +53,40 @@ export function investigationsRouter(env: Env): Router {
     const id = pathParam(req, 'exceptionId');
     found(await excRepo.findException(id),
       'EXCEPTION_NOT_FOUND', `No exception exists with id ${id}`);
-    // One live investigation per exception (`ux_inv_exc_active`). Checking here
-    // turns a unique-violation into the contract's 409.
+    // THREE STATES, NOT TWO (ADR-109). `ux_inv_exc_active` already guarantees at
+    // most one non-`failed` investigation per exception, so the money guarantee
+    // is Postgres's rather than this function's. What this decides is what the
+    // caller is TOLD, and the previous version told them the wrong thing: an
+    // investigation that concluded an hour ago came back as
+    // `409 INVESTIGATION_IN_PROGRESS`, a code asserting work is happening when
+    // none is. A client cannot tell "poll me" from "here is your answer" apart
+    // from that, and a judge clicking an already-investigated exception got an
+    // error where the interesting result should have been.
     const live = await invRepo.findInvestigationForException(id);
-    if (live !== null && live.status !== 'failed') {
-      throw new ApiError(409, 'INVESTIGATION_IN_PROGRESS',
-        `Exception ${id} already has an investigation (${live.status}).`);
+
+    if (live !== null && live.status === 'concluded') {
+      // Free, and the same verdict every time. This is what makes the button
+      // safe to put in front of someone who will click it twice.
+      res.status(200).json({
+        exceptionId: id,
+        status: 'concluded',
+        investigationId: live.id,
+        reused: true,
+        detailAt: `/api/investigations/${live.id}`,
+      });
+      return;
     }
+
+    if (live !== null && live.status === 'running') {
+      throw new ApiError(409, 'INVESTIGATION_IN_PROGRESS',
+        `Exception ${id} is being investigated right now. Poll `
+        + `/api/investigations/${live.id} for the verdict.`);
+    }
+
+    // Falls through when there is no investigation, or the only one FAILED.
+    // Failures are re-runnable on purpose — memoising one would let a single
+    // grounding rejection permanently poison an exception, and the partial
+    // index's `WHERE status <> 'failed'` predicate already says so.
     const client = requireAgent();
 
     const exception = (await excRepo.findException(id))!;

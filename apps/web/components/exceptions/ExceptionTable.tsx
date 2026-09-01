@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { SeverityChip, Chip } from '@/components/ui/Chip';
 import { count, day, ratio4 } from '@/lib/format';
 import { hrefWith } from '@/lib/run-context';
-import { CATEGORY_LABEL, SOURCE_LABEL, label } from '@/lib/taxonomy';
+import { CATEGORY_LABEL, SOURCE_LABEL, VERDICT_LABEL, label } from '@/lib/taxonomy';
 import type { ExceptionSummary } from '@/types/api';
 import styles from './ExceptionTable.module.css';
 
@@ -26,7 +26,12 @@ import styles from './ExceptionTable.module.css';
  * ones would waste the entire feature.
  */
 export function ExceptionTable(
-  { exceptions, runQ }: { exceptions: ExceptionSummary[]; runQ: string | undefined },
+  { exceptions, runQ, investigatedVerdict }: {
+    exceptions: ExceptionSummary[];
+    runQ: string | undefined;
+    /** exceptionId → verdict, for the ones the Analyst has already looked at. */
+    investigatedVerdict?: Map<string, string | null>;
+  },
 ) {
   return (
     <table className={styles.table}>
@@ -71,11 +76,20 @@ export function ExceptionTable(
                 <Link href={href} className={styles.catLink}>
                   {label(CATEGORY_LABEL, e.category)}
                 </Link>
-                {e.secondaryFlags.length > 0 && (
+                {(e.secondaryFlags.length > 0 || investigatedVerdict?.has(e.exceptionId)) && (
                   <span className={styles.flags}>
                     {e.secondaryFlags.map((f) => (
                       <Chip key={f} tone="outline">{label(CATEGORY_LABEL, f)}</Chip>
                     ))}
+                    {investigatedVerdict?.has(e.exceptionId) && (
+                      <Chip
+                        tone="verified"
+                        title={`The Analyst investigated this: ${
+                          label(VERDICT_LABEL, investigatedVerdict.get(e.exceptionId) ?? null)}`}
+                      >
+                        Analyst
+                      </Chip>
+                    )}
                   </span>
                 )}
               </td>

@@ -1,0 +1,117 @@
+.open {
+  padding: var(--s2) var(--s4);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--t-meta);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.open:hover { background: var(--surface-hover); border-color: var(--ink-4); }
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  width: 100%;
+  max-width: 44rem;
+  padding: var(--s5);
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+}
+
+.head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s3); }
+
+.title { font-size: var(--t-lead); font-weight: 600; }
+
+.close {
+  flex: none;
+  width: 1.75rem; height: 1.75rem;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink-3);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.close:hover { background: var(--surface-hover); color: var(--ink); }
+
+.body {
+  font-size: var(--t-meta);
+  line-height: 1.65;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+.body strong { color: var(--ink); font-weight: 600; }
+
+/* The spend choice. Label and control share one hit target. */
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  padding: var(--s4);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--surface-sunk);
+  cursor: pointer;
+}
+.choice:has(input:checked) { border-color: var(--sev-medium); background: var(--sev-medium-bg); }
+.choiceOff { opacity: 0.65; cursor: not-allowed; }
+
+.choice input { margin-top: 0.2rem; flex: none; accent-color: var(--sev-medium); }
+.choice > span { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+.choice strong { font-size: var(--t-meta); font-weight: 600; }
+
+.choiceNote {
+  font-size: var(--t-micro);
+  line-height: 1.6;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+.actions { display: flex; gap: var(--s3); flex-wrap: wrap; }
+
+.go {
+  padding: var(--s3) var(--s5);
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: var(--t-meta);
+  font-weight: 500;
+  cursor: pointer;
+}
+.go:hover:not(:disabled) { background: var(--ink-2); border-color: var(--ink-2); }
+.go:disabled { opacity: 0.7; cursor: progress; }
+
+.cancel {
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  font-size: var(--t-meta);
+  cursor: pointer;
+}
+.cancel:hover:not(:disabled) { background: var(--surface-hover); }
+
+.stage { font-size: var(--t-meta); color: var(--ink-3); }
+.stageName {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.error {
+  padding: var(--s3) var(--s4);
+  border-left: 2px solid var(--sev-high);
+  background: var(--sev-high-bg);
+  border-radius: 0 3px 3px 0;
+  font-size: var(--t-micro);
+  line-height: 1.6;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}

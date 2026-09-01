@@ -2,7 +2,9 @@ import Link from 'next/link';
 import { Chip } from '@/components/ui/Chip';
 import { at, count } from '@/lib/format';
 import { hrefWith } from '@/lib/run-context';
+import { InvestigationPoller } from './InvestigationPoller';
 import { VERDICT_LABEL, label } from '@/lib/taxonomy';
+import type { ResolvedCitation } from '@/lib/api-client';
 import type { InvestigationDetail } from '@/types/api';
 import styles from './AnalystPanel.module.css';
 
@@ -34,9 +36,70 @@ import styles from './AnalystPanel.module.css';
  * an audience.
  */
 export function AnalystPanel(
-  { investigation, runQ }: { investigation: InvestigationDetail; runQ: string | undefined },
+  { investigation, runQ, citations }: {
+    investigation: InvestigationDetail;
+    runQ: string | undefined;
+    /**
+     * Resolved server-side, because a citation id can be a TRANSACTION or an
+     * EXCEPTION — the gate accepts any id that appeared in a tool result, and
+     * different tools yield different kinds. Linking them all at `/records/`
+     * sent a third of them to a not-found page.
+     */
+    citations: ResolvedCitation[];
+  },
 ) {
   const inv = investigation;
+
+  /**
+   * STATUS IS READ FIRST, and nothing below it is trusted until `concluded`.
+   *
+   * A running investigation carries `costUsd: null`, `tokensIn/Out: null`, and
+   * `groundingPassed: false` — the last of which is the COLUMN DEFAULT, not a
+   * finding. The first version of this panel rendered all of it: it crashed on
+   * `costUsd.toFixed(4)`, and had it survived that line it would have displayed
+   * "Grounding: Rejected" about a verdict that did not exist yet. On a page
+   * whose subject is not claiming more than the evidence supports, the second
+   * would have been the worse bug.
+   */
+  if (inv.status === 'running') {
+    return (
+      <div className={styles.panel}>
+        <p className="label">Investigating Now</p>
+        <p className={styles.runningTitle}>The Analyst is working on this exception.</p>
+        <p className={styles.runningBody}>
+          It is choosing which questions to ask and answering them with the engine&rsquo;s own
+          locked code. This takes up to a minute; the page refreshes itself. Nothing below is
+          decided yet — there is no verdict, no grounding result and no cost to report until it
+          finishes, and showing placeholders for them would be inventing findings.
+        </p>
+        <p className={styles.runningMeta} translate="no">
+          {inv.model} · started {at(inv.startedAt)}
+        </p>
+        {/* Mounted BY the running state, so it cannot be unmounted by the first
+            transition it detects — which is exactly how the previous version
+            killed itself. */}
+        <InvestigationPoller
+          investigationId={inv.investigationId}
+          exceptionId={inv.exceptionId}
+        />
+      </div>
+    );
+  }
+
+  if (inv.status === 'failed') {
+    return (
+      <div className={styles.panel}>
+        <p className="label">Investigation Failed</p>
+        <p className={styles.runningTitle}>The Analyst did not finish.</p>
+        <p className={styles.runningBody}>
+          The loop threw rather than reaching a verdict. Failure is a state, not an absence — and
+          this one is re-runnable, because memoising it would let a single crash permanently
+          poison the exception.
+        </p>
+      </div>
+    );
+  }
+
   const isProposal = inv.verdict === 'RESOLUTION_PROPOSED';
 
   return (
@@ -72,7 +135,13 @@ export function AnalystPanel(
           </div>
           <div>
             <dt className="label">Cost</dt>
-            <dd className={`${styles.metaValue} num`}>${inv.costUsd.toFixed(4)}</dd>
+            <dd className={`${styles.metaValue} num`}>
+              {inv.costUsd === null
+                // NULL is never rendered as $0.00 — a zero cost reads as a
+                // measured figure, and a free-tier key has not measured one.
+                ? <span className={styles.unmeasured}>not billed</span>
+                : `$${inv.costUsd.toFixed(4)}`}
+            </dd>
           </div>
         </dl>
       </header>
@@ -121,22 +190,31 @@ export function AnalystPanel(
         </ol>
       </section>
 
-      {inv.citations.length > 0 && (
+      {citations.length > 0 && (
         <section className={styles.citations} aria-label="Citations">
           <h4 className="label">Citations</h4>
           <p className={styles.citationNote}>
-            Each links to the record it refers to. A reader must be able to click through and
-            check.
+            Every id the agent cited had to appear in a tool result it actually received — that
+            is what the grounding gate checks. Each one links to the record or exception it names,
+            so a reader can go and check the claim rather than take it.
           </p>
           <ul className={styles.chips}>
-            {inv.citations.map((id) => (
-              <li key={id}>
-                <Link
-                  href={hrefWith(`/records/${id}`, { run: runQ })}
-                  className={styles.citation}
-                >
-                  <span className="num" translate="no">{id.slice(0, 8)}</span>
-                </Link>
+            {citations.map((c) => (
+              <li key={c.id}>
+                {c.href === null ? (
+                  <span className={`${styles.citation} ${styles.citationDead}`}>
+                    <span className={styles.citationKind}>unresolved</span>
+                    <span className="num" translate="no">{c.label}</span>
+                  </span>
+                ) : (
+                  <Link href={hrefWith(c.href, { run: runQ })} className={styles.citation}>
+                    <span className={styles.citationKind}>
+                      {c.kind === 'transaction' ? 'record' : 'exception'}
+                    </span>
+                    <span className={styles.citationLabel} translate="no">{c.label}</span>
+                    {c.detail && <span className={styles.citationDetail}>{c.detail}</span>}
+                  </Link>
+                )}
               </li>
             ))}
           </ul>
@@ -160,8 +238,12 @@ export function AnalystPanel(
 
       <footer className={styles.footer}>
         <span translate="no">{inv.model}</span> · prompt {inv.promptVersion} ·{' '}
-        <span className="num">{count(inv.tokensIn)}</span> in /{' '}
-        <span className="num">{count(inv.tokensOut)}</span> out
+        {inv.tokensIn === null || inv.tokensOut === null
+          ? <span className={styles.unmeasured}>tokens not reported</span>
+          : <>
+              <span className="num">{count(inv.tokensIn)}</span> in /{' '}
+              <span className="num">{count(inv.tokensOut)}</span> out
+            </>}
         {inv.finishedAt && <> · {at(inv.finishedAt)}</>}
       </footer>
     </div>

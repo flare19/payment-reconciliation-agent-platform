@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { AnalystPanel } from '@/components/exceptions/detail/AnalystPanel';
+import { AskAnalyst } from '@/components/exceptions/detail/AskAnalyst';
 import { CandidateTable } from '@/components/exceptions/detail/CandidateTable';
 import { LinkedRecords } from '@/components/exceptions/detail/LinkedRecords';
 import { ResolveActions } from '@/components/exceptions/detail/ResolveActions';
@@ -8,11 +9,11 @@ import { SearchClaim } from '@/components/exceptions/detail/SearchClaim';
 import { Chip, SeverityChip, ActorChip } from '@/components/ui/Chip';
 import { Section } from '@/components/ui/Section';
 import {
-  ApiClientError, getException, getInvestigation, getInvestigationsForException,
-  getTransactionAudit,
+  ApiClientError, getException, getInvestigationsForException,
+  getTransactionAudit, resolveCitation,
 } from '@/lib/api-client';
 import { at, count } from '@/lib/format';
-import { hrefWith, one, resolveRun, runParam } from '@/lib/run-context';
+import { hrefWith, one } from '@/lib/run-context';
 import {
   CATEGORY_GLOSS, CATEGORY_LABEL, EXPLANATION_SOURCE_LABEL, RESOLVABILITY_GLOSS,
   RESOLVABILITY_LABEL, STATUS_LABEL, label,
@@ -58,15 +59,30 @@ export default async function ExceptionDetailPage(
     throw err;
   }
 
-  const ctx = await resolveRun(runParam(sp));
-  const runId = ctx?.run.runId;
   const runQ = one(sp, 'run');
+
+  // THE EXCEPTION'S OWN RUN, not the page's. `resolveRun` answers "which run is
+  // this screen about", which is the wrong question here: this screen is about
+  // one exception, and that exception belongs to exactly one run whatever the
+  // reader last selected. Using the resolved run meant that as soon as a second
+  // run existed, every exception from the older one looked uninvestigated — the
+  // investigations were real, they were being sought under the wrong run id.
+  const runId = exception.runId;
 
   // Persisted only — nothing on this page spends money. A detail view that
   // re-runs the agent on load empties a prepaid key in front of an audience.
-  const summaries = runId ? await getInvestigationsForException(runId, exceptionId) : [];
-  const first = summaries[0];
-  const investigation = first ? await getInvestigation(first.investigationId) : null;
+  const summaries = await getInvestigationsForException(runId, exceptionId);
+  // Endpoint 26 already returns FULL investigation objects, reasoning chain
+  // included, so re-fetching the same row through endpoint 27 was a second
+  // request buying nothing — and every saved request is headroom against the
+  // read rate limit this page was quietly exhausting.
+  const investigation = summaries[0] ?? null;
+
+  // Resolved here, once per distinct id, so the panel never has to guess what
+  // kind of thing a citation points at.
+  const citations = investigation
+    ? await Promise.all([...new Set(investigation.citations)].map(resolveCitation))
+    : [];
 
   const auditTrail = await getTransactionAudit(exception.primaryRecord.transactionId)
     .catch(() => null);
@@ -215,16 +231,33 @@ export default async function ExceptionDetailPage(
         <LinkedRecords primary={exception.primaryRecord} related={exception.relatedRecords} />
       </Section>
 
-      {/* ── 6 · the Analyst ─────────────────────────────────────────────── */}
-      {investigation && (
-        <Section
-          id="analyst"
-          title="The Analyst Investigated This"
-          standfirst="An agent chose which questions to ask; the engine’s own locked code computed every number it used. Read the runtime’s recorded result beside the model’s inference — they are separate fields on purpose."
-        >
-          <AnalystPanel investigation={investigation} runQ={runQ} />
-        </Section>
-      )}
+      {/* ── 6 · the Analyst ─────────────────────────────────────────────────
+          NOTHING HERE RUNS A MODEL ON PAGE LOAD. If an investigation exists it
+          is read from the database and rendered for free; if none does, the
+          reader is offered a button that states its own price. Opening every
+          exception in the list must cost zero, or a judge browsing the site
+          spends the budget by reading it. */}
+      <Section
+        id="analyst"
+        // Past tense only once it IS past. A heading reading "Investigated This"
+        // above a panel saying "working on it" is a small lie, and this page is
+        // the wrong place to keep one.
+        title={
+          investigation === null ? 'The Analyst'
+            : investigation.status === 'concluded' ? 'The Analyst Investigated This'
+            : investigation.status === 'running' ? 'The Analyst Is Investigating This'
+            : 'The Analyst'
+        }
+        standfirst={
+          investigation?.status === 'concluded'
+            ? 'An agent chose which questions to ask; the engine’s own locked code computed every number it used. Read the runtime’s recorded result beside the model’s inference — they are separate fields on purpose.'
+            : 'An agent that investigates one exception when a human asks for it, and only then.'
+        }
+      >
+        {investigation
+          ? <AnalystPanel investigation={investigation} runQ={runQ} citations={citations} />
+          : <AskAnalyst exceptionId={exception.exceptionId} />}
+      </Section>
 
       {/* ── 7 · actions ─────────────────────────────────────────────────── */}
       <Section

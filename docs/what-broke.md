@@ -7,6 +7,155 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
 ---
 
+## Day 16 (2026-09-02), latest — the auto-refresh never fired, twice, for two different reasons
+
+Reported: an investigation finished but the page sat on "Investigating now" until it was reloaded by hand.
+
+**Cause one: the poller was owned by the wrong component.** `AskAnalyst` started the investigation and then set an interval to watch for the result. Its own first refresh, three seconds later, made the investigation row exist — so the page swapped `<AskAnalyst>` for `<AnalystPanel>`, `AskAnalyst` unmounted, and **the unmount cleanup I added in Phase 3 to stop the interval leaking killed the only thing driving the page.**
+
+> **A WATCHER OWNED BY THE ACTION IS GUARANTEED TO BE DESTROYED BY THE FIRST CHANGE IT SUCCESSFULLY DETECTS.** The Phase 3 fix was right in isolation — an interval must not outlive its component. Picking the wrong owner turned a correct fix into a stall. The poller now belongs to the running state, so it lives exactly as long as the thing it watches.
+
+**Cause two, found in the browser console while testing cause one: it rate-limited itself.** `router.refresh()` re-renders the whole detail page, which costs about seven API reads. Every three seconds is ~140 requests/minute against a 120/minute ceiling:
+
+```
+Rate limit reached for read requests (120 per 60s). Retry in 38s.
+```
+
+Every refresh 500'd — so even with the ownership fixed the page would still never have updated, for an entirely different reason. It now polls one endpoint (`GET /api/investigations/:id`) and spends a full refresh only at the moment the status actually changes. Also dropped a redundant read: endpoint 26 already returns full investigation objects, so re-fetching the same row via endpoint 27 bought nothing.
+
+**And the escape hatch needed the thing that might be broken.** The give-up banner offered a button wired to `router.refresh()`. If the automatic check ever fails *because* client JavaScript is not running, a button that needs JavaScript is no fallback. Both states now carry a plain `<a>` to the page's own URL — a full page load, which works when nothing else does.
+
+> **A CONSEQUENCE FOR THE DEPLOYED DEMO.** Page renders are server-side, so the API sees the Next server's IP rather than the viewer's. `120/min per IP` isolates nothing between browsers: several judges on the live site draw from **one bucket**. That is the inverse of the `TRUST_PROXY_HOPS` risk in ADR-096 — there, everyone shared the edge's IP; here, everyone shares the renderer's.
+
+### What is NOT verified, and why
+
+**The auto-update was never observed working end to end.** The browser tooling degraded through this session — `javascript_tool` evaluating against stale documents, then the pane hanging and timing out on scroll — and the test environment was further polluted by deleting `.next` under a browser holding the old chunk URLs, which produces exactly the symptom of "client JavaScript not running". The server-rendered markup, the request-count reduction and the no-JS fallback are all verified; **the ticking counter and the automatic transition are not.** That is the honest state and it is why the fallback link exists.
+
+---
+
+## Day 16 (2026-09-02), latest — a third of the Analyst's citations led nowhere
+
+Reported from a click-through: some Analyst citations landed on the 404 page.
+
+**They were not all transactions.** The grounding gate accepts any id that appeared in a tool result, and the tools return two kinds — `get_transaction` gives transaction ids, `get_exception` and `find_similar_exceptions` give exception ids. On the holdout: **18 transactions, 8 exceptions, 0 unknown.** The panel linked all 26 to `/records/:id`.
+
+So **eight of twenty-six citations 404'd** — on the one element whose entire purpose is letting a reader check a claim against the record behind it. **A citation you cannot follow is not a citation.** Each id is now resolved server-side to its kind first; all 26 reach a live page, verified one by one.
+
+They also stopped rendering as eight hex characters. `record · gbBjF2pd5DHVpJSKOLGXR · bank · ₹4,06,441.50` is checkable. `07f111a4` is not.
+
+### And the 404 page was still telling people the site was half-built
+
+Written during U17, when the dashboard really was the only screen:
+
+> *"The exception list, exception detail, review queue, matches browser, aliases and audit screens are still being built."*
+
+U18 built all six. Nobody came back to this file. So a reader who followed a broken citation was told the exception detail screen did not exist yet — **while looking at it in the previous tab.**
+
+> **A STALE EXPLANATION IS WORSE THAN NONE.** No explanation leaves someone to investigate; a confident wrong one sends them away to wait for something that shipped days ago. Same failure shape as the error boundary blaming the API for a render bug: **a surface certain about a cause it does not know.** Twice in two days, from two different files, both written when they were true.
+
+### One thing the verification itself found
+
+Checking all 26 citations meant 52 requests in a few seconds, which **hit the read rate limit** — `120/min per IP`, ADR-096, working exactly as designed. Not a defect, but worth knowing the shape of: the exception detail page now issues roughly 5–9 requests (exception, investigations, investigation, audit trail, plus one or two per citation). Human browsing will not approach 120/min; a scripted sweep does.
+
+---
+
+## Day 16 (2026-09-02), late — a second run made the agent disappear, and the agent was already invisible
+
+Reported after a manual test: the Ask button appeared on an exception that had *already* been investigated, clicking it said "the page updates itself" and the page never did, and — separately — the Analyst's only presence in the whole product was that one button.
+
+**The first two are one bug.** The exception detail screen derived its run from `?run=` or "most recent completed", then asked endpoint 26 for *that* run's investigations. Correct while exactly one run existed. **I created a second run an hour earlier to verify the Phase 4 launcher**, it became the default, and:
+
+- every exception from the older run reported *"no one has investigated this"* — and offered to spend money on work already done;
+- the poll after a real investigation never found it, because it kept looking under the wrong run;
+- the dashboard's Analyst block reported Phase A had not run, on a run with eleven investigations.
+
+One coupling defect, three symptoms, **every one of them shaped like the agent not existing**.
+
+`ExceptionDetail` did not expose `runId` at all, so the page had no way to ask the right question. Now it does, and uses it (ADR-113).
+
+> **THE BUG WAS LATENT FROM THE MOMENT THE PAGE WAS WRITTEN**, and invisible until a second run existed. That is precisely the condition task 7c creates on every click — so it would have shipped directly into the feature designed to make runs cheap to create. Nothing in 840 tests covers "two runs exist"; the integration fixtures create exactly one.
+
+**No money was lost this time.** Spend was unchanged at $0.9359 across the whole episode — the second click hit endpoint 25's memoisation and returned the existing verdict for free, which is ADR-109 working. It just had no way to *show* it.
+
+### The agent was invisible, and that is a grading problem rather than a bug
+
+The track asks for an agent. Ours enforces read-only through Postgres, refuses to do its own arithmetic, and runs a grounding gate that rejects verdicts citing things the model never saw. **Its entire presence in the product was one button at the bottom of one page.** A judge with sixty seconds would have concluded there was no agent.
+
+`/analyst` now exists in the primary nav (ADR-114): the loop in four steps, the verdict distribution, every investigation, the cost, and what is not measured — with the caveat beside the metrics rather than below the fold.
+
+**The tool list on it is derived, not transcribed** — built from the tool calls in the persisted reasoning chains, with real counts:
+
+```
+find_by_anchor 15 · get_exception 11 · search_transactions 10 · rerun_subset_search 8
+find_similar_exceptions 7 · get_transaction 6 · score_pair 2
+59 calls across 11 investigations
+```
+
+A list copied out of `agent-design.md` would describe a design. This describes behaviour, and on a site whose argument is that its claims are checkable, that is the difference that earns the page.
+
+---
+
+## Day 16 (2026-09-02), night — a type audit that found a live crash in its first minute
+
+After three separate incidents of a hand-written type declaring non-null where Postgres allows NULL, the audit stopped being a good idea and became a command:
+
+```sql
+SELECT table_name, column_name FROM information_schema.columns WHERE is_nullable='YES'
+```
+
+compared against `apps/web/types/api.ts`. **It found a fourth, and it was already live.**
+
+`matches.score_breakdown` is NULL for 39 of 284 matches — every `exact` match, and **all 7 `pending_review` batch matches, which sit in the review queue.** `ScoreBars` indexed it directly, so review pages **23, 26, 28, 29, 30, 31 and 34** threw `Cannot read properties of null (reading 'amount')`. Seven of forty-nine, reachable by paging, and nobody had paged that far.
+
+**The crash was again the lesser bug.** Four bars reading `0.0000` would have asserted the engine measured each component and found nothing. A batch match comes out of the subset-sum search, not the pair scorer — there are no components. The panel now says so, and says the confidence came from the decomposition instead.
+
+> **FOUR INSTANCES, ONE PATTERN.** `amountAtRiskDisplay: string`, `costUsd: number`, `tokensIn/Out: number`, `scoreBreakdown: Record<…>` — all declared non-null, all nullable in the schema, all a crash or a false claim. **TypeScript named every one within seconds of the annotation being corrected, and none of them before.** This is not a limitation of the language. It is writing down the happy path and calling it a type, and the compiler dutifully believing it.
+
+### Phase 4 measured two things that were better than expected
+
+**A run with the explain layer off made 0 API calls and produced byte-identical results** — 65.22%, 212 exceptions, same audit chain. ADR-017 has always said the model only narrates decisions the rules already made; the launcher is where a viewer can prove that by running it both ways.
+
+**And that free run still showed real explanations — 199 of 200 from `llm_cache`.** The signature is a bucketed shape with no record identity in it, so explanations paid for by an earlier run apply to a later one over different rows. **A free run is not a degraded run.**
+
+That second finding rewrites 7c's economics. The fear was that a freshly generated dataset would cost another explain pass every time; it will not, because the same *kinds* of discrepancy hash to the same signatures. Only genuinely novel shapes cost anything.
+
+### Also fixed
+
+- **The polling interval outlived its component.** `AskAnalyst` armed a `setInterval` and a separate `setTimeout` to cancel it, so navigating away mid-investigation left it refreshing a page nobody was looking at. One `useRef` and an unmount cleanup.
+- **The cost quote was wrong in the honest direction.** The button said ~$0.11; the one real investigation cost **$0.0497**. It now quotes the measured range, $0.05–0.12.
+
+---
+
+## Day 16 (2026-09-02), night — the Ask button worked, and the panel could not draw the thing it started
+
+The first real use of the new "Ask the Analyst" button ended on the error boundary:
+
+```
+Cannot read properties of null (reading 'toFixed')
+```
+
+**The money was fine** — the investigation ran to completion, `NEEDS_EXTERNAL_DATA`, and cost **$0.0497**, less than half the $0.11 the button quotes. What failed was drawing it *while it was still running*.
+
+`startInvestigation` inserts five columns; every column describing a result is written by `concludeInvestigation`. So mid-flight the row reads `cost_usd NULL`, `tokens_in/out NULL`, and `grounding_passed false` — **the column default, not a finding**. `AnalystPanel` had only ever been written against concluded rows, because until today concluded rows were the only ones a human could reach.
+
+> **THE CRASH WAS THE LESSER BUG.** Had the panel survived `costUsd.toFixed(4)` it would have rendered **"Grounding: Rejected"** about a verdict that did not exist yet — a confident, specific, false claim, on the page whose whole subject is not claiming more than the evidence supports. A schema default is not a measurement. Treating one as a finding is the same error as putting an engine figure in a measured tile, and it would have been far harder to notice than a stack trace.
+
+### Third time a type I wrote was a lie, third time it was a runtime crash
+
+`amountAtRiskDisplay: string` was really `string | null`. `costUsd: number` is really `number | null` — **and I had written the reason down myself**, in a comment in this repo: *"NULL on a free-tier key, never 0."* Widening the declaration to match the schema made `tsc` name all three crash sites in one pass, instantly, having been blind to them for as long as the annotation was wrong.
+
+**The compiler is exactly as honest as its annotations.** All three of these were me typing what I hoped rather than what the table says. That is not a TypeScript limitation; it is a discipline failure with a compiler-shaped alibi.
+
+### The error page blamed the API for a rendering bug
+
+`app/error.tsx` printed *"The API is expected at http://localhost:8080/api — check that it is running and that CORS_ORIGIN allows this origin"* **unconditionally**. So a null-property crash inside a React component told the reader to go and check their network configuration. It now shows that advice only when the message looks like a transport failure, and otherwise says plainly that the data arrived and the page failed to draw it.
+
+**An error surface that names the wrong cause is worse than one that names none** — it sends someone confidently in the wrong direction, which is precisely what it did.
+
+Verified by inserting a `running` row directly and loading the page: renders, no crash, no grounding claim, heading in the present tense. Removed afterwards.
+
+---
+
 ## Day 16 (2026-09-02), later still — two controls that could not do anything, and someone else's files
 
 **A confirmation banner that followed the reviewer.** ADR-107 moved the review flash out of the keyed card so it would survive the card remounting on success. The parent is not keyed either — that is what makes it work — so the message also survived `?page=` navigation and announced an approval made three proposals ago. **The same defect as the unkeyed card it replaced, one level up: state outliving the event it describes.** Now dismissed twice over: a 4-second timer, and an effect on `pagination.page` so paging away clears it. The flash carries an `id`, because two identical messages in a row are the same string and a `[flash]` effect would not re-run on the second.

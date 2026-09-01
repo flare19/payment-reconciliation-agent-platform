@@ -7,6 +7,7 @@ import { createPool, closePool, getPool } from '../../src/db/pool.js';
 import { createApp } from '../../src/app.js';
 import type { Env } from '../../src/config/env.js';
 import type { RunSources } from '../../src/services/run/orchestrator.js';
+import * as invRepo from '../../src/repositories/investigations.js';
 
 /**
  * Every endpoint over real HTTP, against a real database.
@@ -463,6 +464,54 @@ describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL
     // ADR-053 makes this a build blocker, not a metric — reported beside the
     // rest rather than buried.
     assert.equal(metrics['hallucinatedResolutions'], 0);
+  });
+
+  test('25 · a CONCLUDED investigation is returned, a RUNNING one is refused (ADR-109)', async () => {
+    // Every branch here runs BEFORE `requireAgent()`, which is the point: the
+    // three states are decided without a key, without a model, and without
+    // spending anything. That ordering is what makes the guard testable at all.
+    const list = await req('GET', `/api/runs/${runId}/exceptions?pageSize=2`);
+    const exceptions = list.json['exceptions'] as Record<string, unknown>[];
+    const runningExcId = exceptions[0]!['exceptionId'] as string;
+    const concludedExcId = exceptions[1]!['exceptionId'] as string;
+
+    // ── running: work IS happening, so 409 is the true statement ────────────
+    const running = await invRepo.startInvestigation({
+      runId, exceptionId: runningExcId, model: 'test-model', promptVersion: 'test',
+    });
+    const refused = await req('POST', `/api/exceptions/${runningExcId}/investigate`, {});
+    assert.equal(refused.status, 409);
+    assert.equal((refused.json['error'] as Record<string, unknown>)['code'],
+      'INVESTIGATION_IN_PROGRESS');
+
+    // ── concluded: the answer already exists, so return it ──────────────────
+    const done = await invRepo.startInvestigation({
+      runId, exceptionId: concludedExcId, model: 'test-model', promptVersion: 'test',
+    });
+    await invRepo.concludeInvestigation(done.id, {
+      verdict: 'CONFIRMED_UNRESOLVABLE', confidence: 'high', proposedAction: null,
+      reasoning: [], citations: [], groundingPassed: true, groundingFailure: null,
+      budgetExhausted: false, steps: 1, toolCalls: 1, tokensIn: 10, tokensOut: 10,
+      costUsd: 0,
+    });
+
+    const reused = await req('POST', `/api/exceptions/${concludedExcId}/investigate`, {});
+    // 200, NOT 409: an investigation that finished is not "in progress", and a
+    // caller cannot tell "poll me" from "here is your answer" if both are 409.
+    assert.equal(reused.status, 200);
+    assert.equal(reused.json['status'], 'concluded');
+    assert.equal(reused.json['reused'], true);
+    assert.equal(reused.json['investigationId'], done.id);
+    assert.equal(reused.json['detailAt'], `/api/investigations/${done.id}`);
+
+    // Clicking again is still free and still the SAME verdict — this is the
+    // property that makes the button safe in front of someone who double-clicks.
+    const again = await req('POST', `/api/exceptions/${concludedExcId}/investigate`, {});
+    assert.equal(again.status, 200);
+    assert.equal(again.json['investigationId'], done.id);
+
+    await getPool().query('DELETE FROM agent_investigations WHERE id = ANY($1)',
+      [[running.id, done.id]]);
   });
 
   // ── the scorer's entry point ───────────────────────────────────────────────

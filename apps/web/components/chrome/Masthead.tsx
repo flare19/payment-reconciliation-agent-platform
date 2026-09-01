@@ -10,6 +10,7 @@ import styles from './Masthead.module.css';
 const NAV: { href: string; label: string }[] = [
   { href: '/', label: 'Dashboard' },
   { href: '/exceptions', label: 'Exceptions' },
+  { href: '/analyst', label: 'Analyst' },
   { href: '/review', label: 'Review' },
   { href: '/matches', label: 'Matches' },
   { href: '/aliases', label: 'Aliases' },

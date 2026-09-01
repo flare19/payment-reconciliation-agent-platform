@@ -991,3 +991,131 @@ Endpoint 8 has always accepted `?status=`; **nothing in the frontend used it.** 
 **And the `manual` tier filter is REMOVED from the control row entirely.** Explaining a control that can never do anything is still shipping a control that can never do anything — the honest move is not to offer it. The distinction against `alias`, which stays, is the useful one: **a filter that is EMPTY today is worth offering** because teaching one alias fills it; **a filter that is IMPOSSIBLE is a dead control**, and offering it invites the wrong conclusion — that approvals went missing rather than that they live under a different heading. `/matches?tier=manual` typed directly still explains itself, for anyone on an old link.
 
 > **A CONSEQUENCE TO CARRY INTO THE DEMO, not a defect.** `runs.metrics` is frozen at run completion (ADR-041), so the dashboard headline still reads **65.22%** and **71 pending** while `/matches` truthfully reports 22 human-confirmed and 49 pending. Both are correct — one is the engine's account of itself at the moment it finished, the other is live — but a judge who approves a few proposals and then returns to the dashboard will see two pending counts that disagree. **Either re-run before demoing, or say plainly that the headline is the run's own frozen figure.** Testing this session has moved the review queue from 71 to 49; a fresh run restores it.
+
+### ADR-109 · A concluded investigation is RETURNED, not refused; `409 INVESTIGATION_IN_PROGRESS` means in progress
+
+**Decision:** `POST /api/exceptions/:exceptionId/investigate` now distinguishes three states where it previously collapsed two:
+
+| Existing investigation | Response | Spends money |
+|---|---|---|
+| none, or `failed` | `202` — dispatches a new investigation | **yes** |
+| `running` | `409 INVESTIGATION_IN_PROGRESS` | no |
+| `concluded` | **`200`** with the existing investigation and `reused: true` | **no** |
+
+**This is a contract change.** `api-contract.md` §0 listed `409 INVESTIGATION_IN_PROGRESS` for "investigation already exists", and that document is binding until an ADR says otherwise (CLAUDE.md §3). It is corrected in the same commit.
+
+**Because the endpoint was refusing where it should have been answering, under a code that was not true.** `ux_inv_exc_active` (migration 010) already guarantees at most one non-failed investigation per exception, so **the money guarantee was never in question — Postgres enforces it.** What was wrong is what a caller got back: an investigation concluded an hour ago returned `409 INVESTIGATION_IN_PROGRESS`, a status code asserting work is happening when none is. A client cannot distinguish "wait and poll" from "here is your answer" from that.
+
+The practical consequence is the one that matters for a demo: **a judge clicking "Ask the Analyst" on an exception someone already investigated should see the investigation, not an error.** Under the old behaviour the second viewer of the most interesting exception on the site got a red banner.
+
+**`failed` remains re-runnable, and that is deliberate.** Memoising a failure forever would mean one grounding rejection or budget exhaustion permanently poisons an exception. The partial index's `WHERE status <> 'failed'` predicate already encodes exactly this rule; the route now agrees with it.
+
+**What this is NOT.** It is memoisation — look up before working — not idempotency. Idempotency would require a caller-supplied request key and would make a *repeat* of the same request safe; this makes *any* second request cheap by returning what the first one produced. The distinction decides where the fix lives: in the lookup, not in a key. Worth naming because "make it idempotent" would have sent someone to build request-key plumbing this system does not need.
+
+**Re-running a concluded investigation is not offered at all**, and that is a deliberate omission rather than an oversight. It costs $0.10–0.12, the model is not deterministic, and a second opinion that disagrees with the first raises a question nobody has budget to resolve. If it is ever wanted it should be an explicit, separately-labelled, cost-stating action — never the same button.
+
+### ADR-110 · An investigation's `status` is read before any of its fields; a running one has no findings to show
+
+**Decision:** `AnalystPanel` branches on `status` first and renders `running` and `failed` as their own states. Nothing describing a *result* — verdict, confidence, grounding, cost, tokens, reasoning — is drawn until `status === 'concluded'`. `costUsd` and `tokensIn/Out` are typed `number | null` to match the table.
+
+**Because a running investigation is mostly NULLs and one dangerous default.** `startInvestigation` inserts only `run_id`, `exception_id`, `status`, `model`, `prompt_version`; every result column is written by `concludeInvestigation`. So while the loop is running:
+
+```
+cost_usd          NULL          → `.toFixed(4)` threw, and the page went to the error boundary
+tokens_in/out     NULL          → `count(null)`
+grounding_passed  false         ← the COLUMN DEFAULT, not a finding
+```
+
+The crash was the *lesser* bug. Had the panel survived that line it would have rendered **“Grounding: Rejected”** about a verdict that did not exist yet — a confident, specific, false claim, on the page whose entire subject is not claiming more than the evidence supports. **A schema default is not a measurement**, and treating one as a finding is the same error as putting an engine figure in a measured tile (ADR-098).
+
+> **THIRD TIME A TYPE I WROTE WAS A LIE, AND THE THIRD TIME IT COST A RUNTIME CRASH.** `amountAtRiskDisplay: string` was really `string | null` (ADR-105). `costUsd: number` is really `number | null` — and I had written the reason down myself, in a comment in this very repo: *"NULL on a free-tier key, never 0."* Widening the declaration to the truth made `tsc` immediately name all three crash sites it had been blind to. **The compiler is only as honest as the annotations, and every one of these was a case of me telling it what I hoped rather than what the schema says.**
+
+**The heading follows the status too.** "The Analyst Investigated This" above a panel reading "working on it" is a small lie, and this is the wrong page to keep one.
+
+**And the error boundary stopped blaming the API for its own bugs.** `app/error.tsx` printed *"The API is expected at … check CORS_ORIGIN"* unconditionally, so a React render error sent the reader to debug their network. The advice is now shown only when the message looks like a transport or contract failure; otherwise the page says plainly that the data arrived and the page failed to draw it. **An error surface that names the wrong cause is worse than one that names none**, because it sends someone confidently in the wrong direction — which is exactly what happened.
+
+### ADR-111 · Starting a run is free by default; the explain layer is the only spend and it is a choice
+
+**Decision:** The dashboard carries a run launcher. It posts `useSeedDataset: true` with `configOverrides: { llmExplainEnabled }`, and **that box is unchecked by default**. The engine — ingestion, matching, classification, group assembly, the audit chain — involves no model at all, so a run costs nothing unless the reader asks for explanations.
+
+**Because the most prominent button on the landing page must not be able to spend a stranger's money.** A judge will click it. `POST /api/runs` runs S13 automatically, capped at `llmMaxCallsPerRun` (~$0.03), and until now nothing in the interface exposed that or offered a way to decline it. Task 7c turns this path into a per-click cost, which is why the gating had to land first rather than alongside.
+
+**Two things measured while building it, both stronger than expected:**
+
+1. **A run with `llmExplainEnabled: false` produced 0 API calls and byte-identical results** — 65.22%, 212 exceptions, same audit chain. ADR-017 says the model narrates decisions the rules already made; this control is where a viewer can *prove* that themselves by running it both ways, rather than being told.
+
+2. **It still showed real explanations: 199 of 200 came from `llm_cache`.** The signature is a bucketed shape — category, amount-delta band, date-delta band, sources present, anchor strength, candidate-count band — with **no record identity in it at all**. So explanations generated by an earlier run apply to a later one over different rows. A "free" run is not a degraded run; it is the same run reusing what was already paid for.
+
+**The second finding is the one that changes 7c's economics.** A freshly generated dataset producing the same *kinds* of discrepancy hits the same signatures, so the feared "every fresh run costs another $0.03" is wrong after the first. Only genuinely novel shapes cost anything.
+
+**The launcher disables the option rather than hiding it** when `/api/health` reports `llmConfigured: false`, and says why. A control that silently no-ops is worse than one that explains it cannot act.
+
+### ADR-112 · Web types are checked against the migrations, because three of them were wishes
+
+**Decision:** Nullable columns in the schema must be nullable in `apps/web/types/api.ts`. Checked by comparing `information_schema.columns` against the declarations rather than by reading.
+
+**Because the audit found a fourth live crash the moment it was run.** `matches.score_breakdown` is NULL for 39 of 284 matches — every `exact` match and, critically, **all 7 `pending_review` batch matches, which are in the review queue.** `ScoreBars` indexed it directly, so review pages 23, 26, 28, 29, 30, 31 and 34 threw `Cannot read properties of null (reading 'amount')`. Seven of forty-nine pages, live, reachable by paging.
+
+**And drawing four bars of `0.0000` would have been worse than the crash.** A batch match comes out of the subset-sum search, not the pair scorer: there are no amount/date/anchor/counterparty components for it. Rendering zeros asserts the engine measured each component and found nothing — the exact opposite of the truth. The panel now says there is no component breakdown and why, and reports that the confidence came from the decomposition.
+
+> **THE PATTERN, NAMED AFTER FOUR INSTANCES.** `amountAtRiskDisplay: string`, `costUsd: number`, `tokensIn/Out: number`, `scoreBreakdown: Record<…>` — every one declared non-null, every one nullable in Postgres, every one a runtime crash or a false claim. **TypeScript found all of them within seconds of the annotation being corrected, and none of them before.** The compiler is exactly as honest as what it is told, and these were cases of writing down the happy path and calling it a type. The check belongs in AUDIT-4 as a command, not a habit.
+
+### ADR-113 · An exception's own `runId` decides which investigations belong to it — never the page's resolved run
+
+**Decision:** `ExceptionDetail` exposes `runId`, and the exception detail screen uses it. `resolveRun()` answers *"which run is this screen about"*, which is the wrong question for a screen that is about one exception.
+
+**Because the second run in the database broke the first one's Analyst entirely, in three places at once.** The detail page derived the run from `?run=` or "most recent completed", then asked endpoint 26 for that run's investigations and filtered by exception id. Correct while exactly one run existed. The moment a second appeared and became the default:
+
+- every exception from the older run reported **"no one has investigated this"** and offered to spend money on work already done;
+- the poll after a real investigation **never found it**, because it kept looking under the wrong run — so the button said *"the page updates itself"* and the page never did;
+- the dashboard's Analyst block reported **Phase A had not run**, on a run with eleven investigations.
+
+One coupling defect, three symptoms, all of them shaped like the agent not existing.
+
+**The fix is additive and in ADR-073's shape:** a record that belongs to a run should say which run, and any consumer that needs the answer should read it rather than infer it from global state. **The bug was latent from the moment the page was written and invisible until a second run existed** — which is exactly the condition task 7c creates on every click, so it would have shipped straight into the feature that makes runs cheap to create.
+
+> **A TEST RUN CAUSED IT.** The `phase4-free` run I created to verify the launcher became the default and broke the screen I had built an hour earlier. Nothing in the test suite covers "two runs exist", and the fixture-based integration tests create exactly one.
+
+### ADR-114 · The Analyst gets a screen, and everything on it is evidence
+
+**Decision:** `/analyst` is a first-class screen in the primary nav. It explains the loop in four steps, lists **the tools the agent actually called with their real counts**, shows the verdict distribution, lists every investigation, states the cost, and states plainly what is not measured. The exception list marks investigated rows with an `Analyst` chip; the dashboard block links through.
+
+**Because the track asks for an agent and ours was invisible.** The layer is the most architecturally careful thing in the repo — read-only enforced by Postgres, no arithmetic of its own, a grounding gate that rejects unsupported verdicts — and its entire presence in the product was **one button at the bottom of one exception detail page**. A judge with sixty seconds would have concluded there was no agent. For grading purposes, a layer nobody can find is a layer that does not exist.
+
+**THE TOOL LIST IS DERIVED, NOT TRANSCRIBED.** It is built from the tool calls recorded in the persisted reasoning chains, with their counts — 59 calls across 11 investigations, 7 distinct tools. If the agent never called a tool, that tool does not appear. A list copied out of `agent-design.md` would describe a design; this describes behaviour, and the difference is the entire reason the page earns its place on a site whose argument is that its claims are checkable.
+
+**The caveat block is as prominent as the metrics.** *"None of this is scored against the answer key"* sits beside the cost figure, not below the fold. And the grounding-failure count is given both readings in the same breath — the gate working, and the model asserting what it had not established — because both are true and picking one would be editing.
+
+### ADR-115 · A citation is resolved to its kind before it is linked; and a "not built yet" page must not outlive the build
+
+**Two defects, both about a page asserting something that used to be true.**
+
+**1 · Citations are not all transactions.** The A3 grounding gate accepts any id that appeared in a tool result, and the tools return more than one kind: `get_transaction` yields transaction ids, `get_exception` and `find_similar_exceptions` yield exception ids. On the holdout the split is **18 transactions to 8 exceptions**, and the panel linked all 26 to `/records/:id`.
+
+So **roughly a third of citations led to a not-found page** — on the one element of the Analyst panel whose entire purpose is letting a reader check a claim against the record behind it. A citation that cannot be followed is not a citation.
+
+Each distinct id is now resolved server-side before rendering: transaction → `/records/`, exception → `/exceptions/`, and anything that resolves to neither renders as **unresolved rather than as a dead link**, because a citation the gate accepted with nothing behind it is a finding rather than a broken href. All 26 now reach a live page.
+
+The chips also stopped showing eight hex characters. `record · gbBjF2pd5DHVpJSKOLGXR · bank · ₹4,06,441.50` is checkable; `07f111a4` is not, and the difference matters precisely because this is the evidence surface.
+
+**2 · The 404 page still said the site was half-built.** Written during U17, when the dashboard genuinely was the only screen, it read: *"the exception list, exception detail, review queue, matches browser, aliases and audit screens are still being built."* U18 built all six and nobody returned to that file. A reader who followed a broken citation was told the exception detail screen did not exist — while looking at it in the previous tab.
+
+> **A STALE EXPLANATION IS WORSE THAN NO EXPLANATION.** "No explanation" leaves someone to investigate; a confident wrong one sends them away to wait for a feature that shipped days ago. It cost real confusion here, and it is the same failure shape as the error boundary blaming the API for a render bug (ADR-110) — **a surface that is certain about a cause it does not know.** The page now states only what it can: the id is not in the database, ids are per-run, here are three places to go.
+
+### ADR-116 · A poller belongs to the state it watches, must be cheaper than the page, and must not need JavaScript to be escapable
+
+**Three defects in one control, each one caused by the fix for the previous.**
+
+**1 · The poller was owned by the component that started the work.** `AskAnalyst` fired the request and then set an interval to watch for the result. Three seconds later its own first refresh made the investigation row exist, the page swapped `<AskAnalyst>` for `<AnalystPanel>`, `AskAnalyst` unmounted, and the unmount cleanup added in Phase 3 to stop the interval leaking stopped the only thing driving the page.
+
+> **A watcher owned by the action is guaranteed to be destroyed by the first change it successfully detects.** The Phase 3 fix was correct in isolation — an interval really must not outlive its component — and choosing the wrong owner turned it into a stall. The poller is now mounted by the *running state*, so it lives exactly as long as the thing it is watching.
+
+**2 · Then it rate-limited itself.** The poller called `router.refresh()`, which re-renders the whole exception detail page — and that page costs roughly seven API reads. Every three seconds is ~140 requests/minute against ADR-096's 120/minute read ceiling. Every refresh 500'd, so the page still never updated, now for a completely different reason. It polls `GET /api/investigations/:id` instead — **one** request — and spends a full refresh only at the single moment the status changes.
+
+The same pass removed a redundant read: endpoint 26 already returns full investigation objects, so re-fetching the same row through endpoint 27 was a second request buying nothing.
+
+> **THE RATE LIMITER IS SHARED, AND THAT IS WORTH KNOWING BEFORE THE DEMO.** Page renders are server-side, so the API sees the Next server's IP, not the viewer's. `120/min per IP` therefore isolates nothing between browsers: several judges on the deployed site draw from **one bucket**. This is the inverse of `TRUST_PROXY_HOPS` (ADR-096) — there the risk was everyone sharing the edge's IP; here it is everyone sharing the renderer's.
+
+**3 · And the escape hatch needed the thing that might be broken.** Both the give-up state and the live state offer a plain `<a>` to the page's own URL beside the refresh button. If the automatic check ever fails *because* client JavaScript is not running — a chunk that failed to load, a hydration error, an extension — then a button wired to `router.refresh()` is no fallback at all: it needs exactly what is broken. A link is a full page load and works when nothing else does.
+
+**It gives up out loud after 90 seconds**, against `agent-design.md` §8's 60-second bound. Silent polling that has quietly died is indistinguishable from work still in progress, and a reader watching a spinner cannot tell which they are looking at.

@@ -21,6 +21,14 @@ export default function DashboardError(
     console.error('[dashboard]', error);
   }, [error]);
 
+  // `ApiClientError`'s fields do not survive the server/client boundary, so the
+  // cause is recovered from the message. Deliberately conservative: anything
+  // that is not recognisably a transport or contract failure is treated as a
+  // rendering fault, because that is the honest default for an error thrown
+  // inside a component.
+  const looksLikeApiFailure = /API_UNREACHABLE|Failed to fetch|NetworkError|ECONNREFUSED|fetch failed|CORS|\b[45]\d{2}\b/i
+    .test(error.message);
+
   return (
     <main id="main" className={styles.wrap}>
       <p className="label">Request Failed</p>
@@ -30,14 +38,28 @@ export default function DashboardError(
         <code>{error.message}</code>
       </pre>
 
-      <p className={styles.body}>
-        The API is expected at{' '}
-        <code className={styles.inline} translate="no">
-          {process.env['NEXT_PUBLIC_API_BASE_URL'] ?? 'http://localhost:8080/api'}
-        </code>
-        . Check that it is running and that <code className={styles.inline}>CORS_ORIGIN</code>{' '}
-        allows this origin.
-      </p>
+      {/* ONLY BLAME THE API WHEN IT IS PLAUSIBLY THE API.
+          This page used to print the base-URL advice unconditionally, so a
+          React render error — `Cannot read properties of null` — told the
+          reader to go and check CORS. An error surface that names the wrong
+          cause is worse than one that names none, because it sends someone
+          confidently in the wrong direction. */}
+      {looksLikeApiFailure ? (
+        <p className={styles.body}>
+          The API is expected at{' '}
+          <code className={styles.inline} translate="no">
+            {process.env['NEXT_PUBLIC_API_BASE_URL'] ?? 'http://localhost:8080/api'}
+          </code>
+          . Check that it is running and that <code className={styles.inline}>CORS_ORIGIN</code>{' '}
+          allows this origin.
+        </p>
+      ) : (
+        <p className={styles.body}>
+          This is a rendering error, not a connection problem — the data arrived and the page
+          failed to draw it. The message above is the actual fault; nothing is wrong with the API
+          or your network.
+        </p>
+      )}
 
       {error.digest && (
         <p className={styles.digest}>
