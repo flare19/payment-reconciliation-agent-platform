@@ -18,6 +18,34 @@ import type { RunConfig, ScoreWeights } from '../types/engine.js';
 export const DEFAULT_EXPLAIN_MODEL = 'gemini-3.5-flash';
 
 /**
+ * ADR-093 — the shipped provider's models.
+ *
+ * `claude-sonnet-5` for BOTH surfaces, chosen deliberately over `claude-opus-5`:
+ * at $2/$10 per MTok against Opus's $5/$25 it is 2.5x cheaper on both sides of
+ * the ledger, on a hard-capped prepaid key where the binding constraint is how
+ * many verification runs are affordable, not how good any single one is. A demo
+ * needs a few excellent investigations; it does not need the most capable model
+ * available to produce them.
+ */
+export const DEFAULT_ANTHROPIC_AGENT_MODEL = 'claude-sonnet-5';
+export const DEFAULT_ANTHROPIC_EXPLAIN_MODEL = 'claude-sonnet-5';
+
+/**
+ * Published rates, $/1M tokens, for the models above. Used to compute
+ * `agent_investigations.cost_usd` and to enforce AGENT_MAX_COST_USD_PER_RUN.
+ *
+ * A WRONG number here under-reports a real bill, so it is stated where it can be
+ * checked rather than buried in a client. Re-verify against the pricing page
+ * before the first paid run — this is the one constant in the repo whose truth
+ * lives outside it.
+ */
+export const ANTHROPIC_COST_PER_MILLION = {
+  'claude-sonnet-5': { inputUsdPerMillion: 2, outputUsdPerMillion: 10 },
+  'claude-opus-5': { inputUsdPerMillion: 5, outputUsdPerMillion: 25 },
+  'claude-haiku-4-5': { inputUsdPerMillion: 1, outputUsdPerMillion: 5 },
+} as const;
+
+/**
  * `prompt_version` (schema.md §10.2), in ONE place, for the same reason as the
  * model above: it is hashed into every `signature_hash`, so two spellings would
  * be two cache namespaces that look like one. `services/explain/templates.ts`

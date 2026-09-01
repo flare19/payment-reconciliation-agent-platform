@@ -44,14 +44,19 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 import { runMigrations } from '../db/migrate.js';
 import { createPool, closePool, getPool } from '../db/pool.js';
-import { ENGINE_DEFAULTS, AGENT_DEFAULTS } from '../config/defaults.js';
+import {
+  ENGINE_DEFAULTS, AGENT_DEFAULTS, ANTHROPIC_COST_PER_MILLION,
+} from '../config/defaults.js';
 import { createRun, findRun } from '../repositories/runs.js';
 import { executeRun } from '../services/run/orchestrator.js';
 import { runPhaseA, type PhaseADeps } from '../services/agent/phase-a.js';
 import { triageRun, type TriageBudget } from '../services/agent/triage.js';
 import { createGeminiAgentClient } from '../services/agent/gemini-agent-client.js';
+import {
+  createAnthropicAgentClient, type AgentEffort,
+} from '../services/agent/anthropic-agent-client.js';
 import { withRateLimit, RATE_LIMIT_DEFAULTS } from '../services/agent/rate-limiter.js';
-import type { AgentLlmClient } from '../services/agent/agent-client.js';
+import type { AgentLlmClient, CostModel } from '../services/agent/agent-client.js';
 import type { RunConfig } from '../types/engine.js';
 
 const FIX = new URL('../../../../data/fixtures/holdout/', import.meta.url).pathname;
@@ -185,21 +190,35 @@ async function main(): Promise<void> {
     return;
   }
 
-  const apiKey = get('GEMINI_API_KEY');
-  if (apiKey === undefined || apiKey === '') throw new Error('GEMINI_API_KEY is not set');
+  // ADR-093: the provider follows LLM_PROVIDER, and so does the key it demands.
+  // Naming the missing variable matters — "GEMINI_API_KEY is not set" on a run
+  // configured for Anthropic sends you looking in the wrong place.
+  const provider = get('LLM_PROVIDER') ?? 'anthropic';
+  const keyVar = provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'GEMINI_API_KEY';
+  const apiKey = get(keyVar);
+  if (apiKey === undefined || apiKey === '') {
+    throw new Error(`${keyVar} is not set (LLM_PROVIDER=${provider})`);
+  }
 
   const latencies: number[] = [];
+  const inner = provider === 'anthropic'
+    ? createAnthropicAgentClient({
+      apiKey, model, effort: (get('AGENT_EFFORT') ?? 'high') as AgentEffort })
+    : createGeminiAgentClient({ apiKey, model });
   const paced = withRateLimit(
-    timed(createGeminiAgentClient({ apiKey, model }), latencies),
+    timed(inner, latencies),
     { maxRequestsPerMinute: rpm, maxTokensPerMinute: tpm },
   );
 
   const deps: PhaseADeps = {
     client: paced.client,
     config,
-    // NULL on a free tier. A projection at another provider's rates is computed
-    // below and LABELLED as such; it must never be reported as this run's cost.
-    cost: null,
+    // The REAL rate when we are actually billed (ADR-093), null on the free
+    // tier. A projection at another provider's rates is computed below and
+    // LABELLED as such; it must never be reported as this run's cost.
+    cost: provider === 'anthropic'
+      ? ((ANTHROPIC_COST_PER_MILLION as Record<string, CostModel | undefined>)[model] ?? null)
+      : null,
     maxLlmRequests: maxRequests,
     triageBudget,
     requestsIssued: () => paced.stats().requestsIssued,
