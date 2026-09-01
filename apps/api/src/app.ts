@@ -11,6 +11,7 @@ import { matchesRouter, manualMatchRouter } from './routes/matches.js';
 import { transactionsRouter } from './routes/transactions.js';
 import { aliasesRouter } from './routes/aliases.js';
 import { investigationsRouter } from './routes/investigations.js';
+import { rateLimit } from './routes/rate-limit.js';
 
 const VERSION = '1.0.0';
 
@@ -55,6 +56,16 @@ export function createApp(
 ): Express {
   const app = express();
   app.disable('x-powered-by');
+
+  // ── LOAD-BEARING, NOT BOILERPLATE (ADR-096) ──
+  // Railway terminates TLS at its edge, so without this `req.ip` is the EDGE's
+  // address for every visitor and the whole deployment shares one rate-limit
+  // bucket -- the first judge to browse would exhaust the read tier for
+  // everyone else. `1` takes the hop the immediate proxy wrote (the RIGHTMOST
+  // X-Forwarded-For entry); `true` would take the leftmost, which a client can
+  // set to anything it likes and is therefore the spoofable choice.
+  app.set('trust proxy', env.trustProxyHops ?? 1);
+
   app.use(express.json({ limit: '1mb' }));
 
   // Exact origins only, never '*' (deployment.md §3).
@@ -69,6 +80,14 @@ export function createApp(
     if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
     next();
   });
+
+  // ── THE METER, AHEAD OF EVERY ROUTER (ADR-096) ──
+  // Mounted after CORS so a refused cross-origin request still carries the
+  // headers the browser needs to READ the 429, and before every router so no
+  // handler can be reached without passing it. `POST /api/runs` is the reason
+  // this is not agent-only: it spends no LLM money and is the cheapest way to
+  // hurt this deployment (~1,700 rows and 2.4 s of engine per call).
+  app.use(rateLimit({ enabled: env.rateLimitEnabled }));
 
   // api-contract.md §1's binding endpoint table. Mount order matters in one
   // place: the agent router owns `/api/runs/:runId/investigations` and

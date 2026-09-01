@@ -36,6 +36,11 @@ const env = {
   agentEnabled: false, agentMaxInvestigationsPerRun: 5, agentMaxCostUsdPerRun: 1,
   agentMaxLlmRequestsPerRun: 220, agentMaxQueueTriagesPerRun: 15,
   agentQaEnabled: false, agentQaMaxQuestionsPerRun: 10,
+  // OFF for this suite only (ADR-096). These tests assert contract behaviour and
+  // all share 127.0.0.1, so metering them would make the suite's result depend on
+  // how many assertions it happens to contain. The limiter's own end-to-end proof
+  // is `http-rate-limit-routes.test.ts`, which drives it over real HTTP.
+  rateLimitEnabled: false, trustProxyHops: 1,
 } as unknown as Env;
 
 describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL' : false }, () => {

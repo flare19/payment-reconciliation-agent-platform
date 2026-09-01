@@ -57,6 +57,17 @@ export interface Env {
   /** Exact origins. NEVER `*` — see deployment.md §3. */
   corsOrigins: string[];
   logLevel: string;
+  /**
+   * ADR-096. Express's `trust proxy`, as a HOP COUNT.
+   *
+   * Load-bearing: Railway terminates TLS at its edge, so at `0` every visitor
+   * shares the edge's address and therefore ONE rate-limit bucket. `1` takes
+   * the entry the immediate proxy wrote; `true` would take the leftmost
+   * `X-Forwarded-For` entry, which a client can forge.
+   */
+  trustProxyHops: number;
+  /** ADR-096 kill switch. Off ONLY for the integration suite. */
+  rateLimitEnabled: boolean;
 
   /** ONE key, both layers. Null is a legitimate state — see `llmConfigured`. */
   /**
@@ -148,6 +159,8 @@ export function loadEnv(): Env {
     databaseUrl: required('DATABASE_URL'),
     corsOrigins: required('CORS_ORIGIN').split(',').map((s) => s.trim()).filter(Boolean),
     logLevel: optional('LOG_LEVEL', 'info'),
+    trustProxyHops: int('TRUST_PROXY_HOPS', 1),
+    rateLimitEnabled: bool('RATE_LIMIT_ENABLED', true),
 
     llmProvider: provider,
     geminiApiKey: key === undefined || key === '' ? null : key,

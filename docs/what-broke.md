@@ -7,6 +7,48 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
 ---
 
+## Day 15 (2026-09-01) — the deploy is live, and `llmConfigured` had been lying since the swap
+
+The API is up on Railway and **reproduces the local numbers exactly**: 65.22% match rate, 212 exceptions, 21 signatures, a 612-entry audit chain that verifies and is anchored, in 2.4 s. Nothing about the managed environment changed a decision, which is the result ADR-074 wanted from deploying early.
+
+### `/api/health` reported `llmConfigured: false` on a deploy that was calling Anthropic
+
+The first live run's `metrics.llmCost` showed **three `401 invalid x-api-key` failures against Anthropic** — while the health endpoint on the same process reported `llmConfigured: false`. Both statements cannot be true.
+
+`config/env.ts` exports a provider-aware `llmConfigured(env)` helper. `routes/health.ts` did not call it; it inlined `env.geminiApiKey !== null && env.llmExplainEnabled`. The ADR-093 swap moved the provider and updated the helper, and this one call site was missed. `routes/investigations.ts` endpoint 28 had the identical defect, with a message that told the reader to set `ANTHROPIC_API_KEY` while the condition tested the Gemini one.
+
+**Why nothing caught it.** ADR-093 states the argument in full — *"`/api/health` reports `llmConfigured` as a single boolean … a per-surface provider would make 'configured' true while half the system had no key"* — and then the code grew a second, divergent definition of that boolean. The tests build `Env` objects by hand and assert the endpoint's *shape*, never the agreement between two files' answers to the same question. It could only be seen from outside, by comparing two fields of one deployment: a health check and a run's own cost ledger.
+
+**The pattern, and it is the one this repo keeps finding.** Not a wrong line — a *duplicated* one. The defect lived in the conjunction of two files, which is where Day 9's #40 lived, and where Day 13's #54 lived. No document owns a conjunction and no test covers one.
+
+Fixed: both sites now call `llmConfigured(env)`. `deployment.md` §5.4's checklist — which tests this exact field before submission — would have read green on a broken key and red on a working one.
+
+### The public API had no rate limit, on two meters that both bill by usage (ADR-096)
+
+ADR-095 bounded agent **spend** on endpoint 25, and that bound is correct and unchanged. What it does not bound is **request volume**, and it does not cover `POST /api/runs` at all — which spends no LLM money and is the cheapest way to hurt this deployment: unauthenticated, ~1,700 rows and 2.4 s of engine per call, in a loop. Added a tiered per-IP limiter (`routes/rate-limit.ts`): read 120/min, write 60/h, run 10/h per IP behind a 40/h global, investigate 12/h. Every number is derived from a measured per-request cost, not chosen for feeling safe.
+
+**`trust proxy` was the part that would have failed silently.** Railway terminates TLS at its edge, so without `app.set('trust proxy', 1)` every visitor shares the edge's address and therefore **one bucket** — the first judge to browse would have locked out every other judge. A rate limiter that becomes the outage is worse than none, and nothing about its own tests would have shown it.
+
+### A test that passed against the code it was supposed to reject
+
+Per Day 13's rule, every guard was verified by breaking the source and watching the assertion fail. Four mutations: `tierFor` using `startsWith('/api/runs')`, the global cap deleted, refusals recorded in the window, eviction disabled. **Three failed as intended. The fourth passed.**
+
+`refusals are not counted, so a client ignoring its 429s cannot self-extend` advanced the clock by a full window measured **from the last refusal** — which ages the refusals out too, so the bucket reopened either way and the assertion held against a limiter that counts refusals. The window has to be measured from the **admissions**. Corrected, re-mutated, and it now fails as it should.
+
+**This is the sixth instance of the test-that-cannot-fail pattern, and the first one caught before it shipped** — by the mutation step itself rather than by a later audit. Writing the test is not the guard. Watching it fail is.
+
+### A third bound that is parsed, documented, and enforced nowhere
+
+Asked whether the service should scale to zero to save compute, the answer turned on a config value that does not do what it says. `STALE_RUN_TIMEOUT_MINUTES` is parsed in `env.ts` and listed in `deployment.md` §3 as *"on boot, non-terminal runs older than this are marked failed"*. `reapStaleRuns` is a **commented-out TODO** in `index.ts` and has been since Day 8.
+
+**This is ADR-094's defect shape for the third time** — after `AGENT_MAX_COST_USD_PER_RUN` (parsed, documented in `agent-design.md` §8, enforced nowhere) and `LoopDeps.preflight` (documented as the seam a guard plugs into, with nothing plugged in). A variable that is read and never applied reads as protection at every site that mentions it.
+
+It matters here because the TODO predicted its own consequence: *"a crashed run sits at `matching` forever and the dashboard polls it indefinitely — a failure mode that only shows up in front of an audience, because only then does anything restart."* **Scale-to-zero makes restarts routine**, which is why ADR-097 rejects it until the reaper lands. Doc corrected to say what is true; the reaper is now the top below-the-line item.
+
+Re-scored after all of it: precision 1.0000, FP 0, recall 0.6075, review-queue precision 1.0 over 213, unresolvable recall 1.0, classification macro 0.9286 / 0.8738, match rate 65.22%, zero build blockers — **every cell identical**. 839 tests in `apps/api`, typecheck and build clean.
+
+---
+
 ## Day 14 (2026-09-02) — the Anthropic swap, and five defects no test could have found
 
 Six live runs, **$2.83**, and every one of the five defects below was invisible to a green 818-test suite. They are recorded in the order they were found, because the order is the finding.
