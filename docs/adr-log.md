@@ -991,3 +991,25 @@ Endpoint 8 has always accepted `?status=`; **nothing in the frontend used it.** 
 **And the `manual` tier filter is REMOVED from the control row entirely.** Explaining a control that can never do anything is still shipping a control that can never do anything — the honest move is not to offer it. The distinction against `alias`, which stays, is the useful one: **a filter that is EMPTY today is worth offering** because teaching one alias fills it; **a filter that is IMPOSSIBLE is a dead control**, and offering it invites the wrong conclusion — that approvals went missing rather than that they live under a different heading. `/matches?tier=manual` typed directly still explains itself, for anyone on an old link.
 
 > **A CONSEQUENCE TO CARRY INTO THE DEMO, not a defect.** `runs.metrics` is frozen at run completion (ADR-041), so the dashboard headline still reads **65.22%** and **71 pending** while `/matches` truthfully reports 22 human-confirmed and 49 pending. Both are correct — one is the engine's account of itself at the moment it finished, the other is live — but a judge who approves a few proposals and then returns to the dashboard will see two pending counts that disagree. **Either re-run before demoing, or say plainly that the headline is the run's own frozen figure.** Testing this session has moved the review queue from 71 to 49; a fresh run restores it.
+
+### ADR-109 · A concluded investigation is RETURNED, not refused; `409 INVESTIGATION_IN_PROGRESS` means in progress
+
+**Decision:** `POST /api/exceptions/:exceptionId/investigate` now distinguishes three states where it previously collapsed two:
+
+| Existing investigation | Response | Spends money |
+|---|---|---|
+| none, or `failed` | `202` — dispatches a new investigation | **yes** |
+| `running` | `409 INVESTIGATION_IN_PROGRESS` | no |
+| `concluded` | **`200`** with the existing investigation and `reused: true` | **no** |
+
+**This is a contract change.** `api-contract.md` §0 listed `409 INVESTIGATION_IN_PROGRESS` for "investigation already exists", and that document is binding until an ADR says otherwise (CLAUDE.md §3). It is corrected in the same commit.
+
+**Because the endpoint was refusing where it should have been answering, under a code that was not true.** `ux_inv_exc_active` (migration 010) already guarantees at most one non-failed investigation per exception, so **the money guarantee was never in question — Postgres enforces it.** What was wrong is what a caller got back: an investigation concluded an hour ago returned `409 INVESTIGATION_IN_PROGRESS`, a status code asserting work is happening when none is. A client cannot distinguish "wait and poll" from "here is your answer" from that.
+
+The practical consequence is the one that matters for a demo: **a judge clicking "Ask the Analyst" on an exception someone already investigated should see the investigation, not an error.** Under the old behaviour the second viewer of the most interesting exception on the site got a red banner.
+
+**`failed` remains re-runnable, and that is deliberate.** Memoising a failure forever would mean one grounding rejection or budget exhaustion permanently poisons an exception. The partial index's `WHERE status <> 'failed'` predicate already encodes exactly this rule; the route now agrees with it.
+
+**What this is NOT.** It is memoisation — look up before working — not idempotency. Idempotency would require a caller-supplied request key and would make a *repeat* of the same request safe; this makes *any* second request cheap by returning what the first one produced. The distinction decides where the fix lives: in the lookup, not in a key. Worth naming because "make it idempotent" would have sent someone to build request-key plumbing this system does not need.
+
+**Re-running a concluded investigation is not offered at all**, and that is a deliberate omission rather than an oversight. It costs $0.10–0.12, the model is not deterministic, and a second opinion that disagrees with the first raises a question nobody has budget to resolve. If it is ever wanted it should be an explicit, separately-labelled, cost-stating action — never the same button.

@@ -233,3 +233,29 @@ export async function getInvestigationsForException(runId: string, exceptionId: 
   if (!data) return [];
   return data.investigations.filter((i) => i.exceptionId === exceptionId);
 }
+
+// ── endpoint 25 · THE ONLY CALL IN THE FRONTEND THAT SPENDS MONEY ────────────
+
+/**
+ * Ask the Analyst to investigate one exception.
+ *
+ * Roughly $0.10–0.12 per investigation, so this is deliberately the only
+ * money-spending path the frontend has, it is reached only by an explicit
+ * click, and it is never called during render (ADR-109).
+ *
+ * Three outcomes, and the caller must handle all three:
+ *   `202` — dispatched. Poll `/api/investigations/:id` for the verdict.
+ *   `200` with `reused: true` — one already exists. FREE, same verdict.
+ *   `409 INVESTIGATION_IN_PROGRESS` — someone else is running it right now.
+ */
+export interface InvestigateResponse {
+  exceptionId: string;
+  status: 'running' | 'concluded';
+  investigationId?: string;
+  reused?: boolean;
+  detailAt?: string;
+  pollAt?: string;
+}
+
+export const investigateException = (exceptionId: string) =>
+  apiPost<InvestigateResponse>(`/exceptions/${exceptionId}/investigate`, {});

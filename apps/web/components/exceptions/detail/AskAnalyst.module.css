@@ -1,0 +1,103 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  align-items: flex-start;
+  padding: var(--s5);
+  background: var(--surface);
+  border: 1px dashed var(--rule-strong);
+  border-radius: 4px;
+}
+
+.copy { display: flex; flex-direction: column; gap: var(--s2); }
+
+.title { font-size: var(--t-body); font-weight: 600; }
+
+.body {
+  max-width: 72ch;
+  font-size: var(--t-meta);
+  line-height: 1.65;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+.arm {
+  padding: var(--s3) var(--s5);
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: var(--t-meta);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.arm:hover:not(:disabled) { background: var(--ink-2); border-color: var(--ink-2); }
+.arm:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* The armed state is visually distinct from the resting one — a spend should
+   not look like the button that was just clicked. */
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  width: 100%;
+  padding: var(--s4);
+  background: var(--sev-medium-bg);
+  border-left: 2px solid var(--sev-medium);
+  border-radius: 0 4px 4px 0;
+}
+
+.cost {
+  max-width: 72ch;
+  font-size: var(--t-meta);
+  line-height: 1.65;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+.cost strong { color: var(--sev-medium); font-weight: 600; }
+
+.buttons { display: flex; gap: var(--s3); flex-wrap: wrap; }
+
+.go {
+  padding: var(--s2) var(--s4);
+  border: 1px solid var(--sev-medium);
+  border-radius: 4px;
+  background: var(--sev-medium);
+  color: var(--paper);
+  font-size: var(--t-meta);
+  font-weight: 500;
+  cursor: pointer;
+}
+.go:hover:not(:disabled) { filter: brightness(1.1); }
+.go:disabled { opacity: 0.6; cursor: progress; }
+
+.cancel {
+  padding: var(--s2) var(--s4);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--t-meta);
+  cursor: pointer;
+}
+.cancel:hover:not(:disabled) { background: var(--surface-hover); }
+
+.status {
+  font-size: var(--t-meta);
+  line-height: 1.6;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+.error {
+  max-width: 72ch;
+  padding: var(--s3) var(--s4);
+  border-left: 2px solid var(--sev-high);
+  background: var(--sev-high-bg);
+  border-radius: 0 3px 3px 0;
+  font-size: var(--t-meta);
+  line-height: 1.6;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}

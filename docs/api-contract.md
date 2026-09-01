@@ -40,7 +40,7 @@ Per ARCHITECTURE §7, this is a lightweight table — **not** an OpenAPI/Swagger
 |---|---|
 | 400 | `INVALID_REQUEST`, `UNSUPPORTED_FILE_TYPE`, `MISSING_REQUIRED_FILE`, `INVALID_ALIAS` |
 | 404 | `RUN_NOT_FOUND`, `EXCEPTION_NOT_FOUND`, `TRANSACTION_NOT_FOUND`, `MATCH_NOT_FOUND`, `ALIAS_NOT_FOUND`, `SCORE_REPORT_NOT_FOUND`, `INVESTIGATION_NOT_FOUND` |
-| 409 | `RUN_NOT_COMPLETE` (metrics or investigations requested too early), `MATCH_NOT_REVIEWABLE` (status isn't `pending_review`), `ALIAS_CONFLICT_UNCONFIRMED`, `EXCEPTION_ALREADY_RESOLVED`, `TRANSACTION_ALREADY_MATCHED`, `INVESTIGATION_IN_PROGRESS` |
+| 409 | `RUN_NOT_COMPLETE` (metrics or investigations requested too early), `MATCH_NOT_REVIEWABLE` (status isn't `pending_review`), `ALIAS_CONFLICT_UNCONFIRMED`, `EXCEPTION_ALREADY_RESOLVED`, `TRANSACTION_ALREADY_MATCHED`, `INVESTIGATION_IN_PROGRESS` (an investigation is `running` — a *concluded* one is returned with `200`, not refused; ADR-109) |
 | 429 | `AGENT_QUOTA_EXCEEDED` (agent spend ceiling — ADR-056, ADR-095), `RATE_LIMITED` (HTTP rate limit — ADR-096; carries `Retry-After`) |
 | 503 | `AGENT_DISABLED` (`AGENT_QA_ENABLED=false` or no `ANTHROPIC_API_KEY`) |
 | 413 | `FILE_TOO_LARGE` (>10 MB per file) |
@@ -230,6 +230,20 @@ This is the **only** path by which a ground-truth-derived number enters the data
 ### 25–27 · Analyst investigations
 
 `POST /api/runs/:runId/investigations` returns `202` and runs Phase A asynchronously; the client polls endpoint 26. `409 RUN_NOT_COMPLETE` if the engine hasn't finished — the Analyst reads finalized output by definition.
+
+#### 25 · `POST /api/exceptions/:exceptionId/investigate` — three states, not two (ADR-109)
+
+Every investigation costs real money, so this endpoint never starts work it has already done. `ux_inv_exc_active` (migration 010) permits at most one non-`failed` investigation per exception, and the route reports which of the three cases applies:
+
+| Existing investigation | Response | Body | Spends |
+|---|---|---|---|
+| none, or `failed` | `202` | `{ exceptionId, status: "running", pollAt }` | **yes** |
+| `running` | `409 INVESTIGATION_IN_PROGRESS` | error envelope | no |
+| `concluded` | `200` | `{ exceptionId, status: "concluded", investigationId, reused: true, detailAt }` | no |
+
+`reused: true` tells a client not to poll — the answer already exists, and `detailAt` points at endpoint 27. **A second click on an already-investigated exception is free and returns the same verdict**, which is what makes the button safe to put in front of a judge.
+
+A `failed` investigation is re-runnable on purpose: memoising a failure would let one grounding rejection permanently poison an exception. **Re-running a *concluded* investigation is not offered by this endpoint at all** — the model is not deterministic and a contradicting second opinion costs $0.10–0.12 to acquire and nothing to resolve.
 
 `InvestigationDetail` (endpoint 27):
 

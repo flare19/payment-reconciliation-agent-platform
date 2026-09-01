@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { AnalystPanel } from '@/components/exceptions/detail/AnalystPanel';
+import { AskAnalyst } from '@/components/exceptions/detail/AskAnalyst';
 import { CandidateTable } from '@/components/exceptions/detail/CandidateTable';
 import { LinkedRecords } from '@/components/exceptions/detail/LinkedRecords';
 import { ResolveActions } from '@/components/exceptions/detail/ResolveActions';
@@ -215,16 +216,23 @@ export default async function ExceptionDetailPage(
         <LinkedRecords primary={exception.primaryRecord} related={exception.relatedRecords} />
       </Section>
 
-      {/* ── 6 · the Analyst ─────────────────────────────────────────────── */}
-      {investigation && (
-        <Section
-          id="analyst"
-          title="The Analyst Investigated This"
-          standfirst="An agent chose which questions to ask; the engine’s own locked code computed every number it used. Read the runtime’s recorded result beside the model’s inference — they are separate fields on purpose."
-        >
-          <AnalystPanel investigation={investigation} runQ={runQ} />
-        </Section>
-      )}
+      {/* ── 6 · the Analyst ─────────────────────────────────────────────────
+          NOTHING HERE RUNS A MODEL ON PAGE LOAD. If an investigation exists it
+          is read from the database and rendered for free; if none does, the
+          reader is offered a button that states its own price. Opening every
+          exception in the list must cost zero, or a judge browsing the site
+          spends the budget by reading it. */}
+      <Section
+        id="analyst"
+        title={investigation ? 'The Analyst Investigated This' : 'The Analyst'}
+        standfirst={investigation
+          ? 'An agent chose which questions to ask; the engine’s own locked code computed every number it used. Read the runtime’s recorded result beside the model’s inference — they are separate fields on purpose.'
+          : 'An agent that investigates one exception when a human asks for it, and only then.'}
+      >
+        {investigation
+          ? <AnalystPanel investigation={investigation} runQ={runQ} />
+          : <AskAnalyst exceptionId={exception.exceptionId} />}
+      </Section>
 
       {/* ── 7 · actions ─────────────────────────────────────────────────── */}
       <Section
