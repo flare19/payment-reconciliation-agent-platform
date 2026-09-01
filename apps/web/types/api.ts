@@ -229,7 +229,13 @@ export interface InvestigationSummary {
 }
 
 export interface InvestigationListResponse {
-  investigations: InvestigationSummary[];
+  /**
+   * Endpoint 26 returns FULL investigation objects, reasoning chain included —
+   * not the trimmed summary the contract's example implies. Typing it as the
+   * detail shape is what lets the Analyst screen show which tools were actually
+   * called without one request per investigation.
+   */
+  investigations: InvestigationDetail[];
   agentMetrics: AgentMetrics;
   pagination: Pagination;
 }
@@ -334,6 +340,14 @@ export interface ExceptionEvidence {
 }
 
 export interface ExceptionDetail extends ExceptionSummary {
+  /**
+   * The run this exception belongs to — ALWAYS use this rather than whatever
+   * run the page happened to resolve from `?run=` or "most recent completed".
+   * Deriving it from global state was correct only while exactly one run
+   * existed; the second run made every older exception report that nobody had
+   * investigated it.
+   */
+  runId: string;
   evidence: ExceptionEvidence;
   detectedByRule: string;
   ruleVersion: string;

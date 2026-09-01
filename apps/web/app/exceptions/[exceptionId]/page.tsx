@@ -13,7 +13,7 @@ import {
   getTransactionAudit,
 } from '@/lib/api-client';
 import { at, count } from '@/lib/format';
-import { hrefWith, one, resolveRun, runParam } from '@/lib/run-context';
+import { hrefWith, one } from '@/lib/run-context';
 import {
   CATEGORY_GLOSS, CATEGORY_LABEL, EXPLANATION_SOURCE_LABEL, RESOLVABILITY_GLOSS,
   RESOLVABILITY_LABEL, STATUS_LABEL, label,
@@ -59,13 +59,19 @@ export default async function ExceptionDetailPage(
     throw err;
   }
 
-  const ctx = await resolveRun(runParam(sp));
-  const runId = ctx?.run.runId;
   const runQ = one(sp, 'run');
+
+  // THE EXCEPTION'S OWN RUN, not the page's. `resolveRun` answers "which run is
+  // this screen about", which is the wrong question here: this screen is about
+  // one exception, and that exception belongs to exactly one run whatever the
+  // reader last selected. Using the resolved run meant that as soon as a second
+  // run existed, every exception from the older one looked uninvestigated — the
+  // investigations were real, they were being sought under the wrong run id.
+  const runId = exception.runId;
 
   // Persisted only — nothing on this page spends money. A detail view that
   // re-runs the agent on load empties a prepaid key in front of an audience.
-  const summaries = runId ? await getInvestigationsForException(runId, exceptionId) : [];
+  const summaries = await getInvestigationsForException(runId, exceptionId);
   const first = summaries[0];
   const investigation = first ? await getInvestigation(first.investigationId) : null;
 

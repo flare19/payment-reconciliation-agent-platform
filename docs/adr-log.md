@@ -1059,3 +1059,29 @@ The crash was the *lesser* bug. Had the panel survived that line it would have r
 **And drawing four bars of `0.0000` would have been worse than the crash.** A batch match comes out of the subset-sum search, not the pair scorer: there are no amount/date/anchor/counterparty components for it. Rendering zeros asserts the engine measured each component and found nothing — the exact opposite of the truth. The panel now says there is no component breakdown and why, and reports that the confidence came from the decomposition.
 
 > **THE PATTERN, NAMED AFTER FOUR INSTANCES.** `amountAtRiskDisplay: string`, `costUsd: number`, `tokensIn/Out: number`, `scoreBreakdown: Record<…>` — every one declared non-null, every one nullable in Postgres, every one a runtime crash or a false claim. **TypeScript found all of them within seconds of the annotation being corrected, and none of them before.** The compiler is exactly as honest as what it is told, and these were cases of writing down the happy path and calling it a type. The check belongs in AUDIT-4 as a command, not a habit.
+
+### ADR-113 · An exception's own `runId` decides which investigations belong to it — never the page's resolved run
+
+**Decision:** `ExceptionDetail` exposes `runId`, and the exception detail screen uses it. `resolveRun()` answers *"which run is this screen about"*, which is the wrong question for a screen that is about one exception.
+
+**Because the second run in the database broke the first one's Analyst entirely, in three places at once.** The detail page derived the run from `?run=` or "most recent completed", then asked endpoint 26 for that run's investigations and filtered by exception id. Correct while exactly one run existed. The moment a second appeared and became the default:
+
+- every exception from the older run reported **"no one has investigated this"** and offered to spend money on work already done;
+- the poll after a real investigation **never found it**, because it kept looking under the wrong run — so the button said *"the page updates itself"* and the page never did;
+- the dashboard's Analyst block reported **Phase A had not run**, on a run with eleven investigations.
+
+One coupling defect, three symptoms, all of them shaped like the agent not existing.
+
+**The fix is additive and in ADR-073's shape:** a record that belongs to a run should say which run, and any consumer that needs the answer should read it rather than infer it from global state. **The bug was latent from the moment the page was written and invisible until a second run existed** — which is exactly the condition task 7c creates on every click, so it would have shipped straight into the feature that makes runs cheap to create.
+
+> **A TEST RUN CAUSED IT.** The `phase4-free` run I created to verify the launcher became the default and broke the screen I had built an hour earlier. Nothing in the test suite covers "two runs exist", and the fixture-based integration tests create exactly one.
+
+### ADR-114 · The Analyst gets a screen, and everything on it is evidence
+
+**Decision:** `/analyst` is a first-class screen in the primary nav. It explains the loop in four steps, lists **the tools the agent actually called with their real counts**, shows the verdict distribution, lists every investigation, states the cost, and states plainly what is not measured. The exception list marks investigated rows with an `Analyst` chip; the dashboard block links through.
+
+**Because the track asks for an agent and ours was invisible.** The layer is the most architecturally careful thing in the repo — read-only enforced by Postgres, no arithmetic of its own, a grounding gate that rejects unsupported verdicts — and its entire presence in the product was **one button at the bottom of one exception detail page**. A judge with sixty seconds would have concluded there was no agent. For grading purposes, a layer nobody can find is a layer that does not exist.
+
+**THE TOOL LIST IS DERIVED, NOT TRANSCRIBED.** It is built from the tool calls recorded in the persisted reasoning chains, with their counts — 59 calls across 11 investigations, 7 distinct tools. If the agent never called a tool, that tool does not appear. A list copied out of `agent-design.md` would describe a design; this describes behaviour, and the difference is the entire reason the page earns its place on a site whose argument is that its claims are checkable.
+
+**The caveat block is as prominent as the metrics.** *"None of this is scored against the answer key"* sits beside the cost figure, not below the fold. And the grounding-failure count is given both readings in the same breath — the gate working, and the model asserting what it had not established — because both are true and picking one would be editing.

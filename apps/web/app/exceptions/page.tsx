@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { ExceptionTable } from '@/components/exceptions/ExceptionTable';
 import { FacetRail } from '@/components/exceptions/FacetRail';
 import { Paginate } from '@/components/ui/Paginate';
-import { listExceptions } from '@/lib/api-client';
+import { getInvestigationsIfAny, listExceptions } from '@/lib/api-client';
 import { count } from '@/lib/format';
 import { hrefWith, one, resolveRun, runParam } from '@/lib/run-context';
 import { CATEGORY_LABEL, STATUS_LABEL, label } from '@/lib/taxonomy';
@@ -57,8 +57,16 @@ export default async function ExceptionsPage(
   const sort = one(params, 'sort') ?? 'severity';
   const page = Number(one(params, 'page') ?? '1') || 1;
 
-  const data = await listExceptions(run.runId, { ...active, sort, page });
+  // Which of these has the Analyst already looked at? One extra read, so the
+  // agent is visible where the work is rather than only on its own screen.
+  const [data, agent] = await Promise.all([
+    listExceptions(run.runId, { ...active, sort, page }),
+    getInvestigationsIfAny(run.runId),
+  ]);
   const { exceptions, facets, pagination } = data;
+  const investigatedVerdict = new Map(
+    (agent?.investigations ?? []).map((i) => [i.exceptionId, i.verdict]),
+  );
 
   // ui-spec §3: an empty result says WHICH filter is responsible and offers to
   // clear it. A bare "No results" makes the viewer debug the interface.
@@ -144,7 +152,11 @@ export default async function ExceptionsPage(
             </div>
           ) : (
             <>
-              <ExceptionTable exceptions={exceptions} runQ={runQ} />
+              <ExceptionTable
+                exceptions={exceptions}
+                runQ={runQ}
+                investigatedVerdict={investigatedVerdict}
+              />
               <Paginate
                 pagination={pagination}
                 unit="exceptions"

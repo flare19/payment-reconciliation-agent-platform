@@ -7,6 +7,42 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
 ---
 
+## Day 16 (2026-09-02), late — a second run made the agent disappear, and the agent was already invisible
+
+Reported after a manual test: the Ask button appeared on an exception that had *already* been investigated, clicking it said "the page updates itself" and the page never did, and — separately — the Analyst's only presence in the whole product was that one button.
+
+**The first two are one bug.** The exception detail screen derived its run from `?run=` or "most recent completed", then asked endpoint 26 for *that* run's investigations. Correct while exactly one run existed. **I created a second run an hour earlier to verify the Phase 4 launcher**, it became the default, and:
+
+- every exception from the older run reported *"no one has investigated this"* — and offered to spend money on work already done;
+- the poll after a real investigation never found it, because it kept looking under the wrong run;
+- the dashboard's Analyst block reported Phase A had not run, on a run with eleven investigations.
+
+One coupling defect, three symptoms, **every one of them shaped like the agent not existing**.
+
+`ExceptionDetail` did not expose `runId` at all, so the page had no way to ask the right question. Now it does, and uses it (ADR-113).
+
+> **THE BUG WAS LATENT FROM THE MOMENT THE PAGE WAS WRITTEN**, and invisible until a second run existed. That is precisely the condition task 7c creates on every click — so it would have shipped directly into the feature designed to make runs cheap to create. Nothing in 840 tests covers "two runs exist"; the integration fixtures create exactly one.
+
+**No money was lost this time.** Spend was unchanged at $0.9359 across the whole episode — the second click hit endpoint 25's memoisation and returned the existing verdict for free, which is ADR-109 working. It just had no way to *show* it.
+
+### The agent was invisible, and that is a grading problem rather than a bug
+
+The track asks for an agent. Ours enforces read-only through Postgres, refuses to do its own arithmetic, and runs a grounding gate that rejects verdicts citing things the model never saw. **Its entire presence in the product was one button at the bottom of one page.** A judge with sixty seconds would have concluded there was no agent.
+
+`/analyst` now exists in the primary nav (ADR-114): the loop in four steps, the verdict distribution, every investigation, the cost, and what is not measured — with the caveat beside the metrics rather than below the fold.
+
+**The tool list on it is derived, not transcribed** — built from the tool calls in the persisted reasoning chains, with real counts:
+
+```
+find_by_anchor 15 · get_exception 11 · search_transactions 10 · rerun_subset_search 8
+find_similar_exceptions 7 · get_transaction 6 · score_pair 2
+59 calls across 11 investigations
+```
+
+A list copied out of `agent-design.md` would describe a design. This describes behaviour, and on a site whose argument is that its claims are checkable, that is the difference that earns the page.
+
+---
+
 ## Day 16 (2026-09-02), night — a type audit that found a live crash in its first minute
 
 After three separate incidents of a hand-written type declaring non-null where Postgres allows NULL, the audit stopped being a good idea and became a command:
