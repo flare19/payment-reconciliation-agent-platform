@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   parseResponse, buildUserMessage, createExplainClient, MAX_SIGNATURES_PER_REQUEST,
-  type SignaturePrompt,
+  type SignaturePrompt, findUngroundedSpecific,
 } from '../../src/services/explain/llm-client.js';
 
 /**
@@ -162,4 +162,81 @@ describe('createExplainClient — the no-key path is a legitimate state', () => 
 
 test('§10.3 batches at most 10 signatures per request', () => {
   assert.equal(MAX_SIGNATURES_PER_REQUEST, 10);
+});
+
+/**
+ * ── S13's GROUNDING CHECK (issue #52) ──
+ *
+ * Phase A treats a fabricated specific as a build blocker (ADR-053). S13 — the
+ * layer a panelist actually reads — had only a line in the prompt asking the
+ * model not to invent one, and nothing that checked.
+ *
+ * The detector is sharp because S13's INPUT provably contains no specifics:
+ * ADR-018's signature is bucketed by construction, `buildUserMessage` emits only
+ * those buckets, and the test above already asserts no long digit run reaches
+ * the prompt. So a rupee figure, a date or a reference id in the OUTPUT did not
+ * come from us — there is no legitimate route by which it could have.
+ *
+ * Both arms, always: a check only ever seen to pass is indistinguishable from
+ * one that cannot fire.
+ */
+describe('S13 rejects a specific the prompt never supplied (#52)', () => {
+  const FABRICATED: [string, string][] = [
+    ['a rupee symbol', 'The gateway captured ₹4,82,110 with no matching bank credit.'],
+    ['a bare Rs. amount', 'A payment of Rs. 48210 is unmatched.'],
+    ['an INR label', 'The INR 500 difference is unexplained.'],
+    ['a payment id', 'Payment pay_c9zqFpdcakznDx has no counterpart.'],
+    ['a settlement id', 'The credit setl_yWY9cEo8cDeRXl nets several payments.'],
+    ['an RRN', 'Reference 398527795876 appears on only one side.'],
+    ['an ISO date', 'The record is dated 2026-07-28 and sits outside the window.'],
+    ['a calendar date', 'Posted on 28/07/2026, outside the settlement window.'],
+    ['a fabricated count', 'This shape covers 147 exceptions across the batch.'],
+  ];
+
+  for (const [what, text] of FABRICATED) {
+    test(`REJECTED: ${what}`, () => {
+      const reason = findUngroundedSpecific(text, 39);
+      assert.notEqual(reason, null, `"${text}" should have been refused`);
+      assert.match(reason!, /which the prompt never supplied/);
+    });
+  }
+
+  const CLEAN: [string, string][] = [
+    ['generic prose', 'A captured gateway payment is past its settlement window with no bank '
+      + 'credit at any score. Ask the bank for a settlement advice covering this period.'],
+    ['a bucket label echoed', 'The amounts differ by 3 to 10 percent, beyond rounding and '
+      + 'known fees.'],
+    ['a small ordinal', 'Two candidates scored within a hair of each other.'],
+    ['a percentage', 'The difference is under 1 percent of the payment.'],
+  ];
+
+  for (const [what, text] of CLEAN) {
+    test(`ACCEPTED: ${what}`, () => {
+      assert.equal(findUngroundedSpecific(text, 39), null,
+        `"${text}" is legitimate S13 output and must not be refused`);
+    });
+  }
+
+  test('the signature\'s OWN occurrence count is grounded, and only that value', () => {
+    // buildUserMessage sends `occurrence_count`, so quoting it is grounded, not
+    // invented (#52's fifth acceptance criterion). Exempted by VALUE, not by
+    // length: the holdout's largest is 39, but ADR-045's 100k benchmark will
+    // produce signatures covering hundreds, and a rule that only holds at one
+    // scale is not a rule.
+    assert.equal(findUngroundedSpecific('This shape covers 147 exceptions.', 147), null);
+    assert.notEqual(findUngroundedSpecific('This shape covers 147 exceptions.', 39), null);
+    assert.notEqual(findUngroundedSpecific('This shape covers 148 exceptions.', 147), null);
+  });
+
+  test('a small allowed count cannot mask a longer fabricated number', () => {
+    // The lookarounds in `scrubAllowedCount` are load-bearing. With a count of 1,
+    // a naive replace turns "100" into "00" and hides it.
+    assert.notEqual(findUngroundedSpecific('The batch totalled 100 payments.', 1), null);
+    assert.notEqual(findUngroundedSpecific('Reference 111111111111 is unmatched.', 1), null);
+    assert.equal(findUngroundedSpecific('This covers 1 exception.', 1), null);
+  });
+
+  test('a null occurrence count exempts nothing', () => {
+    assert.notEqual(findUngroundedSpecific('This shape covers 147 exceptions.', null), null);
+  });
 });

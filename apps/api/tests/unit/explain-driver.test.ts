@@ -247,6 +247,100 @@ describe('resolveExplanations — the model path', () => {
     assert.equal(out.resolved[0]!.explanationText, 'model prose for MISSING_IN_BANK');
   });
 
+  /**
+   * ── #52: a fabricated specific is REFUSED, not stored ──
+   *
+   * S13's input provably contains no specifics, so a rupee figure in the output
+   * is necessarily invented. Until now nothing checked: the text went straight
+   * to `explanation_text` and, worse, to `explanation_cache` — which is
+   * run-independent, so ONE fabricated figure would then be served to every
+   * later run sharing that signature, with `hit_count` making it look
+   * well-established.
+   */
+  const answerWithFabricatedAmount = (
+    sigs: readonly SignaturePrompt[],
+  ): ExplainBatchResult => ({
+    ok: true,
+    byId: new Map(sigs.map((s) => [s.id, {
+      explanation: `The gateway captured ₹4,82,110 for this ${s.category} and no bank `
+        + 'credit matched it.',
+      suggestedAction: 'Ask the bank for a settlement advice.',
+    }])),
+    requestsMade: 1, tokensIn: 100, tokensOut: 50,
+  });
+
+  test('#52: a fabricated amount is templated, NOT stored and NOT cached', async () => {
+    const groups = planSignatures([exc(), exc()], NO_TX, OPTS);
+    const out = await resolveExplanations(
+      groups, { client: fakeClient([answerWithFabricatedAmount]), lookupCache: emptyCache },
+      { llmMaxCallsPerRun: 8 });
+
+    const r = out.resolved[0]!;
+    assert.equal(r.source, 'template', 'the model text must not be used');
+    assert.equal(r.templateCause, 'ungrounded_specific',
+      'its OWN cause — folding it into malformed_response would hide the count');
+    assert.doesNotMatch(r.explanationText, /4,82,110|₹/,
+      'no fabricated figure may survive into the exception list');
+    // ADR-084 + #52 acceptance criterion 3: a rejected batch writes no cache row,
+    // so the fabrication cannot outlive this run.
+    assert.equal(r.needsCacheWrite, false);
+    assert.equal(out.stats.generated, 0, 'a refused signature was not generated');
+    assert.equal(out.stats.templated, 1);
+    // Criterion 2: the rejection is VISIBLE, and reaches runs.metrics.llmCost.
+    assert.equal(out.stats.failures.length, 1);
+    assert.equal(out.stats.failures[0]!.reason, 'ungrounded');
+    assert.match(out.stats.failures[0]!.detail, /currency amount/);
+  });
+
+  test('#52: a clean answer in the SAME batch is unaffected', async () => {
+    // Rejection is per signature, not per batch. One bad explanation must not
+    // discard the good ones — the same reasoning `parseResponse` rule 2 applies
+    // to a response covering 8 of 10.
+    const mixed = (sigs: readonly SignaturePrompt[]): ExplainBatchResult => ({
+      ok: true,
+      byId: new Map(sigs.map((s, i) => [s.id, i === 0
+        ? { explanation: 'Payment pay_c9zqFpdcakznDx is unmatched.',
+            suggestedAction: 'Check the gateway.' }
+        : { explanation: `model prose for ${s.category}`,
+            suggestedAction: 'do the model thing' }])),
+      requestsMade: 1, tokensIn: 100, tokensOut: 50,
+    });
+    const groups = planSignatures(
+      [exc(), exc({ category: 'AMBIGUOUS_MATCH' })], NO_TX, OPTS);
+    assert.equal(groups.length, 2, 'this test needs two distinct signatures');
+
+    const out = await resolveExplanations(
+      groups, { client: fakeClient([mixed]), lookupCache: emptyCache },
+      { llmMaxCallsPerRun: 8 });
+
+    const bySource = out.resolved.map((r) => r.source).sort();
+    assert.deepEqual(bySource, ['llm', 'template']);
+    assert.equal(out.stats.generated, 1);
+    assert.equal(out.stats.templated, 1);
+  });
+
+  test('#52: the suggested ACTION is checked too, not just the explanation', async () => {
+    // The action is the field a human acts on. A clean explanation with an
+    // invented reference id in the action is still an invented reference id.
+    const cleanProseDirtyAction = (
+      sigs: readonly SignaturePrompt[],
+    ): ExplainBatchResult => ({
+      ok: true,
+      byId: new Map(sigs.map((s) => [s.id, {
+        explanation: `A captured payment has no bank credit for this ${s.category}.`,
+        suggestedAction: 'Ask the bank about settlement setl_yWY9cEo8cDeRXl.',
+      }])),
+      requestsMade: 1, tokensIn: 100, tokensOut: 50,
+    });
+    const groups = planSignatures([exc()], NO_TX, OPTS);
+    const out = await resolveExplanations(
+      groups, { client: fakeClient([cleanProseDirtyAction]), lookupCache: emptyCache },
+      { llmMaxCallsPerRun: 8 });
+
+    assert.equal(out.resolved[0]!.templateCause, 'ungrounded_specific');
+    assert.match(out.stats.failures[0]!.detail, /reference id/);
+  });
+
   test('§10.3 batches at most 10 signatures per request', async () => {
     const exceptions = Array.from({ length: 25 }, (_, i) => distinctExc(i));
     const groups = planSignatures(exceptions, NO_TX, OPTS);

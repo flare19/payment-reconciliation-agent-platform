@@ -7,6 +7,21 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
 ---
 
+## Day 13 (2026-09-01), later — #52: S13's explain layer had a rule with nothing enforcing it
+
+`schema.md` §10.4's system prompt asks the model: *"Never invent amounts, dates, merchant names, or reference numbers."* Nothing checked. On the one layer whose output a panelist reads directly, that was a request.
+
+**The asymmetry is what made it a P1.** ADR-053 treats a fabricated specific at A3 as a build blocker; S13 relied on the model's cooperation. And the cache made it durable rather than transient — `explanation_cache` is run-independent, so one invented figure would be served to every later run sharing that signature, with `hit_count` making it look well-established.
+
+**Why the fix is five regexes and not a hallucination detector.** S13's *input* provably contains no specifics: ADR-018's signature is bucketed by construction, `buildUserMessage` emits only those buckets, and a test already asserts no long digit run reaches the prompt (ADR-080 consequence 3's privacy claim depends on it). So a rupee figure in the output *did not come from us* — there is no legitimate route by which it could have. The inference is unusually clean, and that is the whole reason the check is affordable.
+
+Rejected, never retried, matching A3. The signature's own `occurrence_count` is exempted **by value**, not by digit length: the holdout's largest is 39, but ADR-045's 100k benchmark will produce signatures covering hundreds, and a rule that only holds at one scale is not a rule. ADR-092.
+
+**Watched failing.** All three driver tests fail on the pre-fix code — `AssertionError: the model text must not be used`.
+
+**Not yet exercised against a live model.** The check is unit- and driver-tested; no run has yet sent it real Gemini output. That happens in the one bounded post-swap verification run, alongside #53, #54 and #55.
+
+
 ## Day 13 (2026-09-01) — AUDIT-3: three P1s, all invisible to 741 passing tests
 
 **AUDIT-3** audited U11–U13 in an isolated session and filed nine issues. The three P1s are fixed and merged (`3546b6f`); six P2/P3 remain open and are queued on a nightly Sonnet routine.

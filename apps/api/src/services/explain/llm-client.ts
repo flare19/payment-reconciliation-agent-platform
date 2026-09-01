@@ -204,6 +204,77 @@ export function buildUserMessage(signatures: readonly SignaturePrompt[]): string
  * Returns `null` only when the payload is not usable at all — that is what the
  * single retry is for.
  */
+/**
+ * S13's grounding check (issue #52).
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * ANY SPECIFIC IN S13 OUTPUT IS NECESSARILY FABRICATED, AND THAT IS WHAT MAKES
+ * THIS CHEAP.
+ *
+ * A general "did the model hallucinate" check is hard. This one is not, because
+ * the INPUT provably contains no specifics: ADR-018's signature is bucketed by
+ * construction — category, delta bands, source presence, anchor strength, alias
+ * flag, candidate-count band, secondary flags — and `buildUserMessage` emits
+ * only those. `explain-llm-client.test.ts` already asserts no long digit run
+ * reaches the prompt, because ADR-080 consequence 3's privacy claim depends on
+ * it. So there is no legitimate route by which a rupee figure, a date or a
+ * reference id could appear in the output. It did not come from us.
+ *
+ * Phase A treats a fabricated specific as a build blocker (ADR-053). S13 — the
+ * layer a panelist actually reads — had only a line in the prompt asking the
+ * model not to, and nothing that checked. This is the same "untrusted until it
+ * passes a non-LLM gate" posture as A3, at the cost of five regexes.
+ *
+ * REJECT, NEVER RETRY, matching A3: a second attempt at a fabricated answer is
+ * still an attempt at a fabricated answer. The caller falls back to the
+ * hand-written template for that signature and records `ungrounded_specific`.
+ * ══════════════════════════════════════════════════════════════════════════════
+ */
+const SPECIFIC_PATTERNS: readonly { readonly what: string; readonly re: RegExp }[] = [
+  // Checked before the catch-all so the rejection reason names the real shape.
+  { what: 'a currency amount', re: /₹|\bRs\.?\s*\d|\bINR\b/i },
+  { what: 'a reference id', re: /\b(?:pay|setl|order|rfnd|txn|utr)_[A-Za-z0-9]{4,}\b/i },
+  { what: 'an ISO date', re: /\b\d{4}-\d{2}-\d{2}\b/ },
+  { what: 'a calendar date', re: /\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/ },
+  // The catch-all: an RRN, a UTR, a year, a rupee figure written bare. Bucket
+  // labels the model is legitimately echoing ("3 to 10 percent") are one or two
+  // digits, and the signature's OWN occurrence count is exempted below.
+  { what: 'a long digit run', re: /\d{3,}/ },
+];
+
+/**
+ * The one digit the model may legitimately quote is the signature's own
+ * `occurrence_count` — `buildUserMessage` sends it, so "this covers 39
+ * exceptions" is grounded, not invented (issue #52's fifth acceptance
+ * criterion). It is exempted by VALUE rather than by length: on the holdout the
+ * largest is 39, but ADR-045's 100k benchmark will produce signatures covering
+ * hundreds, and a rule that happens to hold at one scale is not a rule.
+ *
+ * The lookarounds are load-bearing: with a count of 1, a naive replace would
+ * turn a fabricated "100" into "00" and hide it.
+ */
+function scrubAllowedCount(text: string, occurrenceCount: number | null): string {
+  if (occurrenceCount === null || !Number.isInteger(occurrenceCount)) return text;
+  return text.replace(new RegExp(`(?<!\\d)${occurrenceCount}(?!\\d)`, 'g'), '#');
+}
+
+/**
+ * Returns a human-readable reason when `text` contains a specific it could not
+ * legitimately know, or `null` when it is clean.
+ */
+export function findUngroundedSpecific(
+  text: string, occurrenceCount: number | null,
+): string | null {
+  const scrubbed = scrubAllowedCount(text, occurrenceCount);
+  for (const { what, re } of SPECIFIC_PATTERNS) {
+    const hit = re.exec(scrubbed);
+    if (hit !== null) {
+      return `explanation contains ${what} ("${hit[0]}"), which the prompt never supplied`;
+    }
+  }
+  return null;
+}
+
 export function parseResponse(
   text: string | undefined, askedFor: ReadonlySet<string>,
 ): Map<string, ExplanationText> | null {

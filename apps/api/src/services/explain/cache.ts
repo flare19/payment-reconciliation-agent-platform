@@ -48,7 +48,7 @@ import {
   type TxForSignature,
 } from './signature.js';
 import {
-  MAX_SIGNATURES_PER_REQUEST, type ExplainLlmClient, type SignaturePrompt,
+  MAX_SIGNATURES_PER_REQUEST, type ExplainLlmClient, type SignaturePrompt, findUngroundedSpecific,
 } from './llm-client.js';
 import { templateFor } from './templates.js';
 
@@ -73,7 +73,12 @@ export interface SignatureGroup {
 
 /** Why a group ended up with the text it has — the audit `reason`. */
 export type TemplateCause =
-  | 'no_client' | 'call_cap' | 'malformed_response' | 'transport_failure' | 'not_in_response';
+  | 'no_client' | 'call_cap' | 'malformed_response' | 'transport_failure' | 'not_in_response'
+  // The model wrote a specific the prompt never gave it (#52). Its OWN cause, not
+  // folded into `malformed_response`: that one means unusable JSON and carries a
+  // retry, this one means well-formed output that was REFUSED. Counting them
+  // together would hide the number agent-design.md's §7 discipline says to watch.
+  | 'ungrounded_specific';
 
 export interface ResolvedSignature {
   hash: string;
@@ -112,7 +117,9 @@ export interface ExplainStats {
    */
   callCapReached: boolean;
   /** Present only when a batch failed; one entry per failed batch. */
-  failures: { reason: 'malformed' | 'transport'; detail: string }[];
+  // 'ungrounded' is a REFUSAL, not a transport or parse failure (#52): the
+  // response arrived and was well-formed, and we declined to use it.
+  failures: { reason: 'malformed' | 'transport' | 'ungrounded'; detail: string }[];
 }
 
 export interface ExplainOutcome {
@@ -197,6 +204,8 @@ const TEMPLATE_REASON: Record<TemplateCause, string> = {
   malformed_response: 'the model returned unusable JSON twice, so the hand-written template was used',
   transport_failure: 'the model could not be reached, so the hand-written template was used',
   not_in_response: 'the model\'s response did not cover this signature, so the hand-written template was used',
+  ungrounded_specific: 'the model wrote a specific it was never given, so the '
+    + 'hand-written template was used and its text was discarded',
 };
 
 function asTemplate(group: SignatureGroup, cause: TemplateCause): ResolvedSignature {
@@ -328,6 +337,22 @@ export async function resolveExplanations(
     for (const [id, group] of idOf) {
       const text = result.byId.get(id);
       if (text === undefined) { resolved.push(asTemplate(group, 'not_in_response')); continue; }
+
+      // #52: S13's input provably contains no specifics, so a rupee figure, a
+      // date or a reference id in the output is necessarily fabricated. Checked
+      // on BOTH fields — a clean explanation with an invented amount in the
+      // suggested action is still an invented amount, and the action is the part
+      // a human acts on. Rejected, never retried (ADR-053's posture): the
+      // template is written instead and `needsCacheWrite` stays false via
+      // `asTemplate`, so fabricated text cannot reach `explanation_cache` and be
+      // served to every later run sharing this signature (ADR-084).
+      const ungrounded = findUngroundedSpecific(text.explanation, group.occurrenceCount)
+        ?? findUngroundedSpecific(text.suggestedAction, group.occurrenceCount);
+      if (ungrounded !== null) {
+        failures.push({ reason: 'ungrounded', detail: `${group.hash.slice(0, 12)}: ${ungrounded}` });
+        resolved.push(asTemplate(group, 'ungrounded_specific'));
+        continue;
+      }
       generated += 1;
       resolved.push({
         hash: group.hash,

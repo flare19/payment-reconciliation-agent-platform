@@ -878,6 +878,8 @@ Model: **`gemini-3.5-flash`** (`GEMINI_EXPLAIN_MODEL`), `temperature: 0`, struct
 > Rules you must follow:
 > 1. Never dispute, revise, or second-guess the category you are given. It is already final.
 > 2. Never invent amounts, dates, merchant names, or reference numbers. You will be given ranges and structural facts, never specifics — write at that level of generality.
+
+> **This rule is now ENFORCED, not merely requested (ADR-092, #52).** `findUngroundedSpecific` refuses any explanation or suggested action containing a currency marker, a reference-id shape, a date, or a digit run of three or more, and falls back to the template with `templateCause: 'ungrounded_specific'`. The check is cheap because S13's input provably contains no specifics, so any specific in the output is necessarily fabricated. The signature's own `occurrence_count` is exempted by value — it is sent in the prompt, so quoting it is grounded.
 > 3. Write for a finance analyst, not an engineer. No jargon, no rule IDs, no confidence scores.
 > 4. Two to three sentences maximum for the explanation. One sentence for the suggested action.
 > 5. The suggested action must be something a human can actually do. If the record is genuinely unresolvable from the data available, say so plainly instead of inventing a next step.
