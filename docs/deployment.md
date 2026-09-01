@@ -101,7 +101,7 @@ compatibility.
 | `HOLDOUT_SEED` | `90210` | no | Seed for the reported/demo dataset. Never tuned against. |
 | `LOG_LEVEL` | `info` | no | `debug` locally. |
 | `RUN_MIGRATIONS_ON_BOOT` | `true` | no | Convenient at this scale; see §5.3 for the caveat. |
-| `STALE_RUN_TIMEOUT_MINUTES` | `5` | no | On boot, non-terminal runs older than this are marked `failed` (ADR-046). Without it a crashed run polls forever mid-demo. |
+| `STALE_RUN_TIMEOUT_MINUTES` | `5` | no | **PARSED BUT NOT ENFORCED — `reapStaleRuns` is still a TODO in `index.ts`** (ADR-046, ADR-097). Intended: on boot, non-terminal runs older than this become `failed`. Until it lands, a crashed or restarted run polls forever mid-demo, which is why scale-to-zero stays off (ADR-097). |
 | `CANDIDATE_CAP` | `200` | no | Per-record candidate cap (ADR-033). Cap hits are surfaced, never silent. |
 | `BATCH_SUBSET_BUDGET_MS` | `2000` | no | Subset-sum safety valve, not the primary bound (ADR-060, amended by ADR-063). A lower value than the deterministic node budget's typical runtime would reintroduce the hardware-dependent split ADR-060 exists to eliminate. |
 | `AGENT_ENABLED` | `true` | no | Master switch for Phase A. Off → the engine runs exactly as before. |
@@ -111,6 +111,9 @@ compatibility.
 | `AGENT_QA_MAX_QUESTIONS_PER_RUN` | `50` | no | Per-run Q&A ceiling. |
 | `AGENT_QA_MAX_QUESTIONS_PER_HOUR` | `100` | no | Global token bucket across the deployment. |
 | `AGENT_PROMPT_VERSION` | `agent-v1` | no | Separate from `PROMPT_VERSION`; the explain layer and the Analyst version independently. |
+| `AGENT_MAX_COST_USD_PER_HOUR` | `2.00` | no | **The outer bound on the public investigate endpoint** (ADR-095). Derived from `cost_usd` rows already written, so it survives a restart. |
+| `TRUST_PROXY_HOPS` | `1` | no | **Load-bearing on Railway** (ADR-096). At `0`, every visitor shares the edge's IP and therefore one rate-limit bucket — the first judge to browse locks out the rest. `1` reads the hop Railway's proxy wrote; `true`/leftmost would be client-forgeable. |
+| `RATE_LIMIT_ENABLED` | `true` | no | ADR-096 kill switch. Turn off only to debug; the demo is unauthenticated and both meters (Anthropic, Railway) bill by usage. |
 
 ### `apps/web` (Vercel)
 
@@ -195,7 +198,8 @@ Push to `main` → both platforms rebuild automatically. No manual step.
 
 ### 5.4 Pre-submission checklist (Day 13)
 
-- [ ] `/api/health` returns `dbConnected: true` and `llmConfigured: true`
+- [ ] `/api/health` returns `dbConnected: true` and `llmConfigured: true` (provider-aware since Day 15 — it reads the key belonging to `LLM_PROVIDER`, not always Gemini)
+- [ ] `TRUST_PROXY_HOPS=1` is set, and two different clients get independent rate-limit budgets (ADR-096)
 - [ ] Production Postgres major version matches the one the migrations were validated against (§2.1)
 - [ ] Dashboard loads the demo run with no interaction
 - [ ] Match rate, **false-positive count**, and cold-start rate all visible on the landing screen (ADR-020)

@@ -41,11 +41,29 @@ Per ARCHITECTURE §7, this is a lightweight table — **not** an OpenAPI/Swagger
 | 400 | `INVALID_REQUEST`, `UNSUPPORTED_FILE_TYPE`, `MISSING_REQUIRED_FILE`, `INVALID_ALIAS` |
 | 404 | `RUN_NOT_FOUND`, `EXCEPTION_NOT_FOUND`, `TRANSACTION_NOT_FOUND`, `MATCH_NOT_FOUND`, `ALIAS_NOT_FOUND`, `SCORE_REPORT_NOT_FOUND`, `INVESTIGATION_NOT_FOUND` |
 | 409 | `RUN_NOT_COMPLETE` (metrics or investigations requested too early), `MATCH_NOT_REVIEWABLE` (status isn't `pending_review`), `ALIAS_CONFLICT_UNCONFIRMED`, `EXCEPTION_ALREADY_RESOLVED`, `TRANSACTION_ALREADY_MATCHED`, `INVESTIGATION_IN_PROGRESS` |
-| 429 | `AGENT_QUOTA_EXCEEDED` (Q&A rate limit — ADR-056) |
+| 429 | `AGENT_QUOTA_EXCEEDED` (agent spend ceiling — ADR-056, ADR-095), `RATE_LIMITED` (HTTP rate limit — ADR-096; carries `Retry-After`) |
 | 503 | `AGENT_DISABLED` (`AGENT_QA_ENABLED=false` or no `ANTHROPIC_API_KEY`) |
 | 413 | `FILE_TOO_LARGE` (>10 MB per file) |
 | 422 | `PARSE_FAILED` (file readable but not the expected shape), `TRUTH_KEY_MISMATCH` (score report built against different bytes) |
 | 500 | `INTERNAL_ERROR` |
+
+### Rate limits (ADR-096)
+
+Every endpoint is metered per client IP. A refused request returns `429` with code
+`RATE_LIMITED`, a `Retry-After` header in seconds, and `details: { tier, limit, windowSeconds, scope }`.
+
+| Tier | Applies to | Per IP | Global |
+|---|---|---|---|
+| `read` | every `GET` | 120 / min | — |
+| `write` | `POST`/`PATCH` on matches, aliases, exceptions, score reports | 60 / hour | — |
+| `run` | `POST /api/runs` | 10 / hour | 40 / hour |
+| `investigate` | `POST /api/exceptions/:id/investigate` | 12 / hour | ADR-095's $2/hour spend ceiling |
+
+Every response carries `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset`
+for its tier, so a client can pace itself rather than discover the limit by hitting it.
+
+**The poll loop in §5 is inside the `read` tier's budget**: 750 ms polling is 80 requests/minute
+against a 120/minute allowance, and a run completes in ~3 s (≈4 polls).
 
 ---
 

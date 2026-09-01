@@ -773,12 +773,13 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 | ~~3~~ | ~~#52 — S13 explain grounding~~ | | ✅ ADR-092 |
 | ~~4~~ | ~~ONE bounded verification run~~ | | ✅ $2.83, six runs |
 | ~~5~~ | ~~#61 — bound endpoint 25~~ | | ✅ ADR-095 |
-| **6** | **Deploy API to Railway** (U14, ADR-061/074) — acceptance is *"a second deploy is one command"* | nothing | 2–3 h |
-| 7 | **Frontend** (U17 design + dashboard, U18 remaining screens) | #43 ✅, 6 | 6–8 h |
+| ~~6~~ | ~~Deploy API to Railway~~ | | ✅ **LIVE.** See the block below |
+| **7** | **Frontend** (U17 design + dashboard, U18 remaining screens) — **THE critical path now** | #43 ✅, 6 ✅ | 6–8 h |
 | 8 | **Deploy web to Vercel** (U19) | 7 | 1 h |
 | 9 | **AUDIT-4** final pre-submission pass | 8 | 2 h |
 | 10 | **U20** — accuracy report, README, pitch video, build-challenges write-up | 9 | 3–4 h |
 | — | *below the line — cut in this order* | | |
+| | **`reapStaleRuns` (ADR-046/097)** — a non-terminal run older than `STALE_RUN_TIMEOUT_MINUTES` becomes `failed`, with a reason | nothing | **~30 min · protects the demo from an infinite poll** |
 | | Analyst scoring in `tools/score` | today's 10+5 persisted verdicts | 3 h · **now affordable: it is OFFLINE, $0 of API** |
 | | U16 scale benchmark | — | 1–2 h |
 | | U15 Q&A loop | — | **already cut** |
@@ -788,6 +789,32 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 > **Analyst scoring moved ABOVE "unaffordable".** It was parked because it needed runs nobody could pay for. Today's run persisted **10 investigations and 5 corroborations** in `recon_v2` against the committed answer key, and scoring them is offline work in `tools/score` that costs **$0 of API**. n=15 is small and any figure must be reported as a raw fraction with its denominator (ADR-020's discipline), but "unmeasured" and "measured on fifteen" are different claims and the second is available for free.
 
 > **What the Q&A loop is, since it keeps coming up.** `agent-design.md` §9 and endpoint 28: `POST /api/runs/:runId/ask` — a *second* loop over the same nine tools that answers a typed question about a finished run ("why wasn't settlement SBIN0R52 matched?") with clickable citations. `qa-loop.ts` is a two-line stub. §11's pre-agreed degradation order names it **cut first**, because it is the most demoable piece and the least defensible one. It stays cut.
+
+### THE API IS DEPLOYED AND VERIFIED (Day 15)
+
+```
+https://payment-reconciliation-agent-platform-production.up.railway.app
+```
+
+**It reproduces the local numbers exactly** — 920 transactions, 284 matches, 212 exceptions, **65.22%**, 21 signatures, a **612-entry audit chain that verifies and is anchored**, in 2.4 s wall clock. Nothing about the managed environment changed a decision. `POST /api/runs` (seeded dataset), all reads, and CSV export are exercised over real HTTPS.
+
+**Redeploys are automatic, not manual: push to `main` and Railway rebuilds** (deployment.md §5.3). Migrations run on boot via `RUN_MIGRATIONS_ON_BOOT=true`, which is safe here only because there is exactly one instance and no rolling deploy.
+
+**Railway's Root Directory must be the REPOSITORY ROOT, not `apps/api`** — `app.ts` resolves the demo fixtures at `../../../data/fixtures/holdout/`, so pointing it at `apps/api` puts `data/` outside the build context and the seeded-dataset path (THE demo path) fails at click time, not build time.
+
+> **`ANTHROPIC_API_KEY` on Railway currently holds a PLACEHOLDER, not a real key.** The first live run logged three `401 invalid x-api-key` failures and fell back to templates — the ADR-017 degradation working exactly as designed, and the score report is unaffected. Replace it with the real key when Phase A is wanted; nothing else needs to change.
+
+### HOSTING IS ALWAYS-ON UNTIL SUBMISSION — do not enable scale-to-zero (ADR-097)
+
+Railway's App Sleeping stays **OFF** through 2026-09-05. The saving is a low single-digit dollar figure over four days and **Postgres does not sleep with it**, so the larger half of the bill is unaffected. Against that: `POST /api/runs` and endpoint 25 both do real work *after* the response is sent (202-then-poll, and `void investigateOne(...)`), and scale-to-zero keys on inbound traffic — so a judge who starts a run and looks away is exactly the case the platform reads as idle.
+
+> **THE STALE-RUN REAPER DOES NOT EXIST, AND `STALE_RUN_TIMEOUT_MINUTES` LIES ABOUT IT.** `reapStaleRuns` is a commented TODO in `index.ts` (ADR-046). The env var is parsed in `env.ts` and documented in `deployment.md` §3 as though it were enforced. **It is enforced nowhere** — the same defect shape ADR-094 found in `AGENT_MAX_COST_USD_PER_RUN`. Its own TODO predicts the consequence: a crashed run sits at `matching` forever and the dashboard polls it indefinitely. **Sequence matters: reaper first, sleeping second.** It is the top below-the-line item and the cheapest insurance against a demo-day hang.
+
+### The public API is rate limited (ADR-096)
+
+Both meters bill by usage — Anthropic (prepaid, auto-reload OFF) and Railway (CPU, egress, storage) — and the demo is unauthenticated by design. `routes/rate-limit.ts` meters per client IP in four tiers: **read 120/min · write 60/h · run 10/h per IP behind a 40/h global · investigate 12/h**. Every number is derived from a measured per-request cost. ADR-095's $2/hour spend ceiling is unchanged and sits behind it as the money bound.
+
+> **`TRUST_PROXY_HOPS` is load-bearing.** Railway terminates TLS at its edge, so without `trust proxy` every visitor shares the edge's IP and therefore ONE bucket — the first judge to browse locks out the rest. A rate limiter that becomes the outage is worse than none.
 
 ### The demo budget, and what a live demo actually costs
 

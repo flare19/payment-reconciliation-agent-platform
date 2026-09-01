@@ -9,7 +9,7 @@
  */
 
 import { Router } from 'express';
-import type { Env } from '../config/env.js';
+import { llmConfigured, type Env } from '../config/env.js';
 import { getPool } from '../db/pool.js';
 import { handler } from './helpers.js';
 
@@ -29,7 +29,12 @@ export function healthRouter(env: Env, version: string): Router {
     res.status(dbConnected ? 200 : 503).json({
       status: dbConnected ? 'ok' : 'degraded',
       dbConnected,
-      llmConfigured: env.geminiApiKey !== null && env.llmExplainEnabled,
+      // MUST go through `llmConfigured` (config/env.ts), which reads the key
+      // belonging to `LLM_PROVIDER`. This line used to test `geminiApiKey`
+      // directly and was missed by the ADR-093 swap, so an Anthropic deploy
+      // reported `false` while its runs really were calling Anthropic --
+      // deployment.md §5.4's pre-submission checklist tests this exact field.
+      llmConfigured: llmConfigured(env),
       version,
     });
   }));
