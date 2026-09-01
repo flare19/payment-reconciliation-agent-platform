@@ -192,7 +192,20 @@ The public demo must show a completed run the instant a panelist opens it — ne
 
 ### 5.3 Ongoing deploys
 
-Push to `main` → both platforms rebuild automatically. No manual step.
+**Railway redeploys are MANUAL — one click in the dashboard, on demand.** This paragraph
+used to claim both platforms rebuilt automatically on a push to `main`. That contradicted
+**ADR-074**, which is the locked decision and says the opposite: *"redeployment stays a
+single manual action, and there is no CI/CD."* The deployment follows ADR-074. The claim
+here was aspirational and was never true of the setup.
+
+**Manual is the right default until after submission (ADR-097's reasoning applies):**
+there is no CI, so nothing sits between `git push` and production; the frontend build
+means frequent pushes to `main`; and a restart mid-run has no reaper to clean up after it,
+so an interrupted run polls forever. Auto-deploy would turn that from rare into routine.
+
+Enable Railway's GitHub auto-deploy **after** the 2026-09-05 submission, and preferably
+after `reapStaleRuns` lands. Vercel's push-to-deploy is a separate question and is fine
+for a static frontend, which has no in-flight work to lose.
 
 **Migrations** run on API boot when `RUN_MIGRATIONS_ON_BOOT=true`. Acceptable here because there is exactly one API instance and no rolling deploy — with multiple replicas this races and would need a separate release step. **Noted so a future session doesn't copy this pattern into somewhere it's wrong.** Migrations are forward-only numbered files; a bad migration is fixed by a new migration, never by editing a shipped one.
 

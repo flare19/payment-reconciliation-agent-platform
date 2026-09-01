@@ -37,6 +37,14 @@ Per Day 13's rule, every guard was verified by breaking the source and watching 
 
 **This is the sixth instance of the test-that-cannot-fail pattern, and the first one caught before it shipped** — by the mutation step itself rather than by a later audit. Writing the test is not the guard. Watching it fail is.
 
+### A doc that described the deploy it wished for, and two files that repeated it
+
+`deployment.md` §5.3 stated *"Push to `main` → both platforms rebuild automatically. No manual step."* Railway was never configured that way. **ADR-074 — the locked decision — says the opposite**: *"redeployment stays a single manual action, and there is no CI/CD."* The setup follows the ADR; the prose in §5.3 was aspiration written next to execution detail and never marked as such.
+
+Caught only because Tejas said so, after a push to `main` was made expecting a rebuild that was never going to happen. By then §5.3's claim had already been copied into CLAUDE.md as fact — **a false statement propagating into the orientation file every future session reads first**, which is the most expensive place in this repo for one to land.
+
+**The rule this repo already had, and did not apply to itself:** *"If code and docs disagree, the docs are right until an ADR says otherwise."* Here two DOCS disagreed, and the tie-breaker was already written — an ADR outranks a runbook. Nothing checks that. Both files corrected, and the reasoning is now recorded rather than assumed: manual stays correct until after submission, because there is no CI, the frontend means frequent pushes, and a deploy mid-run has no reaper to clean up after it.
+
 ### A third bound that is parsed, documented, and enforced nowhere
 
 Asked whether the service should scale to zero to save compute, the answer turned on a config value that does not do what it says. `STALE_RUN_TIMEOUT_MINUTES` is parsed in `env.ts` and listed in `deployment.md` §3 as *"on boot, non-terminal runs older than this are marked failed"*. `reapStaleRuns` is a **commented-out TODO** in `index.ts` and has been since Day 8.

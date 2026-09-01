@@ -798,7 +798,7 @@ https://payment-reconciliation-agent-platform-production.up.railway.app
 
 **It reproduces the local numbers exactly** — 920 transactions, 284 matches, 212 exceptions, **65.22%**, 21 signatures, a **612-entry audit chain that verifies and is anchored**, in 2.4 s wall clock. Nothing about the managed environment changed a decision. `POST /api/runs` (seeded dataset), all reads, and CSV export are exercised over real HTTPS.
 
-**Redeploys are automatic, not manual: push to `main` and Railway rebuilds** (deployment.md §5.3). Migrations run on boot via `RUN_MIGRATIONS_ON_BOOT=true`, which is safe here only because there is exactly one instance and no rolling deploy.
+**Redeploys are MANUAL — one click in the Railway dashboard.** `deployment.md` §5.3 claimed they were automatic; it contradicted **ADR-074** (*"redeployment stays a single manual action, and there is no CI/CD"*), and ADR-074 is what the setup actually follows. §5.3 is now corrected. **Do not enable auto-deploy before 2026-09-05:** there is no CI, the frontend means frequent pushes to `main`, and a restart mid-run has no reaper (ADR-097), so an interrupted run polls forever. Migrations run on boot via `RUN_MIGRATIONS_ON_BOOT=true`, safe only because there is exactly one instance and no rolling deploy.
 
 **Railway's Root Directory must be the REPOSITORY ROOT, not `apps/api`** — `app.ts` resolves the demo fixtures at `../../../data/fixtures/holdout/`, so pointing it at `apps/api` puts `data/` outside the build context and the seeded-dataset path (THE demo path) fails at click time, not build time.
 
