@@ -141,10 +141,10 @@ const SYSTEM_PROMPT = [
   'calling tools and write the verdict from what you actually retrieved.',
   'CONFIRMED_UNRESOLVABLE with a stated reason is a real and valuable answer.',
   '',
-  'Every tool result carries a "resultDigest" string. Copy it back VERBATIM in the matching',
-  'reasoning step. It is a checksum, not a summary: a deterministic gate compares what you',
-  'echo against what the tool actually returned, so a digest you paraphrase or invent voids',
-  'the verdict. Do not rewrite it, shorten it, or reformat it.',
+  'Every tool result carries a short "resultDigest" like `get_exception#a3f9c1d20b44`. Copy',
+  'it back EXACTLY in the matching reasoning step. It is a checksum, not a summary: a',
+  'deterministic gate compares what you echo against what the tool actually returned, so a',
+  'digest you alter or invent voids the verdict. It is deliberately short — copy all of it.',
   '',
   // ── THE PROPOSAL SCHEMA (issue #53) ──
   // Absent until AUDIT-3. The gate validated all four variants and the prompt

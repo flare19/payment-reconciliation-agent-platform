@@ -43,6 +43,8 @@
  * arguments — an argument is what the model ASKED for, not what it was shown.
  */
 
+import { createHash } from 'node:crypto';
+
 import { withReadOnlyTransaction, type TxClient } from '../../db/pool.js';
 import { AGENT_DEFAULTS } from '../../config/defaults.js';
 import { formatPaise } from '../ingestion/money.js';
@@ -127,9 +129,31 @@ function recordDigest(t: NormalizedTransaction): Record<string, unknown> {
   };
 }
 
+/**
+ * A digest is a CHECKSUM the model echoes back, not a summary it reads.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * IT IS SHORT BECAUSE THE MODEL HAS TO REPRODUCE IT BYTE-FOR-BYTE.
+ *
+ * This used to embed up to 4,000 characters of the result JSON. Measured on the
+ * first live Sonnet run, real digests reached 1,192 characters — and A3 requires
+ * them echoed VERBATIM in the reasoning chain. Asking any model to reproduce
+ * 1,192 characters exactly is asking it to fail, and it did: the corroboration
+ * that reached a verdict was rejected with `reports a "get_transaction" result
+ * the runtime did not record` because the model paraphrased what it could not
+ * copy. A gate that rejects honest work because the token it demanded was
+ * impractical to carry is measuring our design, not the model's honesty.
+ *
+ * The content was never needed here. `investigation-loop.ts` hands the model the
+ * FULL result alongside the digest, so the digest carries no information the
+ * model lacks; its only job is to be unforgeable. A truncated hash is: the model
+ * cannot compute SHA-256 over a payload it never received, and 12 hex characters
+ * is short enough to copy without error.
+ * ══════════════════════════════════════════════════════════════════════════════
+ */
 function digestOf(label: string, value: unknown): string {
-  const json = JSON.stringify(value);
-  return `${label}: ${json.length > 4000 ? `${json.slice(0, 4000)}… (truncated)` : json}`;
+  const json = JSON.stringify(value) ?? 'undefined';
+  return `${label}#${createHash('sha256').update(json, 'utf8').digest('hex').slice(0, 12)}`;
 }
 
 /**
