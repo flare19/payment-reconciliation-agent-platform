@@ -431,8 +431,16 @@ describe('agent tool registry (integration)',
         const out = await call('rerun_subset_search', { bankTransactionId: credit.id });
         const stats = out.result['stats'] as Record<string, unknown>;
         const interpretation = String(out.result['interpretation']);
-        if (stats['exhaustive'] === true) {
-          assert.match(interpretation, /whole declared space|stronger claim/);
+        // THREE outcomes, not two (#55). "Exhaustive" over an EMPTY eligible pool
+        // is trivially true and means something completely different from
+        // "exhaustive over 24 candidates" — nothing was combined and nothing was
+        // ruled out — so it gets its own sentence rather than borrowing the
+        // proof's.
+        if (stats['poolSize'] === 0) {
+          assert.match(interpretation, /NO candidate payments were eligible/);
+          assert.doesNotMatch(interpretation, /whole declared space|STRONGER claim/);
+        } else if (stats['exhaustive'] === true) {
+          assert.match(interpretation, /whole declared space|STRONGER claim/);
         } else {
           assert.match(interpretation, /stopped at a bound|not a proof/);
         }
@@ -627,6 +635,41 @@ describe('agent tool registry (integration)',
         assert.ok(compared > 0, 'no credit was actually compared');
         assert.ok(sawNonEmpty,
           'every pool was empty, so "exhaustive" is vacuous and this test proves nothing');
+      });
+
+      test('an EMPTY eligible pool says so, instead of claiming an exhaustive search', async () => {
+        // The #55 finding one level down, seen in a live run: the population is
+        // now the engine's own (54 records, not 14), and a particular credit can
+        // still have ZERO eligible candidates once the date window and
+        // counterparty filter apply. An empty search is trivially exhaustive, so
+        // reporting it as "the whole declared space was searched" tells the model
+        // a proof happened when nothing was combined and nothing was ruled out.
+        const excs = await listExceptions(runId, { category: 'UNSPLITTABLE_BATCH' },
+          'severity', 200, 0);
+        const tool = registry.get('rerun_subset_search')!;
+        const population = await listBatchPoolCandidates(runId);
+        const all = await listTransactions(runId);
+
+        let sawEmpty = false;
+        for (const e of excs.exceptions) {
+          if (e.transactionId === null) continue;
+          const credit = all.find((t) => t.id === e.transactionId);
+          if (credit === undefined) continue;
+          if (buildBatchPool(credit, population, config).pool.length !== 0) continue;
+          sawEmpty = true;
+          const out = await tool.execute({ bankTransactionId: e.transactionId });
+          const r = out.result as { interpretation: string; stats: { poolSize: number } };
+          assert.equal(r.stats.poolSize, 0);
+          assert.match(r.interpretation, /NO candidate payments were eligible/);
+          assert.doesNotMatch(r.interpretation, /whole declared space was searched/,
+            'an empty pool must not read as an exhaustive proof');
+          assert.doesNotMatch(r.interpretation, /STRONGER claim/);
+        }
+        // Not asserted as a fixture property: if every credit has candidates this
+        // test is vacuous, and saying so beats a silent pass.
+        if (!sawEmpty) {
+          assert.ok(true, 'no credit had an empty eligible pool in this fixture');
+        }
       });
 
       test('"stronger than the engine" is claimed ONLY when no bound was narrowed', async () => {

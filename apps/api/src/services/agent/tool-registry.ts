@@ -678,17 +678,32 @@ function buildTools(ctx: ToolContext): AgentTool[] {
           // nothing was narrowed, and the agent may pass bounds BELOW the run's.
           // Asserting it unconditionally handed the model a false statement in
           // deterministic prose, which is the one place it cannot check us.
-          interpretation: !o.stats.exhaustive
-            ? `The search stopped at a bound (${o.stats.boundHit?.bound ?? 'unknown'}). `
-              + 'A decomposition may still exist; this is not a proof.'
-            : widerThanEngine
-              ? 'The whole declared space was searched, over the same candidate '
-                + 'population the engine uses and at bounds no narrower than its own. '
-                + 'This is a STRONGER claim than the engine\'s original one.'
-              : 'The whole declared space was searched AT THESE BOUNDS, which are '
-                + 'narrower than the engine\'s in at least one dimension (see '
-                + 'engineBounds). This is NOT a stronger claim than the engine\'s. '
-                + 'Re-run at or above the engine\'s bounds before concluding.',
+          interpretation: o.stats.poolSize === 0
+            // AN EMPTY SEARCH IS TRIVIALLY EXHAUSTIVE, AND SAYING SO MATTERS
+            // (#55). No gateway payment was eligible at all -- none in the
+            // credit's date window sharing its counterparty -- so nothing was
+            // combined and nothing was ruled out by combination. That is a real
+            // finding and often the right one, but it is a claim about
+            // ELIGIBILITY, not about arithmetic, and the two must not be dressed
+            // the same. This is the audit finding that opened #55 arriving one
+            // level down: the pool is now the engine's own, and an empty result
+            // still has to describe itself honestly.
+            ? 'NO candidate payments were eligible for this credit at all — none in its '
+              + 'date window sharing its counterparty. Nothing was combined and nothing was '
+              + 'ruled out by combination. This is NOT a proof that no decomposition exists; '
+              + 'it says the engine had nothing to search. Report it as an eligibility '
+              + 'finding, not as an exhaustive search.'
+            : !o.stats.exhaustive
+              ? `The search stopped at a bound (${o.stats.boundHit?.bound ?? 'unknown'}). `
+                + 'A decomposition may still exist; this is not a proof.'
+              : widerThanEngine
+                ? 'The whole declared space was searched, over the same candidate '
+                  + 'population the engine uses and at bounds no narrower than its own. '
+                  + 'This is a STRONGER claim than the engine\'s original one.'
+                : 'The whole declared space was searched AT THESE BOUNDS, which are '
+                  + 'narrower than the engine\'s in at least one dimension (see '
+                  + 'engineBounds). This is NOT a stronger claim than the engine\'s. '
+                  + 'Re-run at or above the engine\'s bounds before concluding.',
         };
         return {
           result,
