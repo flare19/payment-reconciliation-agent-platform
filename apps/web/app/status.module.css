@@ -65,3 +65,17 @@
   background: var(--ink-2);
   border-color: var(--ink-2);
 }
+
+.links { display: flex; gap: var(--s3); flex-wrap: wrap; }
+
+.secondary {
+  padding: var(--s2) var(--s4);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--t-meta);
+  text-decoration: none;
+  transition: background-color 120ms ease;
+}
+.secondary:hover { background: var(--surface-hover); }

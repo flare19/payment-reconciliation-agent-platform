@@ -1085,3 +1085,19 @@ One coupling defect, three symptoms, all of them shaped like the agent not exist
 **THE TOOL LIST IS DERIVED, NOT TRANSCRIBED.** It is built from the tool calls recorded in the persisted reasoning chains, with their counts — 59 calls across 11 investigations, 7 distinct tools. If the agent never called a tool, that tool does not appear. A list copied out of `agent-design.md` would describe a design; this describes behaviour, and the difference is the entire reason the page earns its place on a site whose argument is that its claims are checkable.
 
 **The caveat block is as prominent as the metrics.** *"None of this is scored against the answer key"* sits beside the cost figure, not below the fold. And the grounding-failure count is given both readings in the same breath — the gate working, and the model asserting what it had not established — because both are true and picking one would be editing.
+
+### ADR-115 · A citation is resolved to its kind before it is linked; and a "not built yet" page must not outlive the build
+
+**Two defects, both about a page asserting something that used to be true.**
+
+**1 · Citations are not all transactions.** The A3 grounding gate accepts any id that appeared in a tool result, and the tools return more than one kind: `get_transaction` yields transaction ids, `get_exception` and `find_similar_exceptions` yield exception ids. On the holdout the split is **18 transactions to 8 exceptions**, and the panel linked all 26 to `/records/:id`.
+
+So **roughly a third of citations led to a not-found page** — on the one element of the Analyst panel whose entire purpose is letting a reader check a claim against the record behind it. A citation that cannot be followed is not a citation.
+
+Each distinct id is now resolved server-side before rendering: transaction → `/records/`, exception → `/exceptions/`, and anything that resolves to neither renders as **unresolved rather than as a dead link**, because a citation the gate accepted with nothing behind it is a finding rather than a broken href. All 26 now reach a live page.
+
+The chips also stopped showing eight hex characters. `record · gbBjF2pd5DHVpJSKOLGXR · bank · ₹4,06,441.50` is checkable; `07f111a4` is not, and the difference matters precisely because this is the evidence surface.
+
+**2 · The 404 page still said the site was half-built.** Written during U17, when the dashboard genuinely was the only screen, it read: *"the exception list, exception detail, review queue, matches browser, aliases and audit screens are still being built."* U18 built all six and nobody returned to that file. A reader who followed a broken citation was told the exception detail screen did not exist — while looking at it in the previous tab.
+
+> **A STALE EXPLANATION IS WORSE THAN NO EXPLANATION.** "No explanation" leaves someone to investigate; a confident wrong one sends them away to wait for a feature that shipped days ago. It cost real confusion here, and it is the same failure shape as the error boundary blaming the API for a render bug (ADR-110) — **a surface that is certain about a cause it does not know.** The page now states only what it can: the id is not in the database, ids are per-run, here are three places to go.

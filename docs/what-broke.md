@@ -7,6 +7,32 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
 ---
 
+## Day 16 (2026-09-02), latest — a third of the Analyst's citations led nowhere
+
+Reported from a click-through: some Analyst citations landed on the 404 page.
+
+**They were not all transactions.** The grounding gate accepts any id that appeared in a tool result, and the tools return two kinds — `get_transaction` gives transaction ids, `get_exception` and `find_similar_exceptions` give exception ids. On the holdout: **18 transactions, 8 exceptions, 0 unknown.** The panel linked all 26 to `/records/:id`.
+
+So **eight of twenty-six citations 404'd** — on the one element whose entire purpose is letting a reader check a claim against the record behind it. **A citation you cannot follow is not a citation.** Each id is now resolved server-side to its kind first; all 26 reach a live page, verified one by one.
+
+They also stopped rendering as eight hex characters. `record · gbBjF2pd5DHVpJSKOLGXR · bank · ₹4,06,441.50` is checkable. `07f111a4` is not.
+
+### And the 404 page was still telling people the site was half-built
+
+Written during U17, when the dashboard really was the only screen:
+
+> *"The exception list, exception detail, review queue, matches browser, aliases and audit screens are still being built."*
+
+U18 built all six. Nobody came back to this file. So a reader who followed a broken citation was told the exception detail screen did not exist yet — **while looking at it in the previous tab.**
+
+> **A STALE EXPLANATION IS WORSE THAN NONE.** No explanation leaves someone to investigate; a confident wrong one sends them away to wait for something that shipped days ago. Same failure shape as the error boundary blaming the API for a render bug: **a surface certain about a cause it does not know.** Twice in two days, from two different files, both written when they were true.
+
+### One thing the verification itself found
+
+Checking all 26 citations meant 52 requests in a few seconds, which **hit the read rate limit** — `120/min per IP`, ADR-096, working exactly as designed. Not a defect, but worth knowing the shape of: the exception detail page now issues roughly 5–9 requests (exception, investigations, investigation, audit trail, plus one or two per citation). Human browsing will not approach 120/min; a scripted sweep does.
+
+---
+
 ## Day 16 (2026-09-02), late — a second run made the agent disappear, and the agent was already invisible
 
 Reported after a manual test: the Ask button appeared on an exception that had *already* been investigated, clicking it said "the page updates itself" and the page never did, and — separately — the Analyst's only presence in the whole product was that one button.

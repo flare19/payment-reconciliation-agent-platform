@@ -10,6 +10,7 @@
  * product that would be an embarrassing bug to have on screen.
  */
 
+import { CATEGORY_LABEL } from '@/lib/taxonomy';
 import type {
   Alias, AliasListResponse, AuditListResponse, ChainVerification, ExceptionDetail,
   ExceptionListResponse, Health, InvestigationDetail, MatchListResponse, MatchSummary,
@@ -277,3 +278,62 @@ export const startRun = (body: {
   configOverrides?: { llmExplainEnabled?: boolean };
 }) => apiPost<{ runId: string; status: string; label: string; startedAt: string }>(
   '/runs', { useSeedDataset: true, ...body });
+
+// ── citations ────────────────────────────────────────────────────────────────
+
+export interface ResolvedCitation {
+  id: string;
+  kind: 'transaction' | 'exception' | 'unknown';
+  /** Where to send a reader who clicks it. `null` when nothing resolved. */
+  href: string | null;
+  /** Something meaningful to show instead of a truncated UUID. */
+  label: string;
+  detail: string | null;
+}
+
+/**
+ * WHAT KIND OF THING IS THIS CITATION?
+ *
+ * The grounding gate accepts any id that appeared in a tool result, and tool
+ * results contain more than one kind of id: `get_transaction` yields transaction
+ * ids, `get_exception` and `find_similar_exceptions` yield exception ids. On the
+ * holdout the split is 18 transactions to 8 exceptions.
+ *
+ * The first version linked every citation to `/records/:id`, so a third of them
+ * led to a not-found page — on the one part of the Analyst panel whose entire
+ * purpose is letting a reader check a claim against the record behind it.
+ *
+ * Resolved server-side, one lookup per distinct id, so there is no client
+ * waterfall and the reader gets a real label rather than eight hex characters.
+ */
+export async function resolveCitation(id: string): Promise<ResolvedCitation> {
+  try {
+    const t = await getTransaction(id);
+    return {
+      id,
+      kind: 'transaction',
+      href: `/records/${id}`,
+      label: t.externalId ?? id.slice(0, 8),
+      detail: `${t.sourceSystem} · ${t.amountDisplay}`,
+    };
+  } catch (err) {
+    if (!(err instanceof ApiClientError) || err.code !== 'TRANSACTION_NOT_FOUND') throw err;
+  }
+
+  try {
+    const e = await getException(id);
+    return {
+      id,
+      kind: 'exception',
+      href: `/exceptions/${id}`,
+      label: CATEGORY_LABEL[e.category] ?? e.category,
+      detail: e.primaryRecord.amountDisplay,
+    };
+  } catch (err) {
+    if (!(err instanceof ApiClientError) || err.code !== 'EXCEPTION_NOT_FOUND') throw err;
+  }
+
+  // Neither. Shown as unresolved rather than as a dead link — a citation the
+  // gate accepted but nothing can be found for is a finding in its own right.
+  return { id, kind: 'unknown', href: null, label: id.slice(0, 8), detail: null };
+}

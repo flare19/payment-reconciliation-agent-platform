@@ -3,6 +3,7 @@ import { Chip } from '@/components/ui/Chip';
 import { at, count } from '@/lib/format';
 import { hrefWith } from '@/lib/run-context';
 import { VERDICT_LABEL, label } from '@/lib/taxonomy';
+import type { ResolvedCitation } from '@/lib/api-client';
 import type { InvestigationDetail } from '@/types/api';
 import styles from './AnalystPanel.module.css';
 
@@ -34,7 +35,17 @@ import styles from './AnalystPanel.module.css';
  * an audience.
  */
 export function AnalystPanel(
-  { investigation, runQ }: { investigation: InvestigationDetail; runQ: string | undefined },
+  { investigation, runQ, citations }: {
+    investigation: InvestigationDetail;
+    runQ: string | undefined;
+    /**
+     * Resolved server-side, because a citation id can be a TRANSACTION or an
+     * EXCEPTION — the gate accepts any id that appeared in a tool result, and
+     * different tools yield different kinds. Linking them all at `/records/`
+     * sent a third of them to a not-found page.
+     */
+    citations: ResolvedCitation[];
+  },
 ) {
   const inv = investigation;
 
@@ -171,22 +182,31 @@ export function AnalystPanel(
         </ol>
       </section>
 
-      {inv.citations.length > 0 && (
+      {citations.length > 0 && (
         <section className={styles.citations} aria-label="Citations">
           <h4 className="label">Citations</h4>
           <p className={styles.citationNote}>
-            Each links to the record it refers to. A reader must be able to click through and
-            check.
+            Every id the agent cited had to appear in a tool result it actually received — that
+            is what the grounding gate checks. Each one links to the record or exception it names,
+            so a reader can go and check the claim rather than take it.
           </p>
           <ul className={styles.chips}>
-            {inv.citations.map((id) => (
-              <li key={id}>
-                <Link
-                  href={hrefWith(`/records/${id}`, { run: runQ })}
-                  className={styles.citation}
-                >
-                  <span className="num" translate="no">{id.slice(0, 8)}</span>
-                </Link>
+            {citations.map((c) => (
+              <li key={c.id}>
+                {c.href === null ? (
+                  <span className={`${styles.citation} ${styles.citationDead}`}>
+                    <span className={styles.citationKind}>unresolved</span>
+                    <span className="num" translate="no">{c.label}</span>
+                  </span>
+                ) : (
+                  <Link href={hrefWith(c.href, { run: runQ })} className={styles.citation}>
+                    <span className={styles.citationKind}>
+                      {c.kind === 'transaction' ? 'record' : 'exception'}
+                    </span>
+                    <span className={styles.citationLabel} translate="no">{c.label}</span>
+                    {c.detail && <span className={styles.citationDetail}>{c.detail}</span>}
+                  </Link>
+                )}
               </li>
             ))}
           </ul>

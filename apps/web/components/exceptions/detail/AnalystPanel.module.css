@@ -186,3 +186,26 @@
 /* Absent, not zero — the same rule the headline row applies to an unmeasured
    accuracy figure. */
 .unmeasured { font-style: italic; color: var(--ink-4); }
+
+/* A citation is a claim you can check, so it says what it points at. */
+.citationKind {
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+.citation:hover .citationKind { color: inherit; opacity: 0.75; }
+
+.citationLabel { font-family: var(--font-mono), ui-monospace, monospace; }
+.citationDetail { font-size: var(--t-micro); opacity: 0.8; }
+
+.citation { display: inline-flex; align-items: baseline; gap: var(--s2); }
+
+.citationDead {
+  color: var(--ink-4);
+  font-style: italic;
+  cursor: not-allowed;
+  background: transparent;
+  border-style: dashed;
+}

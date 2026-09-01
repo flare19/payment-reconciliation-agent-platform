@@ -10,7 +10,7 @@ import { Chip, SeverityChip, ActorChip } from '@/components/ui/Chip';
 import { Section } from '@/components/ui/Section';
 import {
   ApiClientError, getException, getInvestigation, getInvestigationsForException,
-  getTransactionAudit,
+  getTransactionAudit, resolveCitation,
 } from '@/lib/api-client';
 import { at, count } from '@/lib/format';
 import { hrefWith, one } from '@/lib/run-context';
@@ -74,6 +74,12 @@ export default async function ExceptionDetailPage(
   const summaries = await getInvestigationsForException(runId, exceptionId);
   const first = summaries[0];
   const investigation = first ? await getInvestigation(first.investigationId) : null;
+
+  // Resolved here, once per distinct id, so the panel never has to guess what
+  // kind of thing a citation points at.
+  const citations = investigation
+    ? await Promise.all([...new Set(investigation.citations)].map(resolveCitation))
+    : [];
 
   const auditTrail = await getTransactionAudit(exception.primaryRecord.transactionId)
     .catch(() => null);
@@ -246,7 +252,7 @@ export default async function ExceptionDetailPage(
         }
       >
         {investigation
-          ? <AnalystPanel investigation={investigation} runQ={runQ} />
+          ? <AnalystPanel investigation={investigation} runQ={runQ} citations={citations} />
           : <AskAnalyst exceptionId={exception.exceptionId} />}
       </Section>
 
