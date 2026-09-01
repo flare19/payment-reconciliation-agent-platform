@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { ApiClientError, investigateException } from '@/lib/api-client';
 import styles from './AskAnalyst.module.css';
 
@@ -34,14 +34,6 @@ export function AskAnalyst({ exceptionId }: { exceptionId: string }) {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const pollRef = useRef<number | null>(null);
-
-  // Leaving the page stops the polling. Without this the interval outlives the
-  // component and keeps refreshing a route the reader has already left.
-  useEffect(() => () => {
-    if (pollRef.current !== null) window.clearInterval(pollRef.current);
-  }, []);
-
   async function ask() {
     setBusy(true);
     setError(null);
@@ -54,26 +46,12 @@ export function AskAnalyst({ exceptionId }: { exceptionId: string }) {
         return;
       }
 
-      setStatus('Investigating… this takes up to a minute. The page updates itself.');
-      // Endpoint 25 is 202-then-poll. Refreshing re-renders the panel from the
-      // database, so the running → concluded transition arrives on its own.
-      //
-      // THE INTERVAL IS CLEARED FROM ONE PLACE. The first version armed a
-      // `setInterval` and a separate `setTimeout` to cancel it, which left the
-      // interval alive on unmount — navigate away mid-investigation and it kept
-      // refreshing a page nobody was looking at. `agent-design.md` §8 bounds an
-      // investigation at 60 s; 90 s of polling covers that with room, and then
-      // stops rather than running forever.
-      const started = Date.now();
-      const poll = window.setInterval(() => {
-        if (Date.now() - started > 90_000) {
-          window.clearInterval(poll);
-          setStatus('Still running after 90 seconds. Reload to see where it got to.');
-          return;
-        }
-        router.refresh();
-      }, 3000);
-      pollRef.current = poll;
+      setStatus('Investigating… the panel below takes over from here.');
+      // ONE refresh, then hand off. The next render replaces this component
+      // with the running panel, which mounts its own poller — a poller owned by
+      // the component that STARTS the work is unmounted by the first change it
+      // successfully detects, which is how the previous version stalled.
+      router.refresh();
     } catch (err) {
       if (err instanceof ApiClientError && err.code === 'INVESTIGATION_IN_PROGRESS') {
         setStatus('Someone is already investigating this one. Refreshing when it lands.');

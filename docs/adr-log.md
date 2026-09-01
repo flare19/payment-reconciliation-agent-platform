@@ -1101,3 +1101,21 @@ The chips also stopped showing eight hex characters. `record · gbBjF2pd5DHVpJSK
 **2 · The 404 page still said the site was half-built.** Written during U17, when the dashboard genuinely was the only screen, it read: *"the exception list, exception detail, review queue, matches browser, aliases and audit screens are still being built."* U18 built all six and nobody returned to that file. A reader who followed a broken citation was told the exception detail screen did not exist — while looking at it in the previous tab.
 
 > **A STALE EXPLANATION IS WORSE THAN NO EXPLANATION.** "No explanation" leaves someone to investigate; a confident wrong one sends them away to wait for a feature that shipped days ago. It cost real confusion here, and it is the same failure shape as the error boundary blaming the API for a render bug (ADR-110) — **a surface that is certain about a cause it does not know.** The page now states only what it can: the id is not in the database, ids are per-run, here are three places to go.
+
+### ADR-116 · A poller belongs to the state it watches, must be cheaper than the page, and must not need JavaScript to be escapable
+
+**Three defects in one control, each one caused by the fix for the previous.**
+
+**1 · The poller was owned by the component that started the work.** `AskAnalyst` fired the request and then set an interval to watch for the result. Three seconds later its own first refresh made the investigation row exist, the page swapped `<AskAnalyst>` for `<AnalystPanel>`, `AskAnalyst` unmounted, and the unmount cleanup added in Phase 3 to stop the interval leaking stopped the only thing driving the page.
+
+> **A watcher owned by the action is guaranteed to be destroyed by the first change it successfully detects.** The Phase 3 fix was correct in isolation — an interval really must not outlive its component — and choosing the wrong owner turned it into a stall. The poller is now mounted by the *running state*, so it lives exactly as long as the thing it is watching.
+
+**2 · Then it rate-limited itself.** The poller called `router.refresh()`, which re-renders the whole exception detail page — and that page costs roughly seven API reads. Every three seconds is ~140 requests/minute against ADR-096's 120/minute read ceiling. Every refresh 500'd, so the page still never updated, now for a completely different reason. It polls `GET /api/investigations/:id` instead — **one** request — and spends a full refresh only at the single moment the status changes.
+
+The same pass removed a redundant read: endpoint 26 already returns full investigation objects, so re-fetching the same row through endpoint 27 was a second request buying nothing.
+
+> **THE RATE LIMITER IS SHARED, AND THAT IS WORTH KNOWING BEFORE THE DEMO.** Page renders are server-side, so the API sees the Next server's IP, not the viewer's. `120/min per IP` therefore isolates nothing between browsers: several judges on the deployed site draw from **one bucket**. This is the inverse of `TRUST_PROXY_HOPS` (ADR-096) — there the risk was everyone sharing the edge's IP; here it is everyone sharing the renderer's.
+
+**3 · And the escape hatch needed the thing that might be broken.** Both the give-up state and the live state offer a plain `<a>` to the page's own URL beside the refresh button. If the automatic check ever fails *because* client JavaScript is not running — a chunk that failed to load, a hydration error, an extension — then a button wired to `router.refresh()` is no fallback at all: it needs exactly what is broken. A link is a full page load and works when nothing else does.
+
+**It gives up out loud after 90 seconds**, against `agent-design.md` §8's 60-second bound. Silent polling that has quietly died is indistinguishable from work still in progress, and a reader watching a spinner cannot tell which they are looking at.

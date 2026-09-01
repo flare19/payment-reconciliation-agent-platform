@@ -9,7 +9,7 @@ import { SearchClaim } from '@/components/exceptions/detail/SearchClaim';
 import { Chip, SeverityChip, ActorChip } from '@/components/ui/Chip';
 import { Section } from '@/components/ui/Section';
 import {
-  ApiClientError, getException, getInvestigation, getInvestigationsForException,
+  ApiClientError, getException, getInvestigationsForException,
   getTransactionAudit, resolveCitation,
 } from '@/lib/api-client';
 import { at, count } from '@/lib/format';
@@ -72,8 +72,11 @@ export default async function ExceptionDetailPage(
   // Persisted only — nothing on this page spends money. A detail view that
   // re-runs the agent on load empties a prepaid key in front of an audience.
   const summaries = await getInvestigationsForException(runId, exceptionId);
-  const first = summaries[0];
-  const investigation = first ? await getInvestigation(first.investigationId) : null;
+  // Endpoint 26 already returns FULL investigation objects, reasoning chain
+  // included, so re-fetching the same row through endpoint 27 was a second
+  // request buying nothing — and every saved request is headroom against the
+  // read rate limit this page was quietly exhausting.
+  const investigation = summaries[0] ?? null;
 
   // Resolved here, once per distinct id, so the panel never has to guess what
   // kind of thing a citation points at.

@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { Chip } from '@/components/ui/Chip';
 import { at, count } from '@/lib/format';
 import { hrefWith } from '@/lib/run-context';
+import { InvestigationPoller } from './InvestigationPoller';
 import { VERDICT_LABEL, label } from '@/lib/taxonomy';
 import type { ResolvedCitation } from '@/lib/api-client';
 import type { InvestigationDetail } from '@/types/api';
@@ -74,6 +75,13 @@ export function AnalystPanel(
         <p className={styles.runningMeta} translate="no">
           {inv.model} · started {at(inv.startedAt)}
         </p>
+        {/* Mounted BY the running state, so it cannot be unmounted by the first
+            transition it detects — which is exactly how the previous version
+            killed itself. */}
+        <InvestigationPoller
+          investigationId={inv.investigationId}
+          exceptionId={inv.exceptionId}
+        />
       </div>
     );
   }

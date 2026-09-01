@@ -7,6 +7,32 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
 ---
 
+## Day 16 (2026-09-02), latest — the auto-refresh never fired, twice, for two different reasons
+
+Reported: an investigation finished but the page sat on "Investigating now" until it was reloaded by hand.
+
+**Cause one: the poller was owned by the wrong component.** `AskAnalyst` started the investigation and then set an interval to watch for the result. Its own first refresh, three seconds later, made the investigation row exist — so the page swapped `<AskAnalyst>` for `<AnalystPanel>`, `AskAnalyst` unmounted, and **the unmount cleanup I added in Phase 3 to stop the interval leaking killed the only thing driving the page.**
+
+> **A WATCHER OWNED BY THE ACTION IS GUARANTEED TO BE DESTROYED BY THE FIRST CHANGE IT SUCCESSFULLY DETECTS.** The Phase 3 fix was right in isolation — an interval must not outlive its component. Picking the wrong owner turned a correct fix into a stall. The poller now belongs to the running state, so it lives exactly as long as the thing it watches.
+
+**Cause two, found in the browser console while testing cause one: it rate-limited itself.** `router.refresh()` re-renders the whole detail page, which costs about seven API reads. Every three seconds is ~140 requests/minute against a 120/minute ceiling:
+
+```
+Rate limit reached for read requests (120 per 60s). Retry in 38s.
+```
+
+Every refresh 500'd — so even with the ownership fixed the page would still never have updated, for an entirely different reason. It now polls one endpoint (`GET /api/investigations/:id`) and spends a full refresh only at the moment the status actually changes. Also dropped a redundant read: endpoint 26 already returns full investigation objects, so re-fetching the same row via endpoint 27 bought nothing.
+
+**And the escape hatch needed the thing that might be broken.** The give-up banner offered a button wired to `router.refresh()`. If the automatic check ever fails *because* client JavaScript is not running, a button that needs JavaScript is no fallback. Both states now carry a plain `<a>` to the page's own URL — a full page load, which works when nothing else does.
+
+> **A CONSEQUENCE FOR THE DEPLOYED DEMO.** Page renders are server-side, so the API sees the Next server's IP rather than the viewer's. `120/min per IP` isolates nothing between browsers: several judges on the live site draw from **one bucket**. That is the inverse of the `TRUST_PROXY_HOPS` risk in ADR-096 — there, everyone shared the edge's IP; here, everyone shares the renderer's.
+
+### What is NOT verified, and why
+
+**The auto-update was never observed working end to end.** The browser tooling degraded through this session — `javascript_tool` evaluating against stale documents, then the pane hanging and timing out on scroll — and the test environment was further polluted by deleting `.next` under a browser holding the old chunk URLs, which produces exactly the symptom of "client JavaScript not running". The server-rendered markup, the request-count reduction and the no-JS fallback are all verified; **the ticking counter and the automatic transition are not.** That is the honest state and it is why the fallback link exists.
+
+---
+
 ## Day 16 (2026-09-02), latest — a third of the Analyst's citations led nowhere
 
 Reported from a click-through: some Analyst citations landed on the 404 page.
