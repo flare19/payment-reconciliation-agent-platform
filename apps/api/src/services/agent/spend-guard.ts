@@ -36,6 +36,14 @@ export interface SpendGuardOptions {
   cost: CostModel | null;
   /** Worst-case output tokens for one turn — the loop's `maxOutputTokens`. */
   maxOutputTokensPerTurn: number;
+  /**
+   * Spend that happened BEFORE this guard existed (see #61).
+   *
+   * The per-run guard starts at zero because a run is one process. The public
+   * endpoint does not: each request is its own process-lifetime, so its guard is
+   * seeded from `agentSpendUsdSince` and enforces a window rather than a run.
+   */
+  alreadySpentUsd?: number;
 }
 
 export interface SpendGuard {
@@ -53,9 +61,10 @@ export function createSpendGuard(opts: SpendGuardOptions): SpendGuard {
   // investigation's own usage arrives on `usageSoFar`, so adding both is the
   // true running total and neither is double-counted.
   const settled: AgentUsage = { tokensIn: 0, tokensOut: 0 };
+  const carried = opts.alreadySpentUsd ?? 0;
 
   const spentUsd = (): number =>
-    cost === null ? 0 : usdFor(settled, cost);
+    carried + (cost === null ? 0 : usdFor(settled, cost));
 
   return {
     spentUsd,
@@ -73,7 +82,7 @@ export function createSpendGuard(opts: SpendGuardOptions): SpendGuard {
       // is that this guard cannot help — which the caller is told at startup.
       if (cost === null) return null;
 
-      const spent = usdFor(
+      const spent = carried + usdFor(
         { tokensIn: settled.tokensIn + usageSoFar.tokensIn,
           tokensOut: settled.tokensOut + usageSoFar.tokensOut },
         cost);

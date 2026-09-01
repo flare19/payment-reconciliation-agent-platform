@@ -91,6 +91,15 @@ export interface Env {
   agentMaxInvestigationsPerRun: number;
   agentMaxCostUsdPerRun: number;
   /**
+   * The DEPLOYMENT-wide ceiling for the public investigate endpoint (#61).
+   *
+   * A per-RUN cap cannot bound an unauthenticated surface: `POST /api/runs`
+   * mints a fresh run on demand, so "per run" is a ceiling the caller controls.
+   * This one is per WALL-CLOCK HOUR and is the only bound an anonymous visitor
+   * cannot reset.
+   */
+  agentMaxCostUsdPerHour: number;
+  /**
    * The bound that actually binds on a free tier (ADR-080).
    *
    * `agentMaxCostUsdPerRun` protects a credit card. On a free-tier key there is
@@ -165,6 +174,7 @@ export function loadEnv(): Env {
     agentEnabled: bool('AGENT_ENABLED', true),
     agentMaxInvestigationsPerRun: int('AGENT_MAX_INVESTIGATIONS_PER_RUN', AGENT_DEFAULTS.maxInvestigationsPerRun),
     agentMaxCostUsdPerRun: num('AGENT_MAX_COST_USD_PER_RUN', 1.0),
+    agentMaxCostUsdPerHour: num('AGENT_MAX_COST_USD_PER_HOUR', 2.0),
     agentMaxLlmRequestsPerRun: int('AGENT_MAX_LLM_REQUESTS_PER_RUN', AGENT_DEFAULTS.maxLlmRequestsPerRun),
     agentMaxQueueTriagesPerRun: int('AGENT_MAX_QUEUE_TRIAGES_PER_RUN', AGENT_DEFAULTS.maxQueueTriagesPerRun),
     agentQaEnabled: bool('AGENT_QA_ENABLED', true),

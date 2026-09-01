@@ -154,7 +154,7 @@ export interface PhaseAResult {
  * a description of the run; sharing tool calls would be the laundering the
  * per-investigation rule exists to prevent.
  */
-async function buildGateContext(
+export async function buildGateContext(
   runId: string,
 ): Promise<Omit<GateContext, 'investigationId' | 'toolCalls'>> {
   const [records, aliases, matchedIds] = await Promise.all([

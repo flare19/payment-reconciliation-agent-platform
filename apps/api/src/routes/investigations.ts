@@ -27,12 +27,11 @@ import * as excRepo from '../repositories/exceptions.js';
 import * as runsRepo from '../repositories/runs.js';
 import { handler, found, pageParams, pathParam, requireString } from './helpers.js';
 import { investigationDto, questionDto, paginate } from './serialize.js';
-import { createAgentClient } from '../services/llm-provider.js';
+import { createAgentClient, costModelFor } from '../services/llm-provider.js';
+import { buildGateContext } from '../services/agent/phase-a.js';
+import { createSpendGuard } from '../services/agent/spend-guard.js';
 import { investigateOne } from '../services/agent/phase-a.js';
 import { isEligibleCategory } from '../services/agent/triage.js';
-import * as txnRepo from '../repositories/transactions.js';
-import * as matchRepo from '../repositories/matches.js';
-import * as aliasRepo from '../repositories/aliases.js';
 import type { RunConfig } from '../types/engine.js';
 
 export function investigationsRouter(env: Env): Router {
@@ -86,33 +85,57 @@ export function investigationsRouter(env: Env): Router {
         + 'MISSING_IN_LEDGER, MISSING_IN_GATEWAY, AMOUNT_MISMATCH.');
     }
 
-    // The A3 evidence base. Assembled per request here rather than cached, so a
+    // ── THE SPEND CEILING, ENFORCED ON THE PATH THAT ACTUALLY REACHES THE
+    //    MODEL (#61) ──
+    // This endpoint is the PRODUCT path: on-demand, one exception, driven by a
+    // human clicking. `runPhaseA` -- which carries the request budget and, since
+    // ADR-094, the cost cap -- is the MEASUREMENT harness and is not reachable
+    // from HTTP at all. So until now the bounded path and the exposed path were
+    // inverted, on an unauthenticated URL against a prepaid key with auto-reload
+    // off.
+    //
+    // The window is trailing and DERIVED from `cost_usd` rows already written,
+    // so it survives a restart. A per-run cap cannot bound this: `POST /api/runs`
+    // mints a fresh run with a fresh exception set on demand, so "per run" is a
+    // ceiling the caller controls.
+    const cost = costModelFor(env);
+    const windowStart = new Date(Date.now() - 60 * 60 * 1000);
+    const spentThisHour = await invRepo.agentSpendUsdSince(windowStart);
+    const hourlyRemaining = env.agentMaxCostUsdPerHour - spentThisHour;
+    if (cost !== null && hourlyRemaining <= 0) {
+      throw new ApiError(429, 'AGENT_QUOTA_EXCEEDED',
+        `The Analyst has spent $${spentThisHour.toFixed(2)} in the last hour, at or above the `
+        + `$${env.agentMaxCostUsdPerHour.toFixed(2)} ceiling. It will accept investigations `
+        + 'again as older spend leaves the window.');
+    }
+
+    // The A3 evidence base. Assembled per request rather than cached, so a
     // record matched since the last investigation cannot be proposed again.
-    const [records, matchedIds, aliases] = await Promise.all([
-      txnRepo.listTransactions(exception.runId),
-      matchRepo.listMatchedTransactionIds(exception.runId),
-      aliasRepo.listActiveAliases(),
-    ]);
-    const matched = new Set(matchedIds);
+    // `buildGateContext` is SHARED with the phase (#61 criterion 5): this route
+    // used to rebuild it inline, which duplicated both #56's `alreadyMatched`
+    // rule and #58's alias-key defect and would have needed fixing twice.
+    const gateContext = await buildGateContext(exception.runId);
 
     // Deliberately NOT awaited: an investigation is bounded at 60 s and the
     // contract is 202-then-poll (endpoint 27), the same protocol a run uses.
     void investigateOne(exception.runId, id, {
       client,
       config: run.configSnapshot as RunConfig,
-      // No cost model on a free-tier key: NULL, never 0. A zero cost reads as a
-      // measured figure, and this build has not measured one (ADR-080).
-      cost: null,
+      // The REAL rate when billed (ADR-093); NULL on a free-tier key, never 0.
+      // A zero cost reads as a measured figure and this build has not measured
+      // one (ADR-080).
+      cost,
       promptVersion: env.agentPromptVersion,
-    }, {
-      runId: exception.runId,
-      records: new Map(records.map((t) => [t.id, {
-        runId: t.runId, sourceSystem: t.sourceSystem, direction: t.direction,
-        alreadyMatched: matched.has(t.id),
-      }])),
-      activeAliases: new Map(
-        aliases.map((a) => [`${a.aliasType}::${a.normalizedValue}`, a.canonicalValue])),
-    }).catch((err: unknown) => {
+      // Bounded by whichever is TIGHTER: what is left in the hour, or the
+      // per-investigation ceiling. Seeded with the hour's spend so far, so the
+      // guard enforces the window rather than restarting at zero per request --
+      // which is the whole defect.
+      spendGuard: createSpendGuard({
+        maxUsd: Math.min(hourlyRemaining, env.agentMaxCostUsdPerRun),
+        cost,
+        maxOutputTokensPerTurn: 4096,
+      }),
+    }, gateContext).catch((err: unknown) => {
       console.error('[api] investigation crashed outside its own handling', id, err);
     });
 

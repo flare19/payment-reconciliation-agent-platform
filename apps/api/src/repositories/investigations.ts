@@ -394,3 +394,36 @@ export async function countRecentQuestions(
   );
   return rows[0]!.count;
 }
+
+/**
+ * Agent spend in a trailing window, in USD (see #61).
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * DERIVED, NOT A NEW LEDGER TABLE.
+ *
+ * `cost_usd` is already written on every concluded investigation and
+ * corroboration, so the spend ledger the issue asks for already exists — it just
+ * had no reader. Summing it is persistent by construction: it survives a process
+ * restart and a redeploy, which an in-memory counter does not, and on a
+ * hard-capped prepaid key a counter that forgets on restart is a counter an
+ * attacker resets by making the process crash.
+ *
+ * Rows with a NULL `cost_usd` (the free tier, or a model with no published rate)
+ * contribute ZERO rather than being guessed at. That understates spend on a
+ * mixed-provider window, which is the safe direction only because a NULL there
+ * means nothing was billed.
+ * ══════════════════════════════════════════════════════════════════════════════
+ */
+export async function agentSpendUsdSince(
+  since: Date, client?: TxClient,
+): Promise<number> {
+  const { rows } = await (client ?? getPool()).query<{ usd: string }>(
+    `SELECT COALESCE(
+        (SELECT sum(cost_usd) FROM agent_investigations WHERE started_at >= $1), 0)
+      + COALESCE(
+        (SELECT sum(cost_usd) FROM agent_corroborations  WHERE started_at >= $1), 0)
+      AS usd`,
+    [since],
+  );
+  return Number(rows[0]?.usd ?? 0);
+}
