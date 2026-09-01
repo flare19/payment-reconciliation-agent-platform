@@ -21,7 +21,7 @@
 
 import { Router } from 'express';
 import { ApiError } from '../app.js';
-import type { Env } from '../config/env.js';
+import { llmConfigured, type Env } from '../config/env.js';
 import * as invRepo from '../repositories/investigations.js';
 import * as excRepo from '../repositories/exceptions.js';
 import * as runsRepo from '../repositories/runs.js';
@@ -182,7 +182,10 @@ export function investigationsRouter(env: Env): Router {
     found(await runsRepo.findRun(runId), 'RUN_NOT_FOUND', `No run exists with id ${runId}`);
     requireString(req.body ?? {}, 'question');
 
-    if (!env.agentQaEnabled || env.geminiApiKey === null) {
+    // Provider-aware, for the same reason health.ts is: testing `geminiApiKey`
+    // here reported the Q&A loop unavailable on an Anthropic deploy that had a
+    // key (ADR-093 — one switch, both surfaces).
+    if (!env.agentQaEnabled || !llmConfigured(env)) {
       throw new ApiError(503, 'AGENT_DISABLED',
         'Q&A is disabled: set AGENT_QA_ENABLED=true and provide ANTHROPIC_API_KEY.');
     }
