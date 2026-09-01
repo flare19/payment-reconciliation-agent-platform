@@ -319,6 +319,8 @@ match_rate_pct       = 100 × matched_records / reconcilable_records
 
 `pending_review` and `human_rejected` matches contribute to neither numerator. The API exposes `pendingReviewCount` alongside, and the UI shows it adjacent to the match rate rather than in a separate panel.
 
+This is also what `api-contract.md` §3's `countsTowardEngineMatchRate` wire field must compute — `tier !== "manual" && (status === "auto_confirmed" || status === "human_confirmed")` — so a browse list summed over that field and `matched_records` above agree on the same run (ADR-088).
+
 ---
 
 ## 8. S10 — Net settlement batches (ADR-038)

@@ -114,6 +114,26 @@ export async function concludeCorroboration(
       input.tokensIn, input.tokensOut, input.costUsd]);
 }
 
+/**
+ * The loop threw. Failure is a state, not an absence (#57, mirrors
+ * `investigations.failInvestigation`).
+ *
+ * Without this, a throw between `startCorroboration` and `concludeCorroboration`
+ * leaves the row at `status = 'running'` forever, and `ux_corr_match_active`
+ * (`UNIQUE (match_id) WHERE status <> 'failed'`) then blocks that match from
+ * ever being corroborated again.
+ */
+export async function failCorroboration(
+  corroborationId: string, reason: string, client?: TxClient,
+): Promise<void> {
+  await (client ?? getPool()).query(
+    `UPDATE agent_corroborations
+        SET status = 'failed', finished_at = now(), grounding_failure = $2
+      WHERE id = $1 AND status = 'running'`,
+    [corroborationId, reason],
+  );
+}
+
 /** Newest first, with a TOTAL order so pagination cannot lose a row (ADR-032). */
 export async function listCorroborations(
   runId: string, limit: number, offset: number,

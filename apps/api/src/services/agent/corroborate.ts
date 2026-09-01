@@ -56,8 +56,15 @@ export const CORROBORATION_BUDGET: InvestigationBudget = {
  * PAIR has corroborating evidence has no business running a settlement
  * decomposition. Removing it from the registry is stronger than instructing the
  * model not to reach for it.
+ *
+ * `get_exception` is excluded for the same reason (see #59): a corroboration's
+ * subject is a `pending_review` MATCH, not an exception, and the tool's own
+ * description calls itself "the starting point of every investigation" — a
+ * sentence written for A2 INVESTIGATE that reads as an instruction here. Given
+ * only a match id, it can only ever return `found: false`; removing it from
+ * the registry is stronger than hoping the model does not reach for it first.
  */
-export const CORROBORATION_EXCLUDED_TOOLS = ['rerun_subset_search'] as const;
+export const CORROBORATION_EXCLUDED_TOOLS = ['rerun_subset_search', 'get_exception'] as const;
 
 export function corroborationRegistry(registry: ToolRegistry): ToolRegistry {
   const excluded = new Set<string>(CORROBORATION_EXCLUDED_TOOLS);
@@ -84,8 +91,13 @@ const SYSTEM_PROMPT = [
   '  - a shared reference sitting in the raw payload that normalization dropped',
   '    (get_transaction with includeRawPayload)',
   '  - a competing candidate that scores just as well (search_transactions, then score_pair)',
+  '  - the same reference value appearing elsewhere in this run, exact or near (find_by_anchor)',
   '  - what the engine itself recorded about the decision (get_audit_trail)',
   '  - whether a human already resolved this exact shape before (find_similar_exceptions)',
+  '  - whether a counterparty name already has a confirmed alias (check_alias)',
+  '',
+  'There is no tool that fetches an exception here -- this is a MATCH, not an exception. Start',
+  'with get_transaction on the members already given to you.',
   '',
   'Your verdict is a statement about EVIDENCE, never about the decision:',
   '  CORROBORATED     independent supporting evidence beyond the score, cited.',

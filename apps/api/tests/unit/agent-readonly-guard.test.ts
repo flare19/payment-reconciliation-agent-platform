@@ -66,6 +66,62 @@ async function agentSources(): Promise<{ rel: string; code: string }[]> {
   })));
 }
 
+const REPOSITORIES = join(SRC, 'repositories');
+const DML = /\b(INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|TRUNCATE|DROP\s+TABLE|ALTER\s+TABLE)\b/i;
+
+/**
+ * Extract every `export (async )?function NAME(...) { ...body... }` block by
+ * brace-matching from the opening `{` of the body, so a nested `{`/`}` inside
+ * (an object literal, a destructured type) does not truncate it early.
+ */
+function functionBodies(code: string): { name: string; body: string }[] {
+  const out: { name: string; body: string }[] = [];
+  const sig = /export\s+(?:async\s+)?function\s+(\w+)\s*\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = sig.exec(code)) !== null) {
+    const name = m[1]!;
+    let i = sig.lastIndex;
+    let parenDepth = 1;
+    while (i < code.length && parenDepth > 0) {
+      if (code[i] === '(') parenDepth += 1;
+      else if (code[i] === ')') parenDepth -= 1;
+      i += 1;
+    }
+    const braceStart = code.indexOf('{', i);
+    if (braceStart === -1) continue;
+    let braceDepth = 1;
+    let j = braceStart + 1;
+    while (j < code.length && braceDepth > 0) {
+      if (code[j] === '{') braceDepth += 1;
+      else if (code[j] === '}') braceDepth -= 1;
+      j += 1;
+    }
+    out.push({ name, body: code.slice(braceStart, j) });
+  }
+  return out;
+}
+
+/**
+ * Every repository function anywhere under `repositories/`, engine or agent,
+ * whose own body issues DML directly. This is the CANONICAL set a call site
+ * cannot be a "write" without appearing in — used to check the converse of
+ * rule 2 (#60): not just "no agent module calls a NAMED engine mutator", but
+ * "every mutating call an agent module makes is on the permitted list", which
+ * catches a write added to neither list, as `startCorroboration` /
+ * `concludeCorroboration` were on Day 12.
+ */
+async function mutatingRepoFunctionNames(): Promise<string[]> {
+  const files = (await readdir(REPOSITORIES)).filter((f) => f.endsWith('.ts'));
+  const names = new Set<string>();
+  for (const f of files) {
+    const code = stripComments(await readFile(join(REPOSITORIES, f), 'utf8'));
+    for (const { name, body } of functionBodies(code)) {
+      if (DML.test(body)) names.add(name);
+    }
+  }
+  return [...names];
+}
+
 describe('the agent layer cannot write (ADR-049, ADR-051)', () => {
   test('no module under services/agent contains SQL DML', async () => {
     // Catches the direct route: someone writes a query string in an agent module
@@ -99,7 +155,22 @@ describe('the agent layer cannot write (ADR-049, ADR-051)', () => {
   const PERMITTED_AGENT_WRITES = [
     'startInvestigation', 'concludeInvestigation', 'failInvestigation',
     'recordDisposition', 'recordQuestion', 'appendAuditEntry',
+    'startCorroboration', 'concludeCorroboration', 'failCorroboration',
   ];
+
+  // Names on this list are called from NOWHERE in apps/api/src today -- not
+  // just from phase-a.ts. Listed explicitly so the bidirectional test below
+  // cannot pass by silently ignoring dead code; each is a real gap, not a
+  // false positive of the test.
+  //   - `recordDisposition`, `recordQuestion` — found BY this stricter test
+  //     (#60), not previously flagged anywhere. `recordQuestion` is plausibly
+  //     the Q&A loop's writer (U15, "treat as cut" per CLAUDE.md §11) and
+  //     `recordDisposition` plausibly endpoint 21's, but neither is called by
+  //     any route or agent module. Left as a real, named gap rather than
+  //     wired here — out of scope for #60's acceptance criteria.
+  //   - `failInvestigation`/`failCorroboration` were on this list before #57
+  //     wired them; both are now called from phase-a.ts's catch blocks.
+  const KNOWN_UNUSED_PERMITTED_WRITES = ['recordDisposition', 'recordQuestion'];
 
   test('RULE 2: no agent module writes to an ENGINE table', async () => {
     const offenders: string[] = [];
@@ -142,6 +213,12 @@ describe('the agent layer cannot write (ADR-049, ADR-051)', () => {
   test('Phase A\'s writes are exactly its OWN tables, and it says which', async () => {
     // Not a relaxation of rule 2 — a statement of the narrow exception, so that
     // widening it later is a visible edit to this list rather than a quiet one.
+    //
+    // This only checks ONE direction: that three required writes ARE present
+    // and that no ENGINE mutator is. It does NOT check that every write
+    // phase-a.ts performs is accounted for in PERMITTED_AGENT_WRITES — that is
+    // rule 2b below, added after #60 found the corroboration writes joined on
+    // Day 12 without editing this list.
     const phase = stripComments(await readFile(join(AGENT, 'phase-a.ts'), 'utf8'));
     const used = PERMITTED_AGENT_WRITES.filter(
       (fn) => new RegExp(`\\b(?:\\w+\\.)?${fn}\\s*\\(`).test(phase));
@@ -154,12 +231,70 @@ describe('the agent layer cannot write (ADR-049, ADR-051)', () => {
     }
   });
 
+  /**
+   * RULE 2b — the converse of rule 2 (#60).
+   *
+   * Rule 2 asks "does phase-a.ts call anything on the ENGINE_MUTATORS list".
+   * That list is hand-maintained, so a NEW mutating repository function never
+   * added to either list is invisible to it — which is exactly how
+   * `corrRepo.startCorroboration` / `concludeCorroboration` joined on Day 12
+   * without either list noticing. This asks the other question: of every
+   * repository function that ACTUALLY issues DML (computed from the source,
+   * not hand-maintained), which ones does phase-a.ts call, and is each one on
+   * PERMITTED_AGENT_WRITES? Anything else is an unreviewed write.
+   */
+  test('RULE 2b: every mutating repository call phase-a.ts makes is a PERMITTED agent write',
+    async () => {
+      const phase = stripComments(await readFile(join(AGENT, 'phase-a.ts'), 'utf8'));
+      const mutating = await mutatingRepoFunctionNames();
+      const offenders: string[] = [];
+      for (const fn of mutating) {
+        if ((PERMITTED_AGENT_WRITES as readonly string[]).includes(fn)) continue;
+        if (new RegExp(`\\b(?:\\w+\\.)?${fn}\\s*\\(`).test(phase)) offenders.push(fn);
+      }
+      assert.deepEqual(offenders, [],
+        'phase-a.ts calls a mutating repository function not in PERMITTED_AGENT_WRITES -- '
+        + 'widening the exception must be a visible edit to that list, never a silent one');
+    });
+
+  test('every name in PERMITTED_AGENT_WRITES is used or explicitly marked unused', async () => {
+    // The other half of the ratchet: a name that is neither called nor
+    // documented as dead code reads as coverage that does not exist.
+    const phase = stripComments(await readFile(join(AGENT, 'phase-a.ts'), 'utf8'));
+    const unaccounted = PERMITTED_AGENT_WRITES.filter((fn) => {
+      const called = new RegExp(`\\b(?:\\w+\\.)?${fn}\\s*\\(`).test(phase);
+      return !called && !KNOWN_UNUSED_PERMITTED_WRITES.includes(fn);
+    });
+    assert.deepEqual(unaccounted, [],
+      'a permitted write that phase-a.ts never calls must be listed in '
+      + 'KNOWN_UNUSED_PERMITTED_WRITES with a reason, or removed');
+  });
+
+  test('the RULE 2b guard fires on a synthetic module calling an unlisted mutating write',
+    async () => {
+      // Reproduces exactly the Day 12 shape: a repository call that is neither
+      // an ENGINE_MUTATORS name nor on PERMITTED_AGENT_WRITES.
+      const mutating = await mutatingRepoFunctionNames();
+      assert.ok(mutating.includes('startCorroboration'),
+        'startCorroboration must be detected as mutating for this test to mean anything');
+      const withoutCorroboration = PERMITTED_AGENT_WRITES.filter(
+        (fn) => fn !== 'startCorroboration' && fn !== 'concludeCorroboration');
+      const synthetic = 'await corrRepo.startCorroboration({ runId, matchId, model, promptVersion });';
+      const offenders = mutating.filter(
+        (fn) => !withoutCorroboration.includes(fn)
+          && new RegExp(`\\b(?:\\w+\\.)?${fn}\\s*\\(`).test(synthetic));
+      assert.deepEqual(offenders, ['startCorroboration'],
+        'the guard should flag startCorroboration when it is not on the permitted list');
+    });
+
   test('every repository call in the tool registry passes the read-only client', async () => {
     // A repository function called WITHOUT the client falls back to `getPool()`
     // internally and leaves the transaction — the same escape as above, one layer
     // down and much easier to write by accident.
     const code = stripComments(await readFile(join(AGENT, 'tool-registry.ts'), 'utf8'));
-    const calls = [...code.matchAll(/\b(?:txnRepo|excRepo|auditRepo|aliasRepo|runsRepo)\.(\w+)\(([^;]*?)\)(?=[,;)\s])/gs)];
+    const calls = [...code.matchAll(
+      /\b(?:txnRepo|excRepo|auditRepo|aliasRepo|runsRepo|corrRepo)\.(\w+)\(([^;]*?)\)(?=[,;)\s])/gs,
+    )];
     assert.ok(calls.length >= 8, `expected repository calls to inspect, found ${calls.length}`);
     const offenders: string[] = [];
     for (const [whole, fn] of calls) {

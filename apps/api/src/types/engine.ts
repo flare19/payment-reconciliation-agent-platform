@@ -177,7 +177,8 @@ export interface RunConfig {
  * amount+date+counterparty = 0.70, below the 0.85 auto-confirm threshold.
  * A no-anchor pair can therefore never auto-confirm, at any amount, on any
  * date, with any name similarity. Changing these weights can silently break
- * that guarantee — `tests/unit/score-ceilings.test.ts` asserts it.
+ * that guarantee — `tests/unit/scoring.test.ts`'s "the ADR-030 ceiling
+ * guarantee" describe block asserts it.
  */
 export interface ScoreWeights {
   anchor: number;

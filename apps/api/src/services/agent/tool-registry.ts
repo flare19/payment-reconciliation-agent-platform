@@ -51,6 +51,7 @@ import type { NormalizedTransaction, RunConfig } from '../../types/engine.js';
 
 import { damerauLevenshteinWithin, scorePair } from '../matching/scoring.js';
 import { ANCHOR_PREFIX_LEN } from '../matching/blocking.js';
+import { normalizeAliasValue } from './grounding-gate.js';
 import { decomposeBatch } from '../matching/batch-decomposition.js';
 
 import * as txnRepo from '../../repositories/transactions.js';
@@ -684,7 +685,10 @@ function buildTools(ctx: ToolContext): AgentTool[] {
       readOnly: true,
       async execute(args: unknown) {
         const { value } = args as { value: string };
-        const normalized = value.trim().toUpperCase();
+        // Shared with the A3 gate's contradiction check (#58) — the two must
+        // agree on what "the same value" means, or a proposal this tool would
+        // flag can pass the gate unflagged.
+        const normalized = normalizeAliasValue(value);
         const { aliases, wouldAlsoResolve } = await inReadOnlyTx(async (c) => ({
           aliases: await aliasRepo.listActiveAliases(c),
           wouldAlsoResolve: await txnRepo.countRecordsWithCounterparty(ctx.runId, normalized, c),

@@ -37,7 +37,7 @@ export function amountToleranceBand(amountPaise: Paise, config: RunConfig): Pais
 }
 
 /**
- * The expected net band when the gateway did not state a fee (schema.md §5.3.2).
+ * The expected net band when the gateway did not state a fee (schema.md §5.3).
  * `expected_net ∈ [gross × (1 − feeMax), gross × (1 − feeMin)]`.
  */
 export function expectedNetBand(
@@ -109,7 +109,7 @@ export function comparisonBasisFor(
 
   // bank ↔ ledger: no arithmetic relates a fee-net bank credit to a sale amount
   // including sale GST without the gateway row in between. Scoring them against
-  // each other would be the same category error §5.3.3 forbids for gateway net
+  // each other would be the same category error §5.3 forbids for gateway net
   // vs ledger net, so the amount component is marked UNAVAILABLE rather than 0.
   return { kind, basis: 'anchor_only' };
 }
@@ -122,7 +122,7 @@ export interface AmountEvaluation {
   basis: ComparisonBasis;
   /** True for bank↔ledger: not a failure to agree, an absence of a comparable quantity. */
   unavailable: boolean;
-  /** True when the engine inferred a value the source never stated (ADR-037 / §5.3.2). */
+  /** True when the engine inferred a value the source never stated (ADR-037 / §5.3). */
   inferred: boolean;
 }
 

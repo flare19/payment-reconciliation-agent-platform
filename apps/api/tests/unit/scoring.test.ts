@@ -263,6 +263,66 @@ describe('scorePair — the ADR-030 ceiling guarantee', () => {
   });
 });
 
+describe('schema.md §5.4: an ANCHORLESS pair reaches review only on a SAME-DAY match (#48)', () => {
+  // The test two blocks up ('a NO-ANCHOR pair can never auto-confirm') already
+  // pins the same-day case at 0.70 (>= the 0.65 review floor). What it does NOT
+  // show is that this is the ONLY date at which an anchorless pair clears the
+  // floor -- a settlement still comfortably inside its own §5.2 window scores
+  // BELOW review, because the date component zeroes at the window's own edge.
+
+  test('gateway<->bank (card, window [-1,+3]): T+3 is a normal settlement and still '
+    + 'scores below review', () => {
+    const g = txn({
+      sourceSystem: 'gateway', amountPaise: 100_000, netAmountPaise: 100_000,
+      txnDate: '2026-08-14', counterpartyNorm: 'ACME RETAIL', referenceIds: {}, method: 'card',
+    });
+    const onBoundary = scorePair(g, txn({
+      sourceSystem: 'bank', amountPaise: 100_000, txnDate: '2026-08-17', // gateway date +3
+      counterpartyNorm: 'ACME RETAIL', referenceIds: {},
+    }), config);
+    assert.ok(!onBoundary.discarded);
+    assert.equal(onBoundary.breakdown.date, 0,
+      'the date component is exactly zero at the window edge, same as a month late');
+    assert.ok(onBoundary.score < config.fuzzyReviewThreshold,
+      'a T+3 card settlement is the documented normal case (schema.md §5.2), yet an '
+      + 'anchorless pair at that lag never reaches review');
+  });
+
+  test('gateway<->ledger (window [-1,+1]): the same property holds on the tightest window', () => {
+    const g = txn({
+      sourceSystem: 'gateway', amountPaise: 100_000, txnDate: '2026-08-14',
+      counterpartyNorm: 'ACME RETAIL', referenceIds: {},
+    });
+    const sameDay = scorePair(g, txn({
+      sourceSystem: 'ledger', amountPaise: 100_000, netAmountPaise: 100_000,
+      txnDate: '2026-08-14', counterpartyNorm: 'ACME RETAIL', referenceIds: {},
+    }), config);
+    const onBoundary = scorePair(g, txn({
+      sourceSystem: 'ledger', amountPaise: 100_000, netAmountPaise: 100_000,
+      txnDate: '2026-08-15', counterpartyNorm: 'ACME RETAIL', referenceIds: {}, // +1, the whole window
+    }), config);
+    assert.ok(!sameDay.discarded);
+    assert.ok(!onBoundary.discarded);
+    assert.ok(sameDay.score >= config.fuzzyReviewThreshold, 'same-day still reaches review');
+    assert.ok(onBoundary.score < config.fuzzyReviewThreshold,
+      'one day out -- the entire forward half of this window -- no longer does');
+  });
+
+  test('bank<->ledger reaches review at NO date at all, even same-day (§5.3.1: no comparable amount)', () => {
+    const sameDay = scorePair(
+      txn({ sourceSystem: 'bank', amountPaise: 100_000, txnDate: '2026-08-14',
+        counterpartyNorm: 'ACME RETAIL', referenceIds: {} }),
+      txn({ sourceSystem: 'ledger', amountPaise: 100_000, netAmountPaise: 100_000,
+        txnDate: '2026-08-14', counterpartyNorm: 'ACME RETAIL', referenceIds: {} }),
+      config,
+    );
+    assert.ok(!sameDay.discarded);
+    assert.equal(sameDay.breakdown.amountUnavailable, true);
+    assert.ok(sameDay.score < config.fuzzyReviewThreshold,
+      'unlike the other two pairs, even a same-day anchorless bank<->ledger match cannot reach review');
+  });
+});
+
 describe('scorePair — components and breakdown', () => {
   test('a strong<->weak anchored, exact, same-day pair scores at the ceiling', () => {
     const g = txn({

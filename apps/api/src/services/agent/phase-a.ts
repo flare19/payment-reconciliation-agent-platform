@@ -68,6 +68,23 @@ function details(value: object): Record<string, CanonicalValue> {
   return value as Record<string, CanonicalValue>;
 }
 
+/**
+ * Thrown by `investigateOne`/`corroborateOne` after the row has already been
+ * moved to `status = 'failed'` (#57). Carries the id so `runPhaseA`'s catch can
+ * record the failure against the INVESTIGATION or CORROBORATION itself, not
+ * only the run — the row's own `audit_log` trail should say why it failed, the
+ * same way a concluded one says how it concluded.
+ */
+class AgentWorkFailedError extends Error {
+  constructor(
+    public readonly subjectType: 'investigation' | 'corroboration',
+    public readonly subjectId: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 export interface PhaseADeps {
   client: AgentLlmClient;
   config: RunConfig;
@@ -159,9 +176,7 @@ export async function investigateOne(
   deps: PhaseADeps,
   gateContext: Omit<GateContext, 'investigationId' | 'toolCalls'>,
 ): Promise<{ outcome: InvestigationOutcome; investigationId: string; auditEntries: number }> {
-  const budget = deps.budget ?? AGENT_DEFAULTS.budget;
   const promptVersion = deps.promptVersion ?? 'agent-v1';
-  let auditEntries = 0;
 
   const exception = await excRepo.findException(exceptionId);
   if (exception === null || exception.runId !== runId) {
@@ -170,6 +185,35 @@ export async function investigateOne(
 
   const investigation = await invRepo.startInvestigation({
     runId, exceptionId, model: deps.client.model, promptVersion });
+
+  try {
+    return await investigateOnceOpened(
+      runId, exceptionId, exception, investigation.id, deps, gateContext);
+  } catch (err) {
+    // The row must not be left at `status = 'running'` forever (#57) --
+    // ux_inv_exc_active is a partial unique index on that status, so an
+    // orphaned row permanently blocks this exception from being investigated
+    // again. Failure is a state, not an absence.
+    const reason = err instanceof Error ? err.message : String(err);
+    await invRepo.failInvestigation(investigation.id, reason);
+    throw new AgentWorkFailedError('investigation', investigation.id,
+      `investigation of exception ${exceptionId} failed: ${reason}`);
+  }
+}
+
+/** Everything after the row is opened -- factored out so #57's try/catch wraps it cleanly. */
+async function investigateOnceOpened(
+  runId: string,
+  exceptionId: string,
+  exception: NonNullable<Awaited<ReturnType<typeof excRepo.findException>>>,
+  investigationId: string,
+  deps: PhaseADeps,
+  gateContext: Omit<GateContext, 'investigationId' | 'toolCalls'>,
+): Promise<{ outcome: InvestigationOutcome; investigationId: string; auditEntries: number }> {
+  const budget = deps.budget ?? AGENT_DEFAULTS.budget;
+  const promptVersion = deps.promptVersion ?? 'agent-v1';
+  const investigation = { id: investigationId };
+  let auditEntries = 0;
 
   const append = async (
     entry: Parameters<typeof auditRepo.appendAuditEntry>[0],
@@ -308,7 +352,6 @@ export async function corroborateOne(
   gateContext: Omit<GateContext, 'investigationId' | 'toolCalls'>,
 ): Promise<{ outcome: Awaited<ReturnType<typeof corroborate>>; auditEntries: number }> {
   const promptVersion = deps.promptVersion ?? 'agent-v1';
-  let auditEntries = 0;
 
   const match = await matchRepo.findMatch(matchId);
   if (match === null || match.runId !== runId) {
@@ -320,6 +363,33 @@ export async function corroborateOne(
 
   const row = await corrRepo.startCorroboration({
     runId, matchId, model: deps.client.model, promptVersion });
+
+  try {
+    return await corroborateOnceOpened(runId, matchId, match, members, row.id, deps, gateContext);
+  } catch (err) {
+    // Mirrors investigateOne's #57 fix: a throw here must not leave the row at
+    // status = 'running' -- ux_corr_match_active would then permanently block
+    // this match from ever being corroborated again.
+    const reason = err instanceof Error ? err.message : String(err);
+    await corrRepo.failCorroboration(row.id, reason);
+    throw new AgentWorkFailedError('corroboration', row.id,
+      `corroboration of match ${matchId} failed: ${reason}`);
+  }
+}
+
+/** Everything after the row is opened -- factored out so #57's try/catch wraps it cleanly. */
+async function corroborateOnceOpened(
+  runId: string,
+  matchId: string,
+  match: NonNullable<Awaited<ReturnType<typeof matchRepo.findMatch>>>,
+  members: readonly NonNullable<Awaited<ReturnType<typeof txnRepo.findTransaction>>>[],
+  corroborationId: string,
+  deps: PhaseADeps,
+  gateContext: Omit<GateContext, 'investigationId' | 'toolCalls'>,
+): Promise<{ outcome: Awaited<ReturnType<typeof corroborate>>; auditEntries: number }> {
+  const row = { id: corroborationId };
+  const promptVersion = deps.promptVersion ?? 'agent-v1';
+  let auditEntries = 0;
 
   const append = async (
     entry: Parameters<typeof auditRepo.appendAuditEntry>[0],
@@ -478,11 +548,20 @@ export async function runPhaseA(
       if (!outcome.verdict.groundingPassed) groundingFailures += 1;
       if (outcome.verdict.budgetExhausted) budgetExhaustedCount += 1;
     } catch (err) {
-      // A defect in OUR code, not the model's. Recorded against the run and
-      // stepped over: one exception must not cost the other nineteen.
+      // A defect in OUR code, not the model's. Stepped over: one exception must
+      // not cost the other nineteen. Recorded against the INVESTIGATION when one
+      // was opened (#57 -- its own row already moved to status = 'failed', by
+      // investigateOne's own catch), and against the run only when the failure
+      // happened before a row could exist (e.g. findException itself throwing).
+      // `subjectType: 'investigation'` either way, matching every other audit
+      // entry this file writes for a corroboration too (there is no separate
+      // 'corroboration' subject type in `audit_log`).
+      const subjectId = err instanceof AgentWorkFailedError ? err.subjectId : runId;
       await withTransaction((c) => auditRepo.appendAuditEntry({
         ...blank, ...ANALYST, runId,
-        eventType: 'INVESTIGATION_CONCLUDED', subjectType: 'run', subjectId: runId,
+        eventType: 'INVESTIGATION_CONCLUDED',
+        subjectType: err instanceof AgentWorkFailedError ? 'investigation' : 'run',
+        subjectId,
         decision: 'failed',
         reason: `investigation of exception ${candidate.exceptionId} failed: `
           + `${err instanceof Error ? err.message : String(err)}`,
@@ -510,9 +589,15 @@ export async function runPhaseA(
         (corroborationVerdicts[outcome.verdict.verdict] ?? 0) + 1;
       if (!outcome.verdict.groundingPassed) corroborationGroundingFailures += 1;
     } catch (err) {
+      // Mirrors the investigation catch above (#57): recorded against the
+      // corroboration's own row (subjectType 'investigation', matching this
+      // file's convention) when one was opened, against the run otherwise.
+      const subjectId = err instanceof AgentWorkFailedError ? err.subjectId : runId;
       await withTransaction((c) => auditRepo.appendAuditEntry({
         ...blank, ...ANALYST, runId,
-        eventType: 'INVESTIGATION_CONCLUDED', subjectType: 'run', subjectId: runId,
+        eventType: 'INVESTIGATION_CONCLUDED',
+        subjectType: err instanceof AgentWorkFailedError ? 'investigation' : 'run',
+        subjectId,
         decision: 'failed',
         reason: `corroboration of match ${candidate.matchId} failed: `
           + `${err instanceof Error ? err.message : String(err)}`,

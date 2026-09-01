@@ -364,14 +364,15 @@ The pairing is enforced here, at the contract level, rather than left to UI disc
     "candidatesConsidered": 3,
     "candidates": [
       { "transactionId": "…", "sourceSystem": "bank", "score": 0.61,
-        "scoreBreakdown": { "anchor": 0.30, "amount": 0.00, "date": 0.20, "counterparty": 0.11 },
+        "scoreBreakdown": { "anchor": 0.30, "amount": 0.00, "date": 0.20, "counterparty": 0.11,
+          "total": 0.61, "amountUnavailable": false },
         "rejectedBecause": "amount delta ₹412.00 exceeds band ₹100.00",
         "preview": { "externalId": "SBIN0R52…", "amountDisplay": "₹822.50", "txnDate": "2026-08-16" } }
     ],
     "anchorStrength": "strong",
     "aliasesAttempted": [],
     "windowUsed": { "amountBandPaise": 10000, "dateWindow": [-1, 3] },
-    "comparisonBasis": "gateway.netAmount vs bank.creditAmount",
+    "comparisonBasis": "gateway_net_vs_bank_credit",
     "candidateCapHit": false,
     "severityBasis": { "base": "high", "amountAtRiskPaise": 41200, "escalated": false },
     "searchExhausted": null,
@@ -416,7 +417,7 @@ The pairing is enforced here, at the contract level, rather than left to UI disc
 
 Every `RecordPreview` carries **`sourceRowNumber`** alongside `transactionId` (ADR-073). It is the only join key `data/truth/` can express — the answer key is written before the engine exists and cannot reference engine-assigned UUIDs — so `tools/score` cannot perform `validation-strategy.md` §5's documented join without it. It also lets a reader find the row in their own file, which a UUID does not.
 
-`countsTowardEngineMatchRate` is **server-computed** (`tier !== "manual" && status !== "human_rejected"`), not a stored column, and the frontend must not re-derive it — the same rule as `eligibleForAliasTier` below, for the same reason. This screen is where a viewer forms an impression of how much the engine did, and a browse list that silently counts human fixes as engine matches would overstate exactly the number the whole project exists to state honestly.
+`countsTowardEngineMatchRate` is **server-computed** (`tier !== "manual" && (status === "auto_confirmed" || status === "human_confirmed")`), not a stored column, and the frontend must not re-derive it — the same rule as `eligibleForAliasTier` below, for the same reason. This screen is where a viewer forms an impression of how much the engine did, and a browse list that silently counted `pending_review` proposals or human fixes as engine matches would overstate exactly the number the whole project exists to state honestly. The predicate is governed by `matching-engine.md` §7.4 / ADR-040's `matched_records` definition — the two must never disagree about which statuses count (ADR-088).
 
 `headlineAmount*` exists because a browse table needs one sortable amount per row, and a match may hold three legs with three different amounts. Its derivation is fixed and reported rather than left implicit: **the gateway leg if one exists, else the bank leg, else the ledger leg**, with `headlineAmountSource` naming which was used. For `one_to_many` the non-headline side keeps its per-member amounts and is not summed here — a summed column would look authoritative while hiding whether the legs actually reconcile, which is the drill-down's job.
 
@@ -425,7 +426,8 @@ Every `RecordPreview` carries **`sourceRowNumber`** alongside `transactionId` (A
 ```json
 {
   "matchId": "…", "tier": "fuzzy", "confidence": 0.7420,
-  "scoreBreakdown": { "anchor": 0.20, "amount": 0.35, "date": 0.14, "counterparty": 0.052 },
+  "scoreBreakdown": { "anchor": 0.20, "amount": 0.35, "date": 0.14, "counterparty": 0.052,
+    "total": 0.7420, "amountUnavailable": false },
   "members": [
     { "transactionId": "…", "role": "gateway", "externalId": "pay_QK29…",
       "amountDisplay": "₹1,234.50", "txnDate": "2026-08-14", "counterpartyRaw": "AMZN" },

@@ -10,7 +10,7 @@
  *
  *   `amountDisplay`               one formatter, server-side, so the dashboard
  *                                 and the API can never disagree about a number
- *   `countsTowardEngineMatchRate` `tier !== 'manual' && status !== 'human_rejected'`
+ *   `countsTowardEngineMatchRate` `tier !== 'manual' && (status === 'auto_confirmed' || status === 'human_confirmed')`
  *   `eligibleForAliasTier`        `conflictCount === 0 || confirmationCount >= 2`
  *
  * The last two are rules the frontend must NOT re-derive. Both are places where
@@ -191,10 +191,13 @@ export function matchSummary(
     confidence: m.confidence,
     ruleId: m.ruleId,
     ruleVersion: m.ruleVersion,
-    // SERVER-COMPUTED. A browse list that silently counted human fixes as engine
-    // matches would overstate exactly the number this project exists to state
-    // honestly (ADR-043).
-    countsTowardEngineMatchRate: m.tier !== 'manual' && m.status !== 'human_rejected',
+    // SERVER-COMPUTED, and must agree with matching-engine.md §7.4 / ADR-040's
+    // matched_records definition — only auto_confirmed or human_confirmed counts.
+    // A browse list that silently counted pending_review proposals or human
+    // fixes as engine matches would overstate exactly the number this project
+    // exists to state honestly (ADR-040, ADR-043, ADR-088).
+    countsTowardEngineMatchRate:
+      m.tier !== 'manual' && (m.status === 'auto_confirmed' || m.status === 'human_confirmed'),
     headlineAmountPaise: headline?.paise ?? null,
     headlineAmountDisplay: headline === null ? null : formatPaise(headline.paise),
     headlineAmountSource: headline?.source ?? null,
