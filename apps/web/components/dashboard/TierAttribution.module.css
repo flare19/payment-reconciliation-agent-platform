@@ -1,0 +1,40 @@
+.wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 15rem;
+  gap: var(--s7);
+  align-items: start;
+}
+
+@media (max-width: 68rem) {
+  .wrap { grid-template-columns: minmax(0, 1fr); gap: var(--s5); }
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5);
+  padding: var(--s4) var(--s5);
+  background: var(--surface-sunk);
+  border-radius: 4px;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  min-width: 0;
+}
+
+.statValue {
+  font-size: var(--t-figure-sm);
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.statNote {
+  font-size: var(--t-micro);
+  line-height: 1.5;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}

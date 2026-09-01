@@ -1,0 +1,31 @@
+.claim {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s4) var(--s5);
+  border-radius: 4px;
+  border-left: 2px solid var(--rule-strong);
+}
+
+/* A proof and a timeout must not look alike. */
+.strong { background: var(--verified-bg); border-left-color: var(--verified); }
+.strong .headline { color: var(--verified); }
+
+.weak { background: var(--sev-medium-bg); border-left-color: var(--sev-medium); }
+.weak .headline { color: var(--sev-medium); }
+
+.headline {
+  font-size: var(--t-body);
+  font-weight: 500;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+.headline strong { font-weight: 600; }
+
+.body {
+  max-width: 72ch;
+  font-size: var(--t-meta);
+  line-height: 1.6;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}

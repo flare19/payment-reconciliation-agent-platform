@@ -1,0 +1,21 @@
+/* Four equal columns. `1fr` each, never `auto`: the moment one tile is allowed
+   to size to its content, the match rate gets more room than the false-positive
+   count and the layout starts making an argument the data does not support. */
+.row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+/* Nothing may overflow horizontally at 1024px (ui-spec §9). Two-up is the last
+   layout that keeps the match rate and its false-positive count side by side,
+   which is the pairing that must survive every breakpoint. */
+@media (max-width: 68rem) {
+  .row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.subtle { color: var(--ink-4); }

@@ -10,6 +10,9 @@ out/
 
 .DS_Store
 *.log
+
+# playwright-cli skill workspace (browser automation for frontend iteration)
+.playwright/
 npm-debug.log*
 coverage/
 .vercel/

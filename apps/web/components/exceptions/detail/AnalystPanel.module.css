@@ -1,0 +1,170 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5);
+  padding: var(--s5);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s5);
+  flex-wrap: wrap;
+  padding-bottom: var(--s4);
+  border-bottom: 1px solid var(--rule);
+}
+
+.verdictGroup { display: flex; flex-direction: column; gap: var(--s2); min-width: 0; }
+
+.verdict {
+  font-size: var(--t-figure-sm);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+/* A proposal and a confirmed-unresolvable carry the same weight on purpose. */
+.proposal { color: var(--verified); }
+
+.meta { display: flex; gap: var(--s5); margin: 0; flex-wrap: wrap; }
+.meta > div { display: flex; flex-direction: column; gap: var(--s2); }
+.meta dd { margin: 0; }
+.metaValue { font-size: var(--t-meta); color: var(--ink-2); white-space: nowrap; }
+
+/* ── banners ──────────────────────────────────────────────────────────────── */
+
+.banner {
+  padding: var(--s3) var(--s4);
+  border-left: 2px solid var(--rule-strong);
+  border-radius: 0 3px 3px 0;
+  font-size: var(--t-meta);
+  line-height: 1.6;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+.banner strong { font-weight: 600; }
+
+.bannerBad { background: var(--sev-high-bg); border-left-color: var(--sev-high); }
+.bannerBad strong { color: var(--sev-high); }
+
+.bannerWarn { background: var(--sev-medium-bg); border-left-color: var(--sev-medium); }
+.bannerWarn strong { color: var(--sev-medium); }
+
+/* ── reasoning chain ──────────────────────────────────────────────────────── */
+
+.chain { display: flex; flex-direction: column; gap: var(--s3); }
+
+.steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--s3); }
+
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  background: var(--surface-sunk);
+  border-radius: 4px;
+}
+
+.stepHead { display: flex; align-items: center; gap: var(--s3); }
+
+.stepNo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 3px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: var(--t-micro);
+  font-weight: 600;
+}
+
+.tool {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: var(--t-micro);
+  color: var(--ink-2);
+}
+
+.stepBody { display: flex; flex-direction: column; gap: var(--s3); padding-left: 2rem; }
+
+.stepField { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+
+.fieldLabel {
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+.digest {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: var(--t-micro);
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+
+.inference {
+  font-size: var(--t-meta);
+  line-height: 1.6;
+  color: var(--ink);
+  text-wrap: pretty;
+}
+
+/* ── citations ────────────────────────────────────────────────────────────── */
+
+.citations { display: flex; flex-direction: column; gap: var(--s2); }
+
+.citationNote { font-size: var(--t-micro); color: var(--ink-3); }
+
+.chips { display: flex; flex-wrap: wrap; gap: var(--s2); margin: var(--s1) 0 0; padding: 0; list-style: none; }
+
+.citation {
+  display: inline-block;
+  padding: 0.15rem var(--s2);
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  background: var(--surface-sunk);
+  font-size: var(--t-micro);
+  text-decoration: none;
+  color: var(--ink-2);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.citation:hover { background: var(--ink); color: var(--paper); }
+
+/* ── proposal ─────────────────────────────────────────────────────────────── */
+
+.proposalBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s4);
+  background: var(--verified-bg);
+  border-left: 2px solid var(--verified);
+  border-radius: 0 4px 4px 0;
+}
+
+.proposalJson {
+  margin: 0;
+  padding: var(--s3);
+  background: var(--surface);
+  border-radius: 3px;
+  font-size: var(--t-micro);
+  line-height: 1.5;
+  overflow-x: auto;
+}
+
+.proposalNote { font-size: var(--t-micro); line-height: 1.6; color: var(--ink-2); text-wrap: pretty; }
+
+.footer {
+  padding-top: var(--s3);
+  border-top: 1px solid var(--rule);
+  font-size: var(--t-micro);
+  color: var(--ink-4);
+}

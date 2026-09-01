@@ -1,0 +1,61 @@
+.page {
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: var(--s7) var(--s6) var(--s8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s7);
+}
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  max-width: 62ch;
+}
+
+.bar {
+  border-radius: 3px;
+  background: var(--surface-sunk);
+  /* Opacity only — compositor-friendly, and killed outright under
+     prefers-reduced-motion by the global rule. */
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+.titleBar { height: 2.25rem; width: 85%; }
+.lineBar { height: 1rem; width: 100%; }
+.lineBarShort { height: 1rem; width: 65%; }
+
+.row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+@media (max-width: 68rem) {
+  .row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s4) var(--s5) var(--s5);
+  background: var(--surface);
+  border-top: 2px solid var(--rule-strong);
+}
+
+.labelBar { height: 0.6875rem; width: 45%; }
+.figureBar { height: 2.5rem; width: 70%; }
+.noteBar { height: 0.75rem; width: 90%; }
+
+.trackBar { height: 2.25rem; width: 100%; }

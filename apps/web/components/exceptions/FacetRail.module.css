@@ -1,0 +1,62 @@
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5);
+  position: sticky;
+  top: 4.5rem;
+  align-self: start;
+  max-height: calc(100vh - 6rem);
+  overflow-y: auto;
+  padding-right: var(--s3);
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding-bottom: var(--s2);
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.clearAll {
+  font-size: var(--t-micro);
+  color: var(--ink-3);
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  text-underline-offset: 0.2em;
+}
+.clearAll:hover { color: var(--ink); }
+
+.group { display: flex; flex-direction: column; gap: var(--s2); }
+
+.groupTitle {
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1px; }
+
+.facet {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s2);
+  border-radius: 3px;
+  font-size: var(--t-meta);
+  color: var(--ink-2);
+  text-decoration: none;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.facet:hover { background: var(--surface-hover); color: var(--ink); }
+
+.active { background: var(--ink); color: var(--paper); font-weight: 500; }
+.active:hover { background: var(--ink-2); color: var(--paper); }
+
+.facetName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.facetCount { flex: none; font-size: var(--t-micro); opacity: 0.75; }

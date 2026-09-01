@@ -1,0 +1,109 @@
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--t-meta);
+  table-layout: fixed;
+}
+
+.table thead th {
+  padding: 0 var(--s3) var(--s2);
+  border-bottom: 1px solid var(--rule-strong);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.table tbody tr { border-bottom: 1px solid var(--rule); }
+.table tbody tr:hover { background: var(--surface); }
+
+.table tbody td { padding: var(--s3); vertical-align: top; }
+
+.numCol { text-align: right; white-space: nowrap; }
+.table thead th.numCol { text-align: right; }
+
+
+/* THE LINK FILLS ITS OWN CELL, AND NOTHING STRETCHES BEYOND IT.
+   
+   This was a whole-row overlay: `.catLink::after { position: absolute; inset: 0 }`
+   over `tr { position: relative }`. CSS 2.1 §9.3.1 leaves the effect of
+   `position: relative` on a `table-row` UNDEFINED, so the row never became a
+   containing block — every overlay resolved against the viewport instead,
+   covered the entire page, and stacked in DOM order. The LAST row painted
+   swallowed every click in the table, so all fifty rows opened row fifty.
+   
+   It typechecked, it built, every href in the markup was correct, and the bug
+   was invisible to anything except clicking a row and reading the URL.
+   
+   The cell is the target now. A `<td>` is `display: table-cell`, which does
+   establish a containing block — but there is no need to lean on that at all
+   when the link can simply fill the cell with padding. */
+.catLink {
+  display: block;
+  margin: calc(var(--s3) * -1);
+  padding: var(--s3);
+  font-weight: 500;
+  color: var(--ink);
+  text-decoration: none;
+  overflow-wrap: break-word;
+  border-radius: 3px;
+}
+.catLink:hover { text-decoration: underline; text-underline-offset: 0.18em; }
+
+.flags { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: var(--s3); }
+
+.recordCell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+}
+
+.source {
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.extId {
+  font-size: var(--t-micro);
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.date { font-size: var(--t-micro); color: var(--ink-4); }
+
+.atRisk { font-weight: 500; }
+.score { color: var(--ink-2); }
+.none { color: var(--ink-4); font-style: italic; }
+
+.explainCell { min-width: 0; }
+
+.explanation {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--ink-2);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.shared {
+  display: inline-block;
+  margin-top: var(--s2);
+  padding: 0.1rem 0.35rem;
+  border: 1px solid var(--verified-rule);
+  border-radius: 3px;
+  background: var(--verified-bg);
+  font-size: var(--t-micro);
+  color: var(--verified);
+}

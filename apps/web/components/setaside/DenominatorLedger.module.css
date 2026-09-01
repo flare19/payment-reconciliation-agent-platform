@@ -1,0 +1,52 @@
+.ledger {
+  width: 100%;
+  max-width: 46rem;
+  border-collapse: collapse;
+  font-size: var(--t-meta);
+}
+
+.ledger tr { border-bottom: 1px solid var(--rule); }
+.ledger tr:last-child { border-bottom: 0; }
+
+.ledger td, .ledger th { padding: var(--s3) var(--s4); vertical-align: baseline; }
+
+.n {
+  width: 6rem;
+  text-align: right;
+  font-size: var(--t-lead);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+.what {
+  font-weight: 500;
+  text-align: left;
+  color: var(--ink);
+}
+
+.why {
+  display: block;
+  margin-top: 0.25rem;
+  max-width: 56ch;
+  font-size: var(--t-micro);
+  font-weight: 400;
+  line-height: 1.55;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+/* The two horizontal rules of an accounting subtraction. */
+.subtotal { border-top: 1px solid var(--rule-strong); background: var(--surface-sunk); }
+.result {
+  border-top: 2px solid var(--ink);
+  background: var(--surface-sunk);
+}
+.result .n { font-size: var(--t-figure-sm); }
+.result .what { font-weight: 600; }
+
+.total .n { color: var(--ink); }
+
+/* Zero rejected rows is a result, not an absence. */
+.good .n { color: var(--verified); }
+.bad .n { color: var(--sev-high); }

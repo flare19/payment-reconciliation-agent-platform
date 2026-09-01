@@ -1,0 +1,252 @@
+.page {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: var(--s5) var(--s6) var(--s8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s6);
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--t-meta);
+  color: var(--ink-3);
+}
+.breadcrumb a { color: var(--ink-2); }
+.crumbCurrent { color: var(--ink); }
+
+/* ── verdict ──────────────────────────────────────────────────────────────── */
+
+.verdictHead {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18rem;
+  gap: var(--s6);
+  align-items: start;
+  padding-bottom: var(--s5);
+  border-bottom: 1px solid var(--rule);
+}
+
+@media (max-width: 62rem) {
+  .verdictHead { grid-template-columns: minmax(0, 1fr); gap: var(--s5); }
+}
+
+.verdictMain { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
+
+.chips { display: flex; flex-wrap: wrap; gap: var(--s2); }
+
+.title {
+  font-size: 2rem;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.026em;
+}
+
+.gloss {
+  max-width: 62ch;
+  font-size: var(--t-lead);
+  line-height: 1.55;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+.severityBasis { font-size: var(--t-meta); color: var(--ink-3); }
+.severityBasis strong { color: var(--ink); font-weight: 600; }
+
+.verdictMeta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  margin: 0;
+  padding: var(--s4) var(--s5);
+  background: var(--surface-sunk);
+  border-radius: 4px;
+}
+
+.verdictMeta > div { display: flex; flex-direction: column; gap: var(--s2); min-width: 0; }
+.verdictMeta dd { margin: 0; min-width: 0; }
+
+.bigNum {
+  font-size: var(--t-figure-sm);
+  font-weight: 500;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+
+.resolvability {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: var(--t-meta);
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.resolvabilityGloss {
+  font-size: var(--t-micro);
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+.rule {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: var(--t-micro);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.ruleVer { color: var(--ink-4); }
+
+/* ── explanation ──────────────────────────────────────────────────────────── */
+
+.explainBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s5);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+.explainHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+
+.sourceTag {
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  background: var(--surface-sunk);
+  font-size: var(--t-micro);
+  font-weight: 550;
+  color: var(--ink-2);
+}
+
+.explanation {
+  max-width: 78ch;
+  font-size: var(--t-lead);
+  line-height: 1.65;
+  color: var(--ink);
+  text-wrap: pretty;
+}
+
+.suggested {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  max-width: 78ch;
+  padding: var(--s3) var(--s4);
+  background: var(--surface-sunk);
+  border-radius: 4px;
+  font-size: var(--t-meta);
+  line-height: 1.6;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+.explainFoot {
+  max-width: 82ch;
+  padding-top: var(--s3);
+  border-top: 1px solid var(--rule);
+  font-size: var(--t-micro);
+  line-height: 1.6;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+/* ── actions ──────────────────────────────────────────────────────────────── */
+
+.actionsLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20rem;
+  gap: var(--s6);
+  align-items: start;
+}
+
+@media (max-width: 62rem) {
+  .actionsLayout { grid-template-columns: minmax(0, 1fr); }
+}
+
+.deferred {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s4);
+  border: 1px dashed var(--rule-strong);
+  border-radius: 4px;
+}
+
+.deferred p {
+  font-size: var(--t-micro);
+  line-height: 1.6;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+/* ── audit trail ──────────────────────────────────────────────────────────── */
+
+.trail { font-size: var(--t-meta); }
+
+.trailList {
+  margin: var(--s4) 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.trailItem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  background: var(--surface-sunk);
+  border-radius: 4px;
+}
+
+.trailHead { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+
+.seq { font-size: var(--t-micro); color: var(--ink-4); }
+
+.eventType {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: var(--t-micro);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.trailTime { margin-left: auto; font-size: var(--t-micro); color: var(--ink-4); white-space: nowrap; }
+
+.trailReason {
+  font-size: var(--t-micro);
+  line-height: 1.6;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+/* An absent amount, said in words. Never a blank cell and never ₹0 — the same
+   discipline the headline row applies to an unmeasured accuracy figure. */
+.notQuantified {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: var(--t-meta);
+  font-style: italic;
+  color: var(--ink-4);
+}
+
+.notQuantifiedWhy {
+  font-size: var(--t-micro);
+  font-style: normal;
+  line-height: 1.5;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}

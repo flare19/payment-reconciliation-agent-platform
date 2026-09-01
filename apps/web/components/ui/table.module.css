@@ -1,0 +1,41 @@
+/* The shared table skin. Imported by the read-only browsers so a column of
+   numbers looks identical whichever screen it is on — the whole design rests on
+   figures being comparable across the product, not just down one page. */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--t-meta);
+}
+
+.table thead th {
+  padding: 0 var(--s3) var(--s2);
+  border-bottom: 1px solid var(--rule-strong);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.table tbody tr { border-bottom: 1px solid var(--rule); }
+.table tbody tr:hover { background: var(--surface); }
+.table tbody th, .table tbody td { padding: var(--s3); vertical-align: top; font-weight: 400; }
+
+.numCol { text-align: right; white-space: nowrap; }
+.table thead th.numCol { text-align: right; }
+
+.mono {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: var(--t-micro);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.muted { color: var(--ink-3); }
+.strong { font-weight: 500; }
+.nowrap { white-space: nowrap; }
+
+.scroller { width: 100%; overflow-x: auto; }

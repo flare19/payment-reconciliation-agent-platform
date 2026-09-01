@@ -1,0 +1,77 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: var(--s4);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  min-width: 0;
+  padding: var(--s4);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+.primary { border-color: var(--rule-strong); }
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  padding-bottom: var(--s2);
+  border-bottom: 1px solid var(--rule);
+}
+
+.source {
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.primaryTag {
+  padding: 0.1rem 0.35rem;
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  font-size: var(--t-micro);
+  color: var(--ink-3);
+}
+
+.fields { display: flex; flex-direction: column; gap: var(--s2); margin: 0; }
+
+.field {
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr);
+  gap: var(--s3);
+  align-items: baseline;
+  padding: 0.15rem var(--s2);
+  margin: 0 calc(var(--s2) * -1);
+  border-radius: 3px;
+}
+
+.field dt {
+  font-size: var(--t-micro);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.field dd {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--t-meta);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* A field the records do not all agree on. The whole point of the side-by-side. */
+.diff { background: var(--sev-medium-bg); }
+.diff dt { color: var(--sev-medium); font-weight: 600; }
+
+.amount { font-weight: 500; }
+
+.counterparty { font-size: var(--t-micro); line-height: 1.5; color: var(--ink-2); }

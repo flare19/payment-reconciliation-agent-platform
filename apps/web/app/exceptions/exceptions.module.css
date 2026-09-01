@@ -1,0 +1,136 @@
+.page {
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: var(--s6) var(--s6) var(--s8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5);
+}
+
+.header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s5);
+  flex-wrap: wrap;
+  padding-bottom: var(--s4);
+  border-bottom: 1px solid var(--rule);
+}
+
+.headingGroup { display: flex; flex-direction: column; gap: var(--s2); min-width: 0; }
+
+.title {
+  font-size: 1.75rem;
+  font-weight: 600;
+  letter-spacing: -0.024em;
+}
+
+.lede {
+  max-width: 72ch;
+  font-size: var(--t-meta);
+  line-height: 1.6;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+/* ── sort ─────────────────────────────────────────────────────────────────── */
+
+.sortForm {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex: none;
+}
+
+.sortLabel { font-size: var(--t-micro); color: var(--ink-3); white-space: nowrap; }
+
+.select {
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  /* Explicit, so Windows dark mode does not render a white-on-white native list. */
+  background-color: var(--surface);
+  color: var(--ink);
+  font-size: var(--t-meta);
+}
+
+.sortSubmit {
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  font-size: var(--t-meta);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.sortSubmit:hover { background: var(--surface-hover); border-color: var(--ink-4); }
+
+/* ── layout ───────────────────────────────────────────────────────────────── */
+
+.layout {
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 1fr);
+  gap: var(--s7);
+  align-items: start;
+}
+
+@media (max-width: 68rem) {
+  .layout { grid-template-columns: minmax(0, 1fr); gap: var(--s5); }
+}
+
+.main { display: flex; flex-direction: column; gap: var(--s4); min-width: 0; }
+
+.activeFilters {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+
+.activeFilter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 0.15rem var(--s2);
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  background: var(--surface);
+  font-size: var(--t-micro);
+  color: var(--ink-2);
+  text-decoration: none;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.activeFilter:hover { background: var(--surface-hover); color: var(--ink); }
+
+/* ── empty ────────────────────────────────────────────────────────────────── */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s3);
+  padding: var(--s7) var(--s6);
+  background: var(--surface-sunk);
+  border-radius: 4px;
+}
+
+.emptyTitle { font-size: var(--t-lead); font-weight: 600; }
+
+.emptyBody {
+  max-width: 60ch;
+  font-size: var(--t-meta);
+  line-height: 1.6;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+.emptyBody strong { color: var(--ink); font-weight: 600; }
+
+.clearLink {
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  font-size: var(--t-meta);
+  text-decoration: none;
+}
+.clearLink:hover { background: var(--surface-hover); }

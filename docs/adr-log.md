@@ -832,3 +832,162 @@ Disabling thinking made it *slower*, so this is capacity or queueing on the free
 **Revisit if:** the reaper lands. With `reapStaleRuns` implemented, failure 1 degrades from *"polls forever"* to *"marked failed within 5 minutes, with a stated reason"*, and sleeping becomes a reasonable post-submission economy. That is the sequence: **reaper first, sleep second** — never the reverse.
 
 **Rejected:** *sleeping now and toggling it off on Day 16* — it depends on remembering, on the day with the least slack, and the first cold start after the toggle would land during the demo window. *A cron ping to keep it warm* — it defeats the saving while adding a moving part, and the platform bills the wake-ups. *Sleeping only the API and not Postgres* — that is already what would happen; see the cost argument above.
+
+### ADR-098 · Provenance is a design token: every figure on screen says whether it is self-reported or measured
+
+**Decision:** The frontend's design system carries **three provenance states as first-class visual tokens** — `engine` (the engine's account of itself, ink on the base surface), `measured` (scored offline against the answer key, a distinct accent plus a `Measured` mark), and `absent` (no measurement exists, muted and italic, stating the reason). The `Figure` component takes `provenance` as a **required** prop, so there is no way to render a number without declaring where it came from.
+
+**Because — ADR-041 and ADR-020 are rules about what a viewer is allowed to conclude, and a rule about conclusions has to hold at a glance or it does not hold.** Both ADRs are enforced at the API today: endpoint 5 returns `engine` and `measured` together or not at all, and `measured` is `null` rather than backfilled. That stops the *backend* from substituting one for the other. It does nothing to stop a *layout* from putting an engine figure in a tile a reader will read as a measurement, and on a dashboard the reader's inference is the whole product. A viewer who cannot tell the two apart will take whichever number flatters, which is precisely the behaviour ADR-020 exists to prevent. Making provenance a token means the wrong choice is visible rather than silent.
+
+**What it forced, immediately.** Endpoint 26 returns `agentMetrics.hallucinatedResolutions`, and `routes/investigations.ts` sets it to `groundingFailures` verbatim — the same integer under a second name. ui-spec §2 block 4.5 asks for a `hallucinated resolutions: 0` tile and describes it as the agent's equivalent of the false-positive tile, which makes it a **measured** figure per ADR-053. It is not one: it is the grounding gate's rejection count, self-reported, and on the current run it is 3. Under this ADR the two cannot share a tile, so the dashboard renders the gate count as an engine figure under its true name and renders the measured tile as **absent**. That is the honest state — `tools/score` does not score the Analyst — and the tile stays on screen while empty because the absence is the finding.
+
+**Rejected:** *a footnote or a legend explaining which numbers are measured* — nobody reads a legend in fifteen seconds, and a rule that depends on being read is not enforced. *Rendering the engine's figure with a caveat* — a caveated number is still a number, and it is the one that gets quoted. *Omitting absent tiles entirely* — an absent measurement that is visible is a stronger honesty signal than a tidy row, and hiding it would make the page silently better-looking exactly where it is weakest.
+
+### ADR-099 · The tier bar is a single-hue ordinal ramp, and two things the ui-spec lists are not segments of it
+
+**Decision:** Tier attribution renders as **one hue darkening toward the strongest tier**, not eight distinct colours. `identityEstablished` and `unmatched` are **excluded from the bar**, and `identityEstablished` is shown beside it as a labelled diagnostic.
+
+**Because:** `exact → alias → fuzzy → batch → implied → manual` is an **ordinal** scale of evidence strength. Eight unrelated hues assert that these are eight unrelated kinds of thing, which is false, and force a reader to consult a legend to recover an ordering the ramp could have shown directly.
+
+The two exclusions are arithmetic, not taste, and ui-spec §2 block 2 lists both as segments:
+
+1. **`identityEstablished` is not part of the sum.** `tierPairCounts` builds the tier buckets from the internal pairs of every assembled group; `run-metrics.ts` then grafts `identityEstablished` onto the same object as a separate diagnostic — it counts S8 verdicts, not pairs. Drawing it as a slice inflates the bar by exactly its own value (747 → 756) and silently changes every other proportion.
+2. **`unmatched` is a different unit.** The bar divides **pairs**; unmatched is a count of **records**. One bar cannot divide two units without lying about at least one. Unmatched records live in the exception block, where the unit is records throughout.
+
+**Corollary, same shape, same block:** ui-spec §2 block 3 asks for severity as colour *within* each category bar. That cross-tab does not exist — endpoint 5 reports `byCategory` and `bySeverity` as independent distributions, and endpoint 6's facets do the same. Severity is therefore drawn as its own distribution over the same exceptions rather than invented per category.
+
+**The general rule this establishes:** where the ui-spec asks for a rendering the data cannot support, the data wins and the divergence is written down. The spec was written on Day 3 against shapes that did not exist yet; it is binding on intent, not on arithmetic it could not have checked.
+
+### ADR-100 · The frontend is plain CSS Modules with a token layer — no Tailwind, no component library, no chart library
+
+**Decision:** `apps/web` styles with **CSS custom properties in one `globals.css` plus per-component `.module.css`**. No CSS framework, no UI kit, no charting dependency. The web app's runtime dependencies stay `next`, `react`, `react-dom`.
+
+**Because:**
+
+1. **Every visual element here is a rule, a bar, or a number in a table.** The dashboard's charts are two stacked bars and a list of proportional rows; a charting library would be several hundred kilobytes to draw what forty lines of flexbox draws, and it would fight the tabular-figure alignment that the whole design depends on.
+2. **The deploy has one shot.** U19 puts this on Vercel late on the last working day, with no CI (ADR-074). Every build-time dependency is a way for that deploy to fail in a way nobody has time to debug, and a token layer in plain CSS has no build step beyond the one Next already runs.
+3. **The design is a small, strict system** — one ramp, three provenance states, four type sizes. Utility classes are a good trade when a design is large and irregular; this one is neither, and hand-written CSS keeps the reasoning next to the rule it justifies.
+
+`next/font` **is** used, for Inter and JetBrains Mono, and that is the one exception worth its weight: the figures are the product, and a judge on Windows and a judge on macOS must see identical digit widths for a column of numbers to be comparable at all. Both faces are self-hosted at build time, so nothing about the type depends on a network at runtime.
+
+**Rejected:** *Tailwind* — a config, a build plugin and a class vocabulary, bought for a page whose repeated units are already extracted into components. *shadcn/ui* — every component it would provide here (a disclosure, a table) is native HTML that needs no JavaScript. *Recharts / visx* — see 1.
+
+### ADR-101 · The record inspector is a ROUTE, not a modal; and every stateful surface deep-links
+
+**Decision:** `ui-spec.md` §1 specifies the record inspector and the run launcher as modals. The record inspector ships as a route — `/records/[transactionId]` — and every filter, page, tab and selection across the frontend lives in the URL rather than in component state.
+
+**Because:** three different surfaces link to a record — an Analyst citation, a match member, a rejected candidate — and each of those links is something a judge should be able to open in a new tab, middle-click, share, or reach with the back button. A modal is a dead end that a URL is not. The same argument covers the exception list's facets, the audit screen's actor filter, the matches browser's tier filter and the review queue's position: all of them are query params, all of them are server-rendered from those params, and none of them needs JavaScript to work.
+
+The practical consequence is that the demo path in ui-spec §7 is a **sequence of shareable links**. If a live click goes wrong during the pitch, the next step is still one URL away.
+
+**Rejected:** *modals with a synced URL* — the sync is the hard part and the modal adds nothing once it is done. *`useState` filters* — faster to write, and it breaks the back button on the screen a judge will use the back button on most.
+
+### ADR-102 · Manual match (endpoint 21) is deferred, and named on screen rather than quietly absent
+
+**Decision:** The exception detail screen ships `Resolve` and `Won't Fix` (endpoint 20). **`Create match manually` (endpoint 21) is not built.** The screen carries a short panel saying so and why.
+
+**Because:** the action needs a record picker over the whole run — search, filter, multi-select, role validation against S11's collision rule — which is a screen in itself, not a button. `ui-spec.md` §8's degradation order cuts from the bottom, and this is the bottom of priority 1.
+
+**Why it is named on screen rather than removed:** a judge who reads *"these two are the same, the engine just couldn't prove it"* on the exception list will look for the action that says so. Finding nothing reads as an oversight; finding a sentence that says what is missing and why reads as a decision. This project's whole argument is that stating a limitation is stronger than hiding one, and that has to apply to the frontend's own gaps, not only to the engine's.
+
+**Revisit if:** time remains after AUDIT-4. The endpoint, its audit wiring and its conflict handling all already exist and are tested — only the picker is missing.
+
+### ADR-103 · `datasetSeed` is accepted by `POST /api/runs` and used nowhere
+
+**Decision (finding, not yet a fix):** `routes/runs.ts` parses `datasetSeed` from the request body, stores it on the run row, and serialises it back on every `RunSummary`. **`readSeedDataset()` always returns the committed holdout CSVs** (`app.ts` resolves a fixed `data/fixtures/holdout/`). A caller passing `datasetSeed: 12345` gets a run labelled with seed 12345 that reconciled seed-90210 data.
+
+**This is ADR-094's defect shape for the third time:** a field that is parsed, persisted, published to clients, and enforced nowhere — after `AGENT_MAX_COST_USD_PER_RUN` (fixed, ADR-094) and `STALE_RUN_TIMEOUT_MINUTES` (still open, ADR-097). It is invisible to the test suite for the same reason both of those were: every test asserts the field round-trips, which it does.
+
+**The cheap fix is to reject it.** Ten lines: a `datasetSeed` that does not match the committed dataset's seed returns `400 INVALID_REQUEST` naming the one seed this build can serve. A field that refuses what it cannot honour is honest; a field that accepts and ignores is not.
+
+**The better fix, agreed with Tejas and scheduled after U18:** commit a second generated dataset with its answer key and let `datasetSeed` select among committed datasets that have keys. `tools/generate` already produces both from any integer seed, deterministically (ADR-067). That turns the demo claim from *"it reconciles this data"* into *"it reconciles data it has not seen before, and the accuracy is still measured"* — which is materially stronger, because a fresh dataset with no key would render two of four headline tiles as *not measured* and be the weaker demo, not the stronger one.
+
+### ADR-104 · The holdout's repeated round amounts are the ambiguity mechanism, not a generator defect — do not "fix" them
+
+**Decision:** `data/fixtures/holdout/` stays exactly as committed. The clustering of `₹999` / `₹1,199` / `₹1,499` across the exception list is **correct output of a deliberate design** and must not be smoothed away. Widening the amount spread happens in the NEW dataset built for task 7c, never by regenerating the holdout.
+
+**Because — the repetition IS the feature, and removing it removes the demo.** Measured on the holdout:
+
+```
+₹999   × 8  →  AMBIGUOUS_MATCH ×6, MISSING_IN_BANK ×2
+₹1,499 × 6  →  AMBIGUOUS_MATCH ×6
+₹1,199 × 6  →  AMBIGUOUS_MATCH ×6
+```
+
+**18 of the 22 `AMBIGUOUS_MATCH` exceptions sit on three round price points**, and that is `planting.ts` working: an ambiguity cluster is *constructed* by planting several payments on one price point, one merchant, one day (`AMBIGUITY_PRICE_POINTS_RUPEES`). The shared amount is the mechanism that makes them ambiguous. Give those records distinct amounts and the engine matches them trivially — the category ceases to exist, and with it ui-spec §7 step 5, the moment the engine half of the pitch is built around.
+
+The 52% retail-price weighting in `events.ts` is separately justified and documented there: it creates natural (unplanted) collisions so the ambiguity guard is exercised by ordinary data, and it spreads events across all three regimes of `clamp(0.5%, ₹1, ₹100)` so the ₹1 floor and ₹100 cap are covered by the measurement rather than shipped untested.
+
+**Why it LOOKS wrong.** Default sort is severity DESC then amount DESC. `AMBIGUOUS_MATCH` carries base severity `high` regardless of amount, so all 22 land in the high band — 20 of the 92 high rows are those three values, and the repeat rate inside the high band is **47.8%**. A reader scrolling page one meets the large amounts first and then a long tail of identical small ones. Combined with the null-amount rendering defect below, it reads as stubbed data.
+
+**Blast radius of the rejected alternative,** recorded because the argument will resurface: regenerating the holdout invalidates the committed answer key, precision 1.0000 / recall 0.6075 / ceiling 93.0% / classification macro 0.9286–0.8738 / unresolvable recall 1.0, the posted score report, the deployed Railway fixtures, `input_file_hashes` on every existing run row, the 10 persisted Analyst investigations (they cite current exception ids), and every figure quoted in `what-broke.md` Days 9–15.
+
+**And it is the ADR-027 move.** Changing a generator parameter because a measured artefact looked wrong is the prohibited operation. That the complaint here is aesthetic rather than numeric does not change the mechanism, and the exemption for "structural fixes arguable without citing the number" does not apply — nothing about the current distribution is structurally wrong.
+
+**Revisit at 7c:** more ambiguity clusters (only 3 are planted, which is why only 3 price points appear) and a wider draw belong in the new seed, where the answer key is generated alongside the data and costs nothing.
+
+### ADR-105 · `amountAtRiskPaise` is always null for exact duplicates — the pool-membership fact was patched once and not twice
+
+**Finding (frontend guarded; engine fix deferred).** `classify.ts:135` reads the duplicate's amount as `byId.get(d.transactionId)?.amountPaise ?? null`, where `byId` is built from `pool` alone. Twenty-five lines above it, the same function states the governing fact in a comment — *"an excluded exact `DUPLICATE_RECORD` never enters `pool`"* — and builds a **second** map, `sortKeyFor`, precisely to work around it for the output-order comparator.
+
+So the author knew the pool does not contain duplicates, patched the consequence they were looking at, and left the amount lookup reading the map that cannot answer it. **All 9 `DUPLICATE_RECORD` exceptions on the holdout carry `amountAtRiskPaise: null`, and always have.**
+
+> **This is the repo's signature defect shape once more: two facts, both written down, in the same file, by the same author — and the bug living in their conjunction.** It is the Day 9 `#40` pattern (§6.3's "pairs" plus AUDIT-1's "Tier 1 only produces gateway↔ledger") reproduced inside a single function.
+
+**Not fixed today, deliberately.** `amountAtRiskPaise` feeds `severity.ts`, so populating it could re-rank those 9 exceptions and move `runs.metrics.exceptions.bySeverity`. That is engine output, and engine output changes end with a re-score (habit 0), not with a frontend commit.
+
+**The frontend now guards it explicitly** rather than rendering a blank: the list shows `n/a` with a title, and the detail page shows *"Not quantified"* with the reason. **Never `₹0`** — a fabricated zero in a money column is the same failure as an engine figure in a slot labelled measured.
+
+**Note for whoever fixes it:** the type is `string | null` on the wire and `null` is a legal `ReactNode`, so **TypeScript cannot catch this class of bug at a render site.** Widening the type produced zero new errors. Only looking at the page found it.
+
+### ADR-106 · Endpoint 24 gets a screen, because a denominator defended only in the API is not defended
+
+**Decision:** `/set-aside` renders `GET /api/runs/:runId/population` — every row removed from the match rate's denominator, grouped by reason, with the subtraction shown as arithmetic. The dashboard's record count links to it.
+
+**Because the endpoint existed for exactly this and nothing called it.** api-contract §111 states the reason it was built: *"Any number with a shrunken denominator invites the question 'what did you take out?', and the honest answer is an endpoint that lists exactly that, with a per-row reason. Excluded is not hidden."* It was hidden. `ui-spec.md` §1 put it on the run-launcher modal, the run launcher was never built, and endpoint 24 shipped with **no consumer at all**.
+
+The proof that this mattered is that the first person to read the dashboard asked the exact question the endpoint answers — *"874 of 920 — did we lose rows in ingestion, and isn't ingestion supposed to be lossless?"* — and nothing on the site could reply. A defence of the denominator that lives only in an API is a defence nobody encounters.
+
+**The page shows a subtraction, not a table.** `920 attempted → −0 failed to parse → 920 read → −37 nothing to reconcile against → −9 same row twice → 874 measured`. The `−0` line renders **even at zero, especially at zero**: it is the only statement in the product that ingestion is lossless, and omitting it would leave that claim resting on a reader's trust. Same reasoning as the `hallucinated resolutions` tile staying on screen while empty (ADR-098).
+
+**Wording, and why the old wording was the defect.** The dashboard said `874 of 920 ingested`. Three words hiding a three-term accounting identity, and the preposition invites the reader to supply the missing verb — *missed*, *rejected*, *dropped*. It now reads `874 counted · 46 set aside`, and the second half is the link. **The line was not too long; it was ambiguous in the one place ambiguity costs the most.** Worth carrying into the copy-simplification pass: shortening prose is not the same operation as removing ambiguity, and this line would have survived a pass that only counted words.
+
+**Not added to the primary nav.** Six screens is already the limit for a judge with thirty seconds. The link sits where the question forms — on the record count itself — which is more discoverable than a seventh nav item and costs nothing to the five people who never wonder.
+
+### ADR-107 · The review queue drains in place; a decision never parks the reviewer on a confirmation screen
+
+**Decision:** Approving or rejecting a proposal refreshes the queue in place — the decision is recorded, the total drops, and the next pending proposal appears where the last one was, under a one-line confirmation. `<ReviewCard>` is keyed on `matchId`. There is no "done" screen and no instruction to reload.
+
+**Because the first version was wrong twice, and the two faults compounded.**
+
+1. **`<ReviewCard>` was rendered without a `key`.** React reconciles by component type and position, so navigating `?page=1 → ?page=2` **reused the same instance** and its `done` state survived the navigation. Every later proposal rendered as the confirmation screen for the first one, and the only thing that visibly changed was the page number in the server-rendered `Paginate` beneath it. The reviewer could not reach proposal two at all.
+
+2. **An approved proposal LEAVES the queue,** so "next" never meant what the control implied. Refreshing in place is the honest model, and it is how a work queue is actually worked.
+
+**A second number was being invented.** The done screen printed `Math.max(0, total - 1)` — a guess that one fewer remained — directly above a `Paginate` showing the real `pagination.total`. The page therefore displayed **66 and 67 simultaneously**, from one source, one of them fabricated. Every count on the screen now derives from `pagination.total` and there is no arithmetic anywhere in the view.
+
+**The flash lives in the parent, not the card, precisely because the card is keyed.** A confirmation stored inside a component that unmounts on success erases itself at the moment it is needed. `ReviewQueue` owns the message; `ReviewCard` owns the form state and resets with the proposal.
+
+> **A RUNTIME RULE `tsc` CANNOT SEE, HIT ON THE FIRST ATTEMPT.** The initial fix passed `hrefFor={(p) => …}` from the server page into the `'use client'` queue. **Functions cannot cross the server-to-client boundary** — React serialises every prop into the RSC payload and a closure has no serialisation. It typechecked cleanly and threw on load. The prop is a `runQ` string now and the href is built client-side. Third distinct class this session that types could not catch, after the `null` ReactNode and the `position: relative` table row.
+
+**Verified by doing it, not by reading it:** a real approval through the browser advanced the queue from one proposal to a different one, moved all four on-screen counts from 67 to 66 together, cleared the form, and produced audit entry **#733** `MATCH_APPROVED_BY_HUMAN` with the queue total dropping 67 → 66 on the API.
+
+### ADR-108 · A confirmation is transient; and `/matches` filters by WHO CONFIRMED, not only by tier
+
+**Two fixes from one walkthrough, both about state or a filter outliving its meaning.**
+
+**1 · The confirmation banner followed the reviewer through the queue.** ADR-107 moved the flash out of the keyed card and into `ReviewQueue` so it would survive the card remounting on success. `ReviewQueue` is not keyed either — which is what makes that work — so the message also survived `?page=` navigation, and a reviewer paging forward saw *"Approved."* announcing a decision three proposals ago. **The same defect as the unkeyed card it replaced, moved up one level: state outliving the event it describes.**
+
+It is now dismissed two ways, because one is not enough: a 4-second timer, and an effect keyed on `pagination.page` so paging away clears it immediately. The flash object carries an `id` so two identical messages in a row still re-arm the timer — `setFlash('Approved.')` twice is the same value, and a `[flash]` effect would not re-run on the second.
+
+4 seconds rather than the 1–2 suggested: the message is a full sentence, and a banner that vanishes before it can be read is the same failure in the opposite direction.
+
+**2 · `/matches?tier=manual` was empty and could never not be.** Approving a proposal **keeps the tier it was found at** and changes its status to `human_confirmed`. `manual` is the tier for matches a human creates from scratch through endpoint 21, which is not built (ADR-102). So the one filter a reviewer reaches for after approving twenty matches is the one filter that can never contain them.
+
+Endpoint 8 has always accepted `?status=`; **nothing in the frontend used it.** `/matches` now leads with a *Confirmed by* row — All · Engine confirmed · **You confirmed** · Waiting for you — each carrying its count from three parallel reads, so a filter says what it will return before it is clicked. Tier moves to a second row.
+
+**The empty states now explain themselves rather than saying "no results".** `tier=alias` states that no alias has been taught yet and links to the review queue.
+
+**And the `manual` tier filter is REMOVED from the control row entirely.** Explaining a control that can never do anything is still shipping a control that can never do anything — the honest move is not to offer it. The distinction against `alias`, which stays, is the useful one: **a filter that is EMPTY today is worth offering** because teaching one alias fills it; **a filter that is IMPOSSIBLE is a dead control**, and offering it invites the wrong conclusion — that approvals went missing rather than that they live under a different heading. `/matches?tier=manual` typed directly still explains itself, for anyone on an old link.
+
+> **A CONSEQUENCE TO CARRY INTO THE DEMO, not a defect.** `runs.metrics` is frozen at run completion (ADR-041), so the dashboard headline still reads **65.22%** and **71 pending** while `/matches` truthfully reports 22 human-confirmed and 49 pending. Both are correct — one is the engine's account of itself at the moment it finished, the other is live — but a judge who approves a few proposals and then returns to the dashboard will see two pending counts that disagree. **Either re-run before demoing, or say plainly that the headline is the run's own frozen figure.** Testing this session has moved the review queue from 71 to 49; a fresh run restores it.

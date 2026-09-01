@@ -1,0 +1,92 @@
+.masthead {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--rule);
+}
+
+.inner {
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: var(--s3) var(--s6);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s5);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  min-width: 0;
+  text-decoration: none;
+}
+
+/* A reconciliation mark: two rules meeting a third. Drawn, not imported —
+   a 10px square of CSS beats a network request for an icon font. */
+.mark {
+  flex: none;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-left: 2px solid var(--ink);
+  border-bottom: 2px solid var(--ink);
+  border-bottom-left-radius: 2px;
+}
+
+.brandText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.brandName {
+  font-size: var(--t-body);
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brandKicker {
+  font-size: var(--t-micro);
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.navLink {
+  display: block;
+  padding: var(--s2) var(--s3);
+  border-radius: 4px;
+  font-size: var(--t-meta);
+  color: var(--ink-2);
+  text-decoration: none;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.navLink:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+.navLinkActive {
+  color: var(--ink);
+  font-weight: 550;
+  background: var(--surface-sunk);
+}
+.navLinkActive:hover { background: var(--surface-sunk); }

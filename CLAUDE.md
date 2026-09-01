@@ -774,7 +774,9 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 | ~~4~~ | ~~ONE bounded verification run~~ | | ✅ $2.83, six runs |
 | ~~5~~ | ~~#61 — bound endpoint 25~~ | | ✅ ADR-095 |
 | ~~6~~ | ~~Deploy API to Railway~~ | | ✅ **LIVE.** See the block below |
-| **7** | **Frontend** (U17 design + dashboard, U18 remaining screens) — **THE critical path now** | #43 ✅, 6 ✅ | 6–8 h |
+| ~~7a~~ | ~~**U17** — design direction + dashboard~~ | | ✅ ADR-098…100 |
+| ~~7b~~ | ~~**U18** — remaining six screens~~ | | ✅ ADR-101…103 |
+| **7c** | **Random generated + measured dataset per run** (ADR-103) — agreed with Tejas: proves the engine on data it has not seen, *with the accuracy still measured* | 7b ✅ | 1 h |
 | 8 | **Deploy web to Vercel** (U19) | 7 | 1 h |
 | 9 | **AUDIT-4** final pre-submission pass | 8 | 2 h |
 | 10 | **U20** — accuracy report, README, pitch video, build-challenges write-up | 9 | 3–4 h |
@@ -809,6 +811,58 @@ https://payment-reconciliation-agent-platform-production.up.railway.app
 Railway's App Sleeping stays **OFF** through 2026-09-05. The saving is a low single-digit dollar figure over four days and **Postgres does not sleep with it**, so the larger half of the bill is unaffected. Against that: `POST /api/runs` and endpoint 25 both do real work *after* the response is sent (202-then-poll, and `void investigateOne(...)`), and scale-to-zero keys on inbound traffic — so a judge who starts a run and looks away is exactly the case the platform reads as idle.
 
 > **THE STALE-RUN REAPER DOES NOT EXIST, AND `STALE_RUN_TIMEOUT_MINUTES` LIES ABOUT IT.** `reapStaleRuns` is a commented TODO in `index.ts` (ADR-046). The env var is parsed in `env.ts` and documented in `deployment.md` §3 as though it were enforced. **It is enforced nowhere** — the same defect shape ADR-094 found in `AGENT_MAX_COST_USD_PER_RUN`. Its own TODO predicts the consequence: a crashed run sits at `matching` forever and the dashboard polls it indefinitely. **Sequence matters: reaper first, sleeping second.** It is the top below-the-line item and the cheapest insurance against a demo-day hang.
+
+### U17 IS DONE — the design system and the dashboard (ADR-098…100)
+
+`apps/web` has a design direction, a token layer and the dashboard, built server-side against a real API. Typecheck and `next build` clean. **`apps/api` was not touched.**
+
+**The design idea, and it is the one thing to preserve when extending it: PROVENANCE IS A TOKEN.** Every figure on screen is `engine` (self-reported, ink), `measured` (scored against the answer key, accented + marked), or `absent` (no measurement, muted, states why). `Figure`'s `provenance` prop is **required**, so a number cannot be rendered without declaring where it came from. ADR-041 and ADR-020 are enforced at the API already; this enforces them in pixels, which is where the reader's inference actually happens.
+
+```
+apps/web/
+  app/globals.css          tokens (light+dark), reset, .label/.num/.disclosure
+  app/layout.tsx           next/font Inter + JetBrains Mono, theme-color, skip link
+  app/page.tsx             the dashboard — RSC, ui-spec §2 blocks 1-5
+  app/{error,not-found,loading}.tsx
+  components/ui/           Figure · Section · SegmentBar
+  components/dashboard/    HeadlineRow · TierAttribution · ExceptionBreakdown
+                           EnginePerformance · AnalystBlock · RunPicker
+  lib/format.ts            Intl only. NO money formatting, ever (ui-spec §9)
+  lib/api-client.ts        typed wrappers + `optional()` for legitimate absences
+  types/api.ts             transcribed from REAL responses, not from the contract's prose
+```
+
+**Stack decision (ADR-100): plain CSS Modules + custom properties. No Tailwind, no UI kit, no chart library.** Runtime deps stay `next`/`react`/`react-dom`. `next/font` is the one addition, and it earns it — the figures are the product and digit widths must be identical across machines.
+
+> **THREE THINGS IN `ui-spec.md` §2 CANNOT BE RENDERED AS WRITTEN, and U18 will meet the same class of problem.** `identityEstablished` is not a tier-bar segment (it counts S8 verdicts, not pairs — drawing it inflates the bar 747→756); `unmatched` is a different unit from the rest of that bar; and severity-within-category **does not exist in any endpoint**, so colouring the category bars by severity would mean inventing the cross-tab. The spec was written on Day 3 against shapes that did not exist yet. **It is binding on intent, not on arithmetic it could not check** — where they conflict, the data wins and the divergence goes in `what-broke.md` and an ADR.
+
+> **THE DASHBOARD NEARLY SHIPPED A SELF-REPORTED NUMBER IN A MEASURED TILE.** Endpoint 26 returns `agentMetrics.hallucinatedResolutions`, and `routes/investigations.ts` sets it to `groundingFailures` **verbatim** — the same integer under a second name, and it is **3, not 0**. ui-spec asks for that tile as the agent's false-positive equivalent, which per ADR-053 makes it a *measured* figure. It is not one. The dashboard renders the gate count as an engine figure under its real name (*Grounding-Gate Rejections*) and renders the measured tile as **absent**, because `tools/score` still does not score the Analyst. **This is ADR-094's defect shape in the UI: a field whose NAME makes a claim its implementation does not.**
+
+### U18 IS DONE — all seven screens exist (ADR-101…103)
+
+Nine routes, all server-rendered, all typechecking and building clean. **`apps/api` was not touched.**
+
+```
+/                        dashboard (U17)
+/exceptions              THE primary screen — facet rail, table, URL-state filters, pagination
+/exceptions/[id]         verdict · explanation+source · candidates · search claim · records
+                         side-by-side · Analyst panel · resolve · audit trail
+/review                  one proposal at a time, approve/reject, alias teaching + 409 interlock
+/audit                   4 actor colours, filters, LIVE chain verification button
+/matches                 read-only (priority 3, degraded per §8) — `countsTowardEngineMatchRate` visible
+/aliases                 read-only ledger (priority 3, degraded per §8)
+/records/[id]            record inspector — normalized + RAW payload + per-record trail
+```
+
+**The write path is verified, not assumed.** `resolve` was run end to end: exception → `human_resolved`, **audit entry #728 with the reason verbatim**, and the audit screen's `human` filter now returns it. Do not undo that entry — it is the only human actor in the run and it makes the audit screen's actor boundary demonstrable.
+
+> **`datasetSeed` IS ACCEPTED BY THE API AND USED NOWHERE — THE THIRD INSTANCE OF ONE PATTERN (ADR-103).** `routes/runs.ts` parses it, persists it, and serialises it back; `readSeedDataset()` always returns the committed holdout. Pass `datasetSeed: 12345` and the run is *labelled* 12345 and *reconciles* 90210. Same shape as `AGENT_MAX_COST_USD_PER_RUN` (fixed) and `STALE_RUN_TIMEOUT_MINUTES` (still open): parsed, documented, published, enforced nowhere. **The missing test in all three is identical — assert the field CHANGES something.**
+
+**Two deliberate spec deviations:** the record inspector is a route not a modal, and every filter/page/selection is a query param (ADR-101) — the §7 demo path is now a sequence of shareable links, so a bad click on stage is one URL from recovery. Manual match (endpoint 21) is **not built** and the screen says so (ADR-102).
+
+**Things already built that you should not rebuild:** `Figure` (provenance), `Section`, `SegmentBar` (bar + accessible legend table), `lib/format.ts`, the `.disclosure` pattern, `not-found.tsx`. Nav lives in `components/chrome/Masthead.tsx` as a `NAV` array with active-state marking in `NavLinks.tsx`; all six entries are wired. Shared pieces: `Figure` (provenance), `Section`, `SegmentBar`, `Chip`/`SeverityChip`/`ActorChip`, `Paginate`, `ScoreBars`, `table.module.css`, `lib/format.ts`, `lib/taxonomy.ts`, `lib/run-context.ts` (`resolveRun`/`hrefWith` — every screen resolves `?run=` the same way, so two screens can never disagree about which run they describe).
+
+**One thing to do before the pitch video, not a defect:** the deployed Railway database has **no score report**, so the live URL renders two of four headline tiles as *"not measured"* while local renders all four. That is the honesty behaviour working — and it is also a judge's first impression. `npm run score -- --run <deployed-run> --api <railway-url> --post` fixes it in one command.
 
 ### The public API is rate limited (ADR-096)
 

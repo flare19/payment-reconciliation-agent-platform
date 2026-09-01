@@ -1,0 +1,39 @@
+.wrap { display: flex; flex-direction: column; gap: var(--s5); }
+
+.flash {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  background: var(--verified-bg);
+  border-left: 2px solid var(--verified);
+  border-radius: 0 4px 4px 0;
+  font-size: var(--t-meta);
+  line-height: 1.6;
+  color: var(--ink);
+  text-wrap: pretty;
+}
+
+.tick { flex: none; color: var(--verified); font-weight: 700; }
+
+.loading { color: var(--ink-3); }
+
+/* The outgoing proposal, while the next one is being fetched. Opacity only. */
+.stale { opacity: 0.45; transition: opacity 120ms ease; pointer-events: none; }
+
+.note {
+  max-width: 70ch;
+  font-size: var(--t-micro);
+  line-height: 1.6;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+/* Fades out on its way to being dismissed. Opacity only, and the global
+   reduced-motion rule disables it outright. */
+.flash { animation: flashIn 160ms ease-out; }
+
+@keyframes flashIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

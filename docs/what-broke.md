@@ -7,6 +7,257 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
 ---
 
+## Day 16 (2026-09-02), later still — two controls that could not do anything, and someone else's files
+
+**A confirmation banner that followed the reviewer.** ADR-107 moved the review flash out of the keyed card so it would survive the card remounting on success. The parent is not keyed either — that is what makes it work — so the message also survived `?page=` navigation and announced an approval made three proposals ago. **The same defect as the unkeyed card it replaced, one level up: state outliving the event it describes.** Now dismissed twice over: a 4-second timer, and an effect on `pagination.page` so paging away clears it. The flash carries an `id`, because two identical messages in a row are the same string and a `[flash]` effect would not re-run on the second.
+
+**A filter that could never return a row.** `/matches?tier=manual` was empty and structurally always would be: approving a proposal keeps the tier it was *found* at and flips its status, while `manual` is for endpoint-21 matches that are not built. So the one control a reviewer reaches for after approving twenty matches was the one that could never contain them. Endpoint 8 has always accepted `?status=`; **nothing in the frontend used it.** `/matches` now leads with *Confirmed by* — All · Engine confirmed · **You confirmed** · Waiting for you — each with its count.
+
+> **AND THEN THE FIX WAS STILL HALF-WRONG.** The first pass kept the `manual` button and gave it a good explanation. Explaining a dead control is still shipping a dead control. It is gone from the row now, while `alias` stays — and that is the useful distinction: **empty today is a fact worth offering** (teach one alias and it fills); **impossible is a dead control**, and offering it invites the wrong conclusion, that approvals went missing rather than that they live under another heading.
+
+**Removed `WARP.md` and `.github/copilot-instructions.md`** — both untracked, both 217 bytes, both the identical claude-mem placeholder reading *"No context yet"*, left behind by a tool that was evaluated and not adopted. `CLAUDE.md` was checked and is clean.
+
+> **A CONSEQUENCE FOR THE DEMO, not a defect.** `runs.metrics` is frozen at run completion (ADR-041), so the dashboard reads **65.22% and 71 pending** while `/matches` truthfully reports 22 human-confirmed and 49 pending. Both correct; one is the engine's account of itself when it finished, the other is live. **A judge who approves a few and returns to the dashboard sees two pending counts that disagree.** Today's testing moved the queue 71 → 49. Re-run before recording, or say plainly that the headline is the run's own frozen figure.
+
+---
+
+## Day 16 (2026-09-02), later — the review queue showed two totals and could not reach proposal two
+
+Reported from a walkthrough: *"at the bottom it says 1 of 67 proposals but above it says 66 proposals remain. And when I click next, it still displays the same approved message and nothing changes apart from Page {number} of 67."*
+
+Both real, both mine, and they compounded.
+
+**Two totals, one source, one fabricated.** The done screen printed `Math.max(0, total - 1)` — a guess that one fewer remained — directly above a `Paginate` rendering the real `pagination.total`. **66 and 67 on screen at once**, from the same prop.
+
+**Proposal two was unreachable.** `<ReviewCard>` was rendered with **no `key`**. React reconciles by component type and position, so `?page=1 → ?page=2` reused the same instance and the `done` state survived the navigation. Every later proposal rendered as the confirmation screen for the first one; the page number beneath it updated because `Paginate` is server-rendered. That is exactly the *"only the page number changes"* symptom, and it means the queue could not be worked past its first item.
+
+**The done screen was the wrong model anyway.** An approved proposal *leaves* the queue, so "Next" never meant what the control implied. The queue now drains in place (ADR-107): decide, the total drops, the next proposal appears where the last one was, under a one-line confirmation. The flash lives in the parent rather than the card, because the card is now keyed and would erase its own confirmation on success.
+
+### A third class of bug types cannot catch, hit on the first attempt at the fix
+
+The first version of the fix passed `hrefFor={(p) => …}` from the server page into the `'use client'` queue component:
+
+```
+Functions cannot be passed directly to Client Components …
+  <... item={{...}} pagination={{...}} hrefFor={function hrefFor}>
+```
+
+**Functions cannot cross the server-to-client boundary.** React serialises every prop into the RSC payload and a closure has no serialisation. It typechecked cleanly and threw on load.
+
+> **THREE DISTINCT CLASSES IN TWO DAYS THAT `tsc` IS STRUCTURALLY BLIND TO:** `null` is a legal `ReactNode` (blank money cells), `position: relative` on a `table-row` is spec-undefined (every row opened the same record), and a function prop across an RSC boundary is a runtime serialisation rule. **All three compiled, all three built, all three were only findable by loading the page.** The lesson from the row-overlay bug has now paid for itself twice.
+
+**Verified by doing it.** A real approval through the browser: the proposal changed from LENSKART to FLIPKART, all four on-screen counts moved 67 → 66 **together**, the form cleared, and the API agreed — queue total 66, audit entry **#733** `MATCH_APPROVED_BY_HUMAN`.
+
+---
+
+## Day 16 (2026-09-02) — the dashboard could not answer the first question anyone asked it
+
+`874 of 920 ingested`. Tejas read it and asked: *did we miss rows during ingestion, and didn't we decide ingestion has to be lossless?*
+
+**Ingestion is lossless and the numbers prove it** — 920 rows attempted, 920 parsed, **0 rejected**. The 46 are 37 excluded (authorised, never captured — no money moved, so no settlement exists to match) plus 9 non-primary duplicates. All still in the database, all still queryable, removed from a *denominator* rather than from the system. The principle held; the engine honours it; the opinion happens at S0/classification, after reading, and is declared.
+
+**The frontend could not say any of that.** `GET /api/runs/:runId/population` exists for precisely this — api-contract §111: *"Any number with a shrunken denominator invites the question 'what did you take out?' … Excluded is not hidden."* `ui-spec.md` §1 put it on the run-launcher modal; the run launcher was never built; **endpoint 24 shipped with no consumer at all.** It was hidden.
+
+> **THE ENDPOINT WHOSE ENTIRE PURPOSE IS ANSWERING A QUESTION WAS UNREACHABLE FROM THE PLACE THE QUESTION IS ASKED.** Nothing was broken — the API was right, the engine was right, the number was right. The failure was that a defence written into the architecture never reached a surface anyone would meet it on. Both the endpoint-to-screen map in api-contract §4 and my own U18 pass list endpoint 24, and both counted it as *covered* because it existed.
+
+Fixed as `/set-aside` (ADR-106), which shows the subtraction rather than describing it:
+
+```
+920   Rows in the three files
+ −0   Failed to parse   ← nothing was lost reading the files
+920   Read successfully
+−37   Nothing to reconcile against
+ −9   The same row twice
+874   Records the match rate is measured over
+```
+
+The `−0` line renders **even at zero, especially at zero** — it is the only place in the product that states ingestion is lossless, and leaving it out would make that a claim the reader has to trust. Same reasoning as the empty `hallucinated resolutions` tile.
+
+### The wording was the defect, and it would have survived a length-only edit
+
+`874 of 920 ingested` is not too long. It is **three words hiding a three-term accounting identity**, and the preposition invites the reader to supply the missing verb — *missed*, *dropped*, *rejected*. It now reads `874 counted · 46 set aside`, and the second half links to the page.
+
+This landed in the middle of a conversation about the frontend being too wordy for a judge with thirty seconds — the median section standfirst measured **21 words**, worst 33. Both criticisms are right and they pull in opposite directions on this one line. **Shortening prose and removing ambiguity are different operations**, and a simplification pass that only counts words would have left this line exactly as it was.
+
+Verified by clicking, per the lesson from the row-overlay bug the night before: dashboard → link → `/set-aside`, all three tabs, and the zero-state on `Failed to parse` reading *"Not one row failed to parse."*
+
+---
+
+## Day 15 (2026-09-01), night — every row of the exception list opened the same record
+
+**The worst defect of the build so far, and it shipped past a typecheck, a production build, a guidelines audit, two screenshots and a text-extraction check.**
+
+Every one of the 50 rows on the exception list opened exception **`cc0b8854`** — the `AMBIGUOUS_MATCH` at ₹999 that happens to be **row 50, the last row of page one**. Clicking row 1 or row 30 or row 47 all landed there.
+
+### The cause, in six lines of CSS I wrote for a nicety
+
+```css
+.catLink::after { content: ""; position: absolute; inset: 0; }
+.table tbody tr { position: relative; }
+```
+
+It was meant to make the whole row clickable through the category link. **CSS 2.1 §9.3.1 leaves the effect of `position: relative` on a `table-row` UNDEFINED**, and the row does not become a containing block. So every `::after` resolved `inset: 0` against the *viewport* instead, each overlay covered the entire page, and they stacked in DOM order — **the last row painted swallowed every click in the table.**
+
+### Why nothing caught it
+
+- **`tsc` was clean.** There is no type error; it is a layout property interacting with a spec-undefined case.
+- **`next build` was clean.** Nothing about it is a build concern.
+- **The markup was correct.** I had already verified *"distinct row hrefs: 50"* by grepping the served HTML — and every href WAS right. The overlay is what receives the click; the href underneath it is never consulted.
+- **The Vercel guidelines pass was clean.** Its anti-pattern list has `<div onClick>`, missing labels, `transition: all`. It has no rule for "absolutely-positioned pseudo-element over a table row", because that is a correctness bug, not a style violation.
+- **Two screenshots looked perfect**, because an overlay with no background is invisible.
+
+> **THE ONLY THING THAT WOULD HAVE CAUGHT IT IS CLICKING A ROW AND READING THE URL — AND I NEVER DID.** I verified this screen five ways and every one of them tested the *markup* rather than the *behaviour*. `curl | grep href` proves the links are correct; it cannot prove they are reachable. This is the frontend's exact analogue of the pattern that runs through this whole file: a check that passes on broken code because it asserts the thing next to the defect.
+
+### The verification that actually settles it
+
+`document.elementFromPoint()` at each row's category cell, which measures precisely what a click will hit:
+
+```
+row  1  wants 98ba56e…  hits 98ba56e…   ✓
+row  2  wants 40b6c7c…  hits 40b6c7c…   ✓
+row 11  wants 9a6590f…  hits 9a6590f…   ✓
+row 50  wants cc0b885…  hits cc0b885…   ✓
+```
+
+plus one real click through the browser: row 1 → `98ba56e8` → *Missing in Gateway*. Before the fix the same probe returned `cc0b885…` for all four.
+
+**The fix removes the overlay entirely.** The link fills its own cell via padding — a `<td>` needs no positioning tricks — and the whole-row target is given up. A smaller click target is a small cost; a click target that silently opens the wrong financial record is not survivable in a demo about not guessing.
+
+Swept the rest of the codebase for the same shape: the only other `position: absolute` rules are `.sr-only` and `.skip-link`, both correct.
+
+---
+
+## Day 15 (2026-09-01), evening — a walkthrough by the person who has not been reading the code
+
+Tejas clicked through the finished frontend and reported six things wrong with it. **Four were not bugs, and the two that were are both worth more than the four.** Writing down which is which, because "the builder walks their own UI" and "somebody else walks it" produce different lists, and this is the only entry in this file generated the second way.
+
+### The one that inverted: "amount at risk ₹999 wherever I click"
+
+It reads as stubbed data. It is the **ambiguity mechanism** (ADR-104).
+
+```
+₹999   × 8  →  AMBIGUOUS_MATCH ×6, MISSING_IN_BANK ×2
+₹1,499 × 6  →  AMBIGUOUS_MATCH ×6
+₹1,199 × 6  →  AMBIGUOUS_MATCH ×6
+```
+
+**18 of 22 `AMBIGUOUS_MATCH` exceptions sit on three round price points**, because `planting.ts` *builds* an ambiguity cluster by putting several payments on one price point, one merchant, one day. The shared amount is what makes them ambiguous. Give those records distinct amounts and the engine matches them trivially — the category disappears, and so does ui-spec §7 step 5, the moment the engine half of the pitch is built around.
+
+**It looks wrong for a real reason.** `AMBIGUOUS_MATCH` carries base severity `high` whatever the amount, so all 22 land in the high band; the default sort shows the ₹4L items first and then a long tail of identical small ones. Repeat rate inside the high band is **47.8%**. Nobody scrolling that list would guess the repetition is load-bearing.
+
+> **THE NEAR MISS IS THE ENTRY.** The instruction was to fix it, and the fix was two hours of generator work that would have invalidated the committed answer key, the score report, the deployed fixtures, every figure in Days 9–15 of this file — **and deleted the demo's centrepiece.** It was also textbook ADR-027: changing a generator parameter because a measured artefact looked wrong. That the complaint was aesthetic rather than numeric changes nothing about the mechanism. Investigating before editing cost twenty minutes.
+
+### The one that was real, and made the first one look worse
+
+**All 9 `DUPLICATE_RECORD` exceptions carry `amountAtRiskPaise: null`, and always have** (ADR-105). The frontend rendered that as an empty cell and as the sentence *"Severity high ·  at risk"* — a visible gap mid-clause. Clicking a duplicate showed a blank money box, three cells from a ₹999 that looked equally fake.
+
+The cause is inside one function. `classify.ts:135` looks the amount up in `byId`, built from `pool`. Twenty-five lines above, the same function states the governing fact in a comment — *"an excluded exact `DUPLICATE_RECORD` never enters `pool`"* — and builds a **second map** to work around exactly that for the sort comparator.
+
+> **TWO FACTS, BOTH WRITTEN DOWN, IN THE SAME FILE, BY THE SAME AUTHOR — AND THE BUG IN THEIR CONJUNCTION.** This is the Day 9 `#40` pattern reproduced inside a single function, and it is the fourth or fifth instance in this repo. The author patched the consequence they were looking at and left the one they were not.
+
+**And TypeScript could not have caught it.** The wire type is `string | null`; `null` is a legal `ReactNode`. Widening the type from `string` to `string | null` produced **zero new errors** at four render sites that were all wrong. Only opening the page found it.
+
+Frontend now guards it — `n/a` in the list, *"Not quantified"* plus the reason on the detail page. **Never `₹0`**: a fabricated zero in a money column is the same failure as an engine figure in a slot labelled measured. The engine-side fix is deferred because `amountAtRiskPaise` feeds `severity.ts`, and engine output changes end with a re-score, not a frontend commit.
+
+### The four that were not bugs
+
+- **"Reject expects a particular string?"** No — `requireString` accepts any non-empty text and stores it verbatim as the audit `reason`. Working as designed.
+- **"Review is only cosmetic — /matches?tier=manual is empty."** Review works: 2 matches are `human_confirmed`, audit entries #729–730. `manual` is the tier for endpoint 21 (not built, ADR-102); approving a fuzzy proposal keeps `tier: fuzzy` and flips the status. The real gap is that `/matches` filters by tier and not status, so approvals are invisible.
+- **"Audit still shows my earlier approvals."** Append-only, trigger-enforced (ADR-015). If they vanished the chain would break. The feature working.
+- **"No aliases taught"** — deliberate, and the page says so.
+
+### Two real frontend bugs found the same way
+
+- **"68 proposals remain" above, "69" below.** Both read the same stale prop; the `- 1` was a guess I wrote into the done-screen and never reconciled with the `Paginate` beneath it.
+- **Approve, then Next, shows "Approved" again.** `<ReviewCard>` is rendered without a `key`, so React reuses the instance across `?page=` navigation and the `done` state survives. My "Reload to pull the next one" copy was a workaround written around my own bug.
+
+### On spend safety, checked because it was asked
+
+Every mutation the frontend can perform — approve, reject, resolve, verify chain — is **zero-LLM**. The Analyst surfaces are GET-only and render persisted investigations. The batch investigate endpoint is not called from anywhere in the UI. The one automatic call path is `POST /api/runs` → S13 explain (≤6 Anthropic calls, ~$0.03), and nothing in the UI calls it **yet** — task 7c will, on every click. Gating has to land with 7c, not after it.
+
+---
+
+## Day 15 (2026-09-01), later still — U18: six screens, and a third instance of a field that lies by being accepted
+
+All six remaining screens are built: exception list, exception detail, review queue, audit, matches, aliases, plus the record inspector. Typecheck and `next build` clean across nine routes. `apps/api` untouched again.
+
+**The write path is exercised, not assumed.** `POST /api/exceptions/:id/resolve` was run end to end against the live local API: the exception moved to `human_resolved`, **audit entry #728 was appended with the reason verbatim**, and the audit screen's `human` actor filter — which had been empty all day — now returns it. This repo has a long record of guards nobody watched fire; a workflow nobody watched complete is the same defect.
+
+### `datasetSeed` is accepted by the API and used nowhere — the third instance of one pattern
+
+Asked whether the engine can run on fresh data, the answer turned out to be: the generator can, the API cannot, and the API does not say so.
+
+`routes/runs.ts` parses `datasetSeed`, persists it on the run row and serialises it back on every `RunSummary`. `readSeedDataset()` always returns the committed holdout CSVs from a fixed path. **Pass `datasetSeed: 12345` and you get a run labelled seed-12345 that reconciled seed-90210 data.**
+
+> **THIS IS THE SAME DEFECT AS `AGENT_MAX_COST_USD_PER_RUN` AND `STALE_RUN_TIMEOUT_MINUTES`.** Three times now: a field that is parsed, persisted, documented, published to clients — and enforced nowhere. Every one was invisible to a green suite, because the test that exists asserts the field round-trips, and it does. **The missing test in all three cases is the same one: assert that the field CHANGES something.** ADR-103 records the finding; the fix (reject it, or wire it to a second committed dataset) is scheduled after U18.
+
+### Three defects the screens found in themselves
+
+1. **The explanation column was four words wide.** `table-layout: fixed` sizes columns from the first row when nothing declares widths, and what it chose left ui-spec §3's single most emphatic requirement — *the explanation must be legible while scrolling* — rendering as `A bank credit has no matching gateway…`. Fixed with an explicit `<colgroup>` giving that column 44% and clamping to three lines. **It typechecked, built and returned 200 the whole time.** Only looking at it found this.
+
+2. **`The engine looked at 0 records`.** The no-candidates branch printed `candidatesConsidered` unconditionally, and on a record where blocking produced nothing the sentence became an accidental insult to the engine. The two cases are now genuinely different statements: *scored N and none reached the floor* versus *nothing was in range to score*, which is a real distinction and the second one is itself the finding.
+
+3. **Two CSS modules and one route were written to the repository root** instead of `apps/web`, because the Bash tool's working directory persists across calls and two `mkdir && cat >` commands ran from the wrong one. The page 500'd with `Module not found`. Harmless, caught in a minute — but it is the second time today a stale cwd cost a cycle, the first being `npm run build` clobbering the dev server's `.next` twice.
+
+### Two spec deviations, both deliberate, both stronger than what was asked for
+
+- **The record inspector is a route, not a modal** (ADR-101). Three surfaces link to a record — an Analyst citation, a match member, a rejected candidate — and every one of those should survive a middle-click. Every filter, page and selection across all six screens is a query param for the same reason: the demo path in §7 is now a sequence of shareable links, so a click that goes wrong on stage is still one URL away from recovery.
+- **Manual match (endpoint 21) is not built, and the screen says so** (ADR-102). It needs a record picker over the whole run, which is a screen rather than a button, and §8's order cuts from the bottom of priority 1. A judge who reads *"these two are the same, the engine just couldn't prove it"* will look for that action; finding nothing reads as an oversight, finding a sentence explaining the gap reads as a decision.
+
+### The Vercel guidelines pass, second run
+
+Over the U18 files. One finding: the three non-auth free-text inputs (`note`, `rejectReason`) lacked `autocomplete="off"`, which invites a password manager to offer to fill an audit-log reason. Fixed. Clean on the rest — no straight quotes in visible text, no `transition: all`, no `outline: none` outside its `:focus-visible` replacement, every input labelled, every async result inside an `aria-live` region, `<select>` carrying explicit `background-color` and `color` for Windows dark mode.
+
+---
+
+## Day 15 (2026-09-01), later — U17: the frontend's first screen, and three places the ui-spec asked for a chart the data cannot draw
+
+The design system and the dashboard are built. Typecheck and `next build` clean, rendered against a real local API on `recon_v2` with a score report posted so `measured` is non-null. Nothing in `apps/api` was touched; the engine and the score report are byte-identical to this morning's.
+
+### Nothing "broke" in the running sense. Three things were WRONG IN THE SPEC, and each would have shipped as a false chart
+
+The ui-spec was written on Day 3, against response shapes that did not exist yet. It is binding on intent and it was not able to check its own arithmetic. All three of these were found by trying to render them (ADR-099):
+
+1. **`identityEstablished` is not a segment of the tier bar.** §2 block 2 lists `identity` among the stacked bar's segments. `tierPairCounts` builds the tier buckets from the internal pairs of every assembled group; `run-metrics.ts` then grafts `identityEstablished` onto the same object as a **separate diagnostic** — it counts S8 verdicts, not pairs. Drawing it as a slice inflates the bar from 747 to 756 and quietly changes every other proportion. **The object it arrives in looks exactly like a tier map, which is the whole reason this was easy to get wrong.** It is now rendered beside the bar, labelled as not-a-tier.
+
+2. **`unmatched` is not a segment either — it is a different unit.** The bar divides **pairs**; unmatched is a count of **records**. A bar cannot divide two units without lying about at least one.
+
+3. **Severity-within-category does not exist in any endpoint.** §2 block 3 asks for severity as colour inside each category bar. Endpoint 5 reports `byCategory` and `bySeverity` as independent distributions and endpoint 6's facets do the same — nothing served says how many `MISSING_IN_LEDGER` exceptions are `high`. Colouring the bars by severity would have meant **inventing the cross-tab**, on the screen whose subject is honesty. Severity is drawn as its own distribution instead.
+
+### The one that matters: the dashboard nearly shipped a self-reported number in a measured tile
+
+ui-spec §2 block 4.5 asks for a **`hallucinated resolutions: 0`** tile, described as the agent's equivalent of the false-positive tile. Per ADR-053 and validation-strategy §7 that is a **measured** figure, from `tools/score`.
+
+Endpoint 26 returns a field with exactly that name. `routes/investigations.ts` sets it:
+
+```
+agentMetrics: { ...metrics, hallucinatedResolutions: metrics.groundingFailures }
+```
+
+It is `groundingFailures` verbatim — **the same integer under a second name**, self-reported, and on this run it is **3, not 0**.
+
+Rendering it as asked would have been wrong twice over: a ground-truth-shaped claim sourced from the agent's own table (the exact substitution ADR-041 exists to prevent), and a reader concluding the agent invented three resolutions when what actually happened is that the grounding gate **caught** three. Both readings are worse than the truth.
+
+The dashboard now renders the gate's count as an engine figure under its real name — *Grounding-Gate Rejections* — and renders the measured tile as **absent**, because `tools/score` still does not score the Analyst. The tile stays on screen while empty; the absence is the finding.
+
+> **THE PATTERN, AND IT IS THE SAME ONE AS ADR-094's.** A number that is *parsed, named and served* is not a number that is *measured*. `AGENT_MAX_COST_USD_PER_RUN` was parsed, documented and enforced nowhere; `STALE_RUN_TIMEOUT_MINUTES` still is. `hallucinatedResolutions` is the UI-facing instance of the same shape: **a field whose name makes a claim its implementation does not**. Every one of these was invisible to a green test suite, because a test asserts the field is present and populated — which it is.
+
+### A hardcoded count in the page copy, caught by the guidelines pass
+
+A section standfirst read *"…what the explain layer actually spent to write 212 explanations."* Correct today, wrong the next time the engine runs, on the page whose whole argument is that its numbers are checkable. Now derived from `metrics.engine.exceptions.total`. The rule is written at the top of `page.tsx`: **every count in the copy is derived, never typed.**
+
+### What the Vercel Web Interface Guidelines pass found
+
+Run once, at the end, over `app/`, `components/` and `lib/`. Fixed: two straight apostrophes in visible text (`'` → `’`), `role="status"` on static server-rendered content that is not an async update, a missing non-breaking space in the `ms` formatter, missing `touch-action: manipulation` and `-webkit-tap-highlight-color`, and disclosure summaries with no interactive affordance. Passing without change: focus-visible rings, `color-scheme` and `theme-color` in both schemes, skip link, heading hierarchy, semantic tables over ARIA, `tabular-nums`, `text-wrap: balance`/`pretty`, `prefers-reduced-motion`, no `transition: all`, `Intl.*` for every number and date, URL-reflected state (`?run=`), `translate="no"` on identifiers, `min-width: 0` on flex children.
+
+**Two spec deviations, both deliberate and both improvements.** ui-spec §2 puts the match rate's denominator *on hover*; it is a `<details>` disclosure instead, because hover exposes nothing to a keyboard or a touch screen and *"the denominator is inspectable"* is a claim this project cannot afford to make only to people using a mouse. Same for the basis of every measured figure.
+
+### One thing to fix before the demo, not a defect
+
+`ANTHROPIC_API_KEY` on Railway is still a placeholder, so the deployed run's explain layer fell back to templates and **no score report has been posted to the deployed database**. The dashboard therefore renders two of four headline tiles as *"not measured"* on the live URL while showing all four locally. That is the honest behaviour working correctly — and it is also the first impression a judge gets. Posting a score report to the deployed run is a one-command fix and should happen before the video.
+
+---
+
 ## Day 15 (2026-09-01) — the deploy is live, and `llmConfigured` had been lying since the swap
 
 The API is up on Railway and **reproduces the local numbers exactly**: 65.22% match rate, 212 exceptions, 21 signatures, a 612-entry audit chain that verifies and is anchored, in 2.4 s. Nothing about the managed environment changed a decision, which is the result ADR-074 wanted from deploying early.

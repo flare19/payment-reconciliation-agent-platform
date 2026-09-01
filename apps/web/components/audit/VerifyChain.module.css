@@ -1,0 +1,82 @@
+.wrap { display: flex; flex-direction: column; gap: var(--s4); }
+
+.top { display: flex; align-items: center; gap: var(--s4); flex-wrap: wrap; }
+
+.button {
+  flex: none;
+  padding: var(--s3) var(--s5);
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: var(--t-meta);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.button:hover:not(:disabled) { background: var(--ink-2); border-color: var(--ink-2); }
+.button:disabled { opacity: 0.6; cursor: progress; }
+
+.blurb {
+  max-width: 52ch;
+  font-size: var(--t-micro);
+  line-height: 1.6;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+.result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  padding: var(--s5);
+  border-left: 2px solid var(--rule-strong);
+  border-radius: 0 4px 4px 0;
+}
+
+.ok { background: var(--verified-bg); border-left-color: var(--verified); }
+.bad { background: var(--sev-high-bg); border-left-color: var(--sev-high); }
+
+.verdict {
+  font-size: var(--t-figure-sm);
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+.ok .verdict { color: var(--verified); }
+.bad .verdict { color: var(--sev-high); }
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--s4);
+  margin: 0;
+}
+
+.facts > div { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+.wide { grid-column: 1 / -1; }
+
+.facts dt {
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.facts dd { margin: 0; font-size: var(--t-meta); color: var(--ink); min-width: 0; }
+
+.hash { font-size: var(--t-micro); color: var(--ink-2); overflow-wrap: anywhere; }
+
+.error {
+  padding: var(--s3) var(--s4);
+  border-left: 2px solid var(--sev-high);
+  background: var(--sev-high-bg);
+  border-radius: 0 3px 3px 0;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: var(--t-micro);
+  line-height: 1.6;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}

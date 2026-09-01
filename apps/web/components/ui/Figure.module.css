@@ -1,0 +1,109 @@
+.figure {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  min-width: 0;
+  padding: var(--s4) var(--s5) var(--s5);
+  background: var(--surface);
+  /* The top rule is the provenance carrier: a 2px band a viewer reads before
+     reading the number itself. */
+  border-top: 2px solid var(--rule-strong);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  min-height: 1.25rem;
+}
+
+.value {
+  margin: 0;
+  font-size: var(--t-figure);
+  font-weight: 500;
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+  overflow-wrap: anywhere;
+}
+
+.hero .value { font-size: var(--t-display); }
+
+.unit {
+  margin-left: 0.55em;
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: var(--t-meta);
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.measured .unit { color: color-mix(in srgb, var(--verified) 72%, var(--ink-3)); }
+
+.absentValue {
+  margin: 0;
+  font-size: var(--t-body);
+  font-style: italic;
+  line-height: 1.35;
+  color: var(--ink-4);
+  text-wrap: pretty;
+}
+
+.note {
+  font-size: var(--t-meta);
+  line-height: 1.4;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+/* ── provenance ───────────────────────────────────────────────────────────── */
+
+.engine { border-top-color: var(--rule-strong); }
+
+.measured {
+  border-top-color: var(--verified);
+  background: var(--verified-bg);
+}
+.measured .value { color: var(--verified); }
+
+.absent {
+  border-top-color: var(--rule);
+  background: var(--surface-sunk);
+}
+
+.provenanceChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex: none;
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--verified);
+}
+
+.tick {
+  width: 0.6875rem;
+  height: 0.6875rem;
+}
+
+/* ── the basis disclosure ─────────────────────────────────────────────────── */
+
+/* Pushed to the bottom of the tile rather than trailing its own note. Notes
+   wrap to different depths, so without this the four disclosures sit at four
+   heights and the row stops reading as one instrument. */
+.basis {
+  margin-top: auto;
+  padding-top: var(--s3);
+  font-size: var(--t-micro);
+}
+
+.basisBody {
+  margin-top: var(--s2);
+  padding-left: var(--s3);
+  border-left: 2px solid var(--rule);
+  color: var(--ink-3);
+  line-height: 1.5;
+}

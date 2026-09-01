@@ -1,0 +1,72 @@
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font-size: var(--t-micro);
+  font-weight: 550;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.neutral {
+  background: var(--surface-sunk);
+  border-color: var(--rule);
+  color: var(--ink-2);
+}
+
+.outline {
+  background: transparent;
+  border-color: var(--rule-strong);
+  color: var(--ink-3);
+}
+
+.high {
+  background: var(--sev-high-bg);
+  border-color: color-mix(in srgb, var(--sev-high) 30%, transparent);
+  color: var(--sev-high);
+}
+
+.medium {
+  background: var(--sev-medium-bg);
+  border-color: color-mix(in srgb, var(--sev-medium) 30%, transparent);
+  color: var(--sev-medium);
+}
+
+.low {
+  background: var(--sev-low-bg);
+  border-color: var(--rule);
+  color: var(--sev-low);
+}
+
+.verified {
+  background: var(--verified-bg);
+  border-color: var(--verified-rule);
+  color: var(--verified);
+}
+
+/* ── actors ───────────────────────────────────────────────────────────────── */
+
+.actor {
+  background: transparent;
+  border-color: var(--rule);
+  color: var(--ink-2);
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: var(--t-micro);
+  text-transform: lowercase;
+}
+
+.actorDot {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.actor_engine { color: var(--tier-2); }
+.actor_human { color: var(--verified); }
+.actor_llm { color: var(--sev-medium); }
+.actor_agent { color: var(--tier-4); }

@@ -1,0 +1,108 @@
+/**
+ * Display names and one-line glosses for the vocabulary the API speaks in.
+ *
+ * One table, because these strings appear on the dashboard, the exception list,
+ * the exception detail and the audit screen, and a category that reads
+ * `Missing in Ledger` in one place and `MISSING_IN_LEDGER` in another looks
+ * like two different things to someone seeing both for the first time.
+ *
+ * Every lookup falls back to the raw key. A taxonomy value that reaches the UI
+ * without an entry here should be visibly untranslated rather than silently
+ * blank — a missing label is a bug worth seeing, and an empty cell is not.
+ */
+
+export const CATEGORY_LABEL: Record<string, string> = {
+  MISSING_IN_LEDGER: 'Missing in Ledger',
+  MISSING_IN_GATEWAY: 'Missing in Gateway',
+  MISSING_IN_BANK: 'Missing in Bank',
+  AMBIGUOUS_MATCH: 'Ambiguous Match',
+  AMOUNT_MISMATCH: 'Amount Mismatch',
+  DUPLICATE_RECORD: 'Duplicate Record',
+  UNSPLITTABLE_BATCH: 'Unsplittable Batch',
+  TIMING_DRIFT: 'Timing Drift',
+};
+
+export const CATEGORY_GLOSS: Record<string, string> = {
+  MISSING_IN_LEDGER: 'Seen by the gateway or the bank, never booked to the ledger.',
+  MISSING_IN_GATEWAY: 'In the bank or the ledger, with no gateway record behind it.',
+  MISSING_IN_BANK: 'Captured and booked, but never seen settling in the bank.',
+  AMBIGUOUS_MATCH: 'Two or more candidates too close to separate. The engine refused to choose.',
+  AMOUNT_MISMATCH: 'Agreeing on identity, disagreeing on amount beyond tolerance.',
+  DUPLICATE_RECORD: 'The same source record present more than once.',
+  UNSPLITTABLE_BATCH: 'A netted credit the engine could not decompose into its payments.',
+  TIMING_DRIFT: 'Matched, but settling outside the expected window for its instrument.',
+};
+
+export const RESOLVABILITY_LABEL: Record<string, string> = {
+  resolvable_by_human: 'Resolvable by a human',
+  needs_external_data: 'Needs external data',
+  unresolvable_from_sources: 'Unresolvable from these sources',
+};
+
+/**
+ * The question a reviewer asks before opening anything: is this worth my time?
+ * It is a rule output derived from the evidence, never an LLM judgement.
+ */
+export const RESOLVABILITY_GLOSS: Record<string, string> = {
+  resolvable_by_human:
+    'Candidates were found. Someone with context can decide what the engine would not.',
+  needs_external_data:
+    'Answerable, but not from these three files — it needs something nobody uploaded.',
+  unresolvable_from_sources:
+    'No anchor and no candidate. Reconciling this from these sources is not possible, by construction.',
+};
+
+export const STATUS_LABEL: Record<string, string> = {
+  open: 'Open',
+  explained: 'Explained',
+  human_resolved: 'Resolved',
+  wont_fix: 'Won’t Fix',
+  pending_review: 'Pending Review',
+  auto_confirmed: 'Auto-confirmed',
+  human_confirmed: 'Human-confirmed',
+  rejected: 'Rejected',
+};
+
+export const TIER_LABEL: Record<string, string> = {
+  exact: 'Exact',
+  alias: 'Alias-resolved',
+  fuzzy: 'Fuzzy',
+  batch: 'Batch-decomposed',
+  manual: 'Manual',
+  implied: 'Implied',
+};
+
+/**
+ * Where an explanation's words came from. Labelling this is not a technical
+ * detail — it is the visible proof that the system works without the LLM
+ * (ui-spec §4), and it is the difference between "the model wrote this" and
+ * "a template did, because the model was unavailable and nothing broke".
+ */
+export const EXPLANATION_SOURCE_LABEL: Record<string, string> = {
+  llm: 'Written by the model',
+  llm_cache: 'From the signature cache',
+  template: 'Deterministic template',
+};
+
+export const ACTOR_LABEL: Record<string, string> = {
+  engine: 'Engine',
+  human: 'Human',
+  llm: 'Model',
+  agent: 'Analyst',
+};
+
+export const VERDICT_LABEL: Record<string, string> = {
+  RESOLUTION_PROPOSED: 'Resolution Proposed',
+  CONFIRMED_UNRESOLVABLE: 'Confirmed Unresolvable',
+  NEEDS_EXTERNAL_DATA: 'Needs External Data',
+  INSUFFICIENT_EVIDENCE: 'Insufficient Evidence',
+};
+
+export const SOURCE_LABEL: Record<string, string> = {
+  gateway: 'Gateway',
+  bank: 'Bank',
+  ledger: 'Ledger',
+};
+
+export const label = (table: Record<string, string>, key: string | null | undefined) =>
+  (key ? table[key] ?? key : '—');
