@@ -164,22 +164,49 @@ lesson through a third door: the countdown is now right in tone and measures the
 
 ---
 
-## DEFECT 3 — corroboration grounding fails 10 out of 10, identically
+## DEFECT 3 — WITHDRAWN. The diagnosis was wrong (AUDIT-3, see #54)
 
-```
-10 of 10 corroborations · grounding: "reasoning step 1 has no matching tool call"
-```
+> **This section originally concluded that corroboration's grounding wiring was at
+> fault. It was not.** The text is replaced rather than edited, because the
+> reasoning that produced it is the useful part.
 
-A 100% uniform failure at the same step with the same message is a defect signature, not a model
-signature. Every corroboration reached a verdict (`NO_NEW_EVIDENCE` ×10, at 5–6 steps) and every
-one was rejected because its first reasoning step referenced a tool call the runtime had no record
-of. The corroboration path was added on Day 12 with its own table and vocabulary (ADR-081,
-ADR-087); its grounding wiring appears not to thread tool-call records the way A2's does.
+**What it said:** 10 of 10 corroborations failed grounding with the identical
+message `reasoning step 1 has no matching tool call`, and a 100% uniform failure
+at the same step is a defect signature rather than a model signature — so the
+corroboration path, added on Day 12 with its own table and vocabulary, "appears
+not to thread tool-call records the way A2's does."
 
-This is the single highest-value thing for AUDIT-3 to confirm, because it means **the entire
-corroboration feature has never once produced an accepted result.**
+**What was actually true.** The wiring is correct. `corroborate()` passes
+`out.toolCalls` from the same `runAgentLoop`, stamped with the corroboration's
+own id, and #21's `assertContextIsScoped` verifies it. The defect was in A3's
+JOIN KEY: `digestFor` matched a reasoning step to a tool call on
+`(step, tool)`, where `step.step` is the model's narrative index and
+`ToolCallRecord.step` was the runtime's turn counter. Nothing kept them in sync.
+It was never corroboration-specific — the same failure appears in three
+investigations (`e210b908`, `3cb9cbe6`, `affe7792`). Counting properly, **13 of
+the 15 verdict-producing runs on this baseline were rejected by a numbering
+collision, not by a hallucination.**
 
----
+It only *looked* uniform on corroborations because of a second, unrelated defect
+(#59): every corroboration opened with `get_exception(matchId)`, which cannot
+succeed because a match id is not an exception id, so every one of them desynced
+at exactly step 1.
+
+**The lesson worth keeping, and it is the reason this section stays in the file.**
+A clean, uniform failure signature is strong evidence that a defect exists and
+weak evidence about *where*. The uniformity was real and pointed at real code; it
+just pointed one layer too far down. The diagnosis was reached quickly, written
+confidently, and was wrong — and the thing that caught it was an isolated audit
+reading the join key rather than the failure message.
+
+**Consequences for the numbers above.** The three genuine hallucinations the A3
+gate caught remain genuine and ADR-050 still stands. But the honest count is
+3 of 13, not 13 of 13, and the grounding-failure count that `agent-design.md` §7
+reads as "the prompt or the tools need work" was mostly counting our own
+bookkeeping. `grounding-gate.ts`'s own warning applies to us: *a metric that
+counts our own bugs as the model's hallucinations is worse than no metric.*
+
+Fixed in `2af12a7`; the join is now `(tool, resultDigest)`.
 
 ## What to carry into the Anthropic swap
 

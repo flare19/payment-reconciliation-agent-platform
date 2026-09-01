@@ -597,3 +597,61 @@ describe('a binding token ceiling asks for a verdict instead of cutting off (#64
     assert.match(out.stopReason, /would cross the run ceiling/);
   });
 });
+
+/**
+ * ── A FORMATTING MISS EARNS ONE RE-ASK; A HALLUCINATION STILL EARNS NONE ──
+ *
+ * The first live Sonnet run lost 2 of 2 investigations to "the model finished
+ * but its final message was not usable JSON" — after 4-7 real tool calls each,
+ * with no bound having bound. Discarding that is the same waste #64 removed
+ * from the token ceiling, arriving through a different door.
+ *
+ * This does NOT weaken A3's no-retry rule. That rule forbids a second attempt
+ * at a HALLUCINATED answer, because a retry loop selects for whichever output
+ * happens to pass the gate. Here nothing is re-judged: the same evidence is
+ * re-serialised, and the gate still sees the result exactly once.
+ */
+describe('prose instead of a verdict earns ONE re-ask (ADR-093)', () => {
+  const prose = (): AgentTurnResult => ({
+    ok: true, kind: 'final',
+    text: 'Based on my investigation, this exception cannot be resolved.',
+    usage: { tokensIn: 100, tokensOut: 20 },
+  });
+
+  test('the re-ask withholds tools and the second reply is used', async () => {
+    const client = fakeClient([toolCall('c1', 'get_exception'), prose(), finalVerdict()]);
+    const out = await investigate(REQUEST, deps({ client }), AGENT_DEFAULTS.budget);
+
+    assert.equal(client.requests.length, 3, 'tool call, prose, then the re-ask');
+    assert.deepEqual(client.requests[2]!.tools, [], 'the re-ask offers no tools');
+    const last = client.requests[2]!.messages[client.requests[2]!.messages.length - 1]!;
+    assert.match(last.role === 'user' ? last.text : '', /ONLY the verdict JSON object/);
+    assert.equal(out.verdict.verdict, 'CONFIRMED_UNRESOLVABLE');
+    assert.equal(out.verdict.groundingPassed, true, 'the recovered verdict still passes A3');
+  });
+
+  test('prose TWICE is accepted as a failure — the re-ask is one-shot', async () => {
+    const client = fakeClient([toolCall('c1', 'get_exception'), prose(), prose()]);
+    const out = await investigate(REQUEST, deps({ client }), AGENT_DEFAULTS.budget);
+
+    assert.equal(client.requests.length, 3, 'exactly one re-ask, never a loop');
+    assert.equal(out.verdict.verdict, 'INSUFFICIENT_EVIDENCE');
+    assert.match(out.stopReason, /not usable JSON, twice/);
+  });
+
+  test('the re-ask does NOT re-judge a verdict the gate rejected', async () => {
+    // The line that keeps ADR-050 intact. A verdict that PARSES and then fails
+    // grounding is a hallucination, and it is downgraded once with no second
+    // attempt — only unparseable output earns the re-ask.
+    const hallucinated = finalVerdict({
+      reasoning: [{ step: 1, tool: 'rerun_subset_search', arguments: {},
+        resultDigest: 'invented', inference: 'I widened the bounds' }],
+    });
+    const client = fakeClient([toolCall('c1', 'get_exception'), hallucinated, finalVerdict()]);
+    const out = await investigate(REQUEST, deps({ client }), AGENT_DEFAULTS.budget);
+
+    assert.equal(client.requests.length, 2, 'a rejected verdict is NOT re-asked');
+    assert.equal(out.verdict.groundingPassed, false);
+    assert.match(out.verdict.groundingFailure!, /never called/);
+  });
+});

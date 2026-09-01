@@ -201,6 +201,21 @@ export function createAnthropicAgentClient(
         .filter((b): b is Anthropic.TextBlock => b.type === 'text')
         .map((b) => b.text).join('\n').trim();
 
+      // TRUNCATION IS NOT A CONCLUSION. `max_tokens` counts THINKING tokens too
+      // on an adaptive-thinking model, so a turn can spend its whole output
+      // allowance reasoning and return a half-written verdict — which parses to
+      // nothing and reads, in the audit trail, exactly like a model that
+      // answered in prose. Two very different defects with one symptom, so the
+      // client names which one it was rather than leaving the loop to guess.
+      if (response.stop_reason === 'max_tokens') {
+        return {
+          ok: false, reason: 'transport',
+          detail: `the reply was cut off at the ${request.maxOutputTokens}-output-token `
+            + 'ceiling (thinking tokens count toward it), so no verdict was returned',
+          usage, retryable: false,
+        };
+      }
+
       const toolUses = response.content
         .filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
 

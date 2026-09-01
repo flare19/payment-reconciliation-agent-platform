@@ -362,8 +362,9 @@ export async function runAgentLoop(
     const remaining = Math.max(0, Math.min(budget.maxSteps - steps, turnsOnTokens));
 
     const pacing = concludeNow
-      ? 'FINAL STEP. Do not call any more tools — none are available on this turn. Write '
-        + 'your verdict JSON now, using only what you actually retrieved. A verdict from '
+      ? 'FINAL STEP. Do not call any more tools — none are available on this turn. Reply '
+        + 'with ONLY the verdict JSON object and no other text: no preamble, no explanation '
+        + 'outside the JSON, no markdown fence. Use only what you actually retrieved. A verdict from '
         + 'partial evidence, with its limits stated, is worth more than no verdict. If what '
         + 'you found does not support a proposal, say CONFIRMED_UNRESOLVABLE or '
         + 'NEEDS_EXTERNAL_DATA and state why.'
@@ -383,7 +384,10 @@ export async function runAgentLoop(
       // live run's worst outcome was a model that concluded early and fabricated
       // a tool call it had never made -- it cannot do that with nothing to call.
       tools: concludeNow ? [] : declarations,
-      maxOutputTokens: 2048,
+      // The conclude turn needs room for BOTH the thinking and the verdict:
+      // `max_tokens` counts thinking on an adaptive model, so the allowance that
+      // is comfortable for a tool call can leave a verdict half-written.
+      maxOutputTokens: concludeNow ? 4096 : 2048,
     });
 
     // Usage accrues even on failure — a request that reached the model cost
@@ -399,9 +403,28 @@ export async function runAgentLoop(
 
     if (turn.kind === 'final') {
       raw = extractVerdict(turn.text);
+      // ── PROSE IS NOT A VERDICT, BUT IT IS NOT A HALLUCINATION EITHER ──
+      // Sonnet 5 at low effort ends turns in prose often enough that the first
+      // live run lost 2 of 2 investigations to "the model finished but its
+      // final message was not usable JSON" — after 4-7 REAL tool calls each,
+      // with no bound having bound. Discarding that is the same waste #64
+      // removed from the token ceiling, for a different reason.
+      //
+      // So a formatting miss earns ONE re-ask, with tools withheld and the
+      // schema restated. This does NOT weaken A3's no-retry rule: that rule
+      // forbids a second attempt at a HALLUCINATED answer, because a retry loop
+      // selects for whichever output happened to pass the gate. Nothing here is
+      // re-judged — the same evidence is re-serialised, and the gate still sees
+      // it exactly once.
+      if (raw === null && !concludeNow) {
+        concludeBecause = 'the previous reply was prose rather than the verdict JSON';
+        concludeNow = true;
+        messages.push({ role: 'assistant', text: turn.text, toolCalls: [] });
+        continue;
+      }
       stopCause = 'concluded';
       stopReason = raw === null
-        ? 'the model finished but its final message was not usable JSON'
+        ? 'the model finished but its final message was not usable JSON, twice'
         : `the model concluded after ${steps} step(s)`;
       break;
     }
