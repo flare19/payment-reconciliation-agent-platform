@@ -214,9 +214,57 @@ On Claude Pro, Sonnet and Opus share one quota pool, and Opus costs 1.7–5× mo
 
 ## 10. Current state
 
-**As of 2026-09-01 (Day 13): everything through AUDIT-3 is MERGED TO `main` (`3546b6f`). No unmerged branches remain.** 762 tests in `apps/api`, 235 at root, typecheck and both builds clean.
+**As of 2026-09-02 (Day 14): the Anthropic swap is MERGED TO `main` (`694d5fb`). No unmerged branches. Zero open P1s in the backend.** 821 tests in `apps/api`, 235 at root, typecheck and both builds clean.
 
-**The build is now one task away from the frontend: swap Gemini for Anthropic, and make ONE bounded verification run.** Everything else in the backend is either done or deliberately parked.
+**Everything above the line in the old critical path is DONE. What remains is deploy, frontend, audit, submission.**
+
+### The provider is Anthropic, on `claude-sonnet-5` (ADR-093)
+
+```
+LLM_PROVIDER=anthropic   both surfaces, one switch (health reports ONE boolean)
+LLM_AGENT_MODEL=claude-sonnet-5      $2 / $10 per MTok
+LLM_EXPLAIN_MODEL=claude-sonnet-5    AGENT_EFFORT=low
+```
+
+Sonnet 5 over Opus 5 deliberately: 2.5x cheaper on both sides, and on a hard-capped prepaid key with auto-reload OFF the binding constraint is how many runs are affordable, not how good any one is. `LLM_PROVIDER=gemini` still restores Day 12 exactly.
+
+**Measured, not assumed: $0.10–0.12 and 41,273 tokens per investigation. Median 4.8 s/turn.** Full record in [`docs/analyst-baseline-sonnet5.md`](docs/analyst-baseline-sonnet5.md).
+
+### What the live verification proved, and what it did not
+
+| | | |
+|---|---|---|
+| #52 | ✅ | 21/21 signatures generated live, **zero** `ungrounded_specific` false positives over 212 exceptions |
+| #53 | ✅ | `RESOLUTION_PROPOSED` produced **and grounded**, twice |
+| #54 | ✅ | corroboration grounding **0/10 → 5/5** |
+| #55 | ✅ | S10's own population — **54 records** where `unmatchedOnly` gave 14 |
+| ADR-086 | ✅ | median 4.8 s/turn ⇒ ~48 s per investigation against §8's 60 s bound |
+
+Investigations went **1/20 grounded on Gemini → 7/10 on Sonnet 5**.
+
+> **THE ANALYST IS NOT "WORKING PERFECTLY", AND THE SUBMISSION MUST NOT SAY SO.** Three of ten investigations still fail. **Neither proposal was ACCEPTED** — both were refused at the constraint check for proposing a record the engine had already matched. That is ADR-053's guard working; it is not evidence that proposals are correct. **Proposal precision, false-despair recovered, unresolvable agreement and hallucinated resolutions do not exist as numbers**, because `tools/score` still does not score the Analyst. Feature-complete and plumbing-verified is the honest claim. Nothing stronger.
+
+### ON-DEMAND, NOT BATCH — the design decision that changes the frontend
+
+**The Analyst runs when a human opens an exception and asks for it. It does not sweep the queue.** Decided with Tejas on Day 14 and it is right on two independent grounds: an analyst wants the agent on the exception in front of them, and 212 exceptions × $0.11 is a run nobody can afford to repeat.
+
+The architecture already supports it — **endpoint 25 (`POST /api/exceptions/:exceptionId/investigate`) is exactly this**, built on Day 12, 202-then-poll. `runPhaseA` (the CLI) is the MEASUREMENT harness, not the product.
+
+> **This inverts which path is bounded, and that is now the top backend task.** `runPhaseA` carries the request budget and, since ADR-094, the cost cap. **Endpoint 25 — the one the frontend calls on every click — carries neither.** [#61](https://github.com/flare19/payment-reconciliation-agent-platform/issues/61) is re-triaged **P1** and must land BEFORE U17, or a frontend under development can spend the demo budget by clicking.
+
+### Five defects only a live model could find (Day 14)
+
+Each invisible to 818 passing tests. The full account is in `what-broke.md`.
+
+| Cost | Defect |
+|---|---|
+| $0 | The CLI sent a Gemini model id to the Anthropic API — caught by `--dry-run` |
+| $0.017 | The explain client lost 2 of 3 batches: the port carried Gemini's request but not its response schema |
+| $0.238 | Prose instead of verdict JSON, and `max_tokens` counts **thinking** tokens |
+| $0.232 | The `resultDigest` A3 demands echoed verbatim was **1,192 characters** |
+| $1.07 | Shortening the digest made it *look* like a record id; 6 of 10 cited the checksum |
+
+> **THE SIGNATURE MOVED EVERY TIME, AND THAT IS THE EVIDENCE.** `no matching tool call` (10/10) → `digest mismatch` → `citation is a digest` (6/10) → grounded. A fix confirmed by errors *stopping* is indistinguishable from a suppressed symptom; a fix confirmed by the error *changing shape* is not. **Two of the five were introduced by the previous fix** — the digest was 1,192 chars because nothing could confuse it with an id, and shortening it made everything confuse it with an id.
 
 ### What changed on Day 13
 
@@ -714,27 +762,36 @@ Each unit is one commit, reviewed before the next starts (the working agreement 
 | **U16** | Scale benchmark | — | **Deferred.** Nice-to-have against a hard deadline; see the ordering note below. |
 | **U15** | Q&A loop | — | **Treat as cut** (§11's own pre-agreed degradation order). |
 
-### THE REMAINING CRITICAL PATH — read this before planning a day
+### THE REMAINING CRITICAL PATH — tasks 1–4 are DONE
 
-Ordered by dependency, not preference. Everything above the line must happen; everything below it is optional and should be cut in this order if time runs short.
-
-| | Task | Depends on | Rough size |
+| | Task | Depends on | Size |
 |---|---|---|---|
-| 1 | **Anthropic swap** — two client files + config, on `swap-for-anthropic-api` off `main` | nothing | 2–3 h |
-| 2 | **The two unfiled bounds** (token/step inconsistency, pacing signal) | — | 1 h, and it must precede task 3 |
-| 3 | **#52** — S13 explain grounding check. **The last open P1.** | nothing | 1.5–2 h |
-| 4 | **ONE bounded verification run** — proves #53, #54, #55, ADR-086 latency, explain | 1, 2, 3 | 1 h |
-| 5 | **Deploy API to Railway** (U14, ADR-061/074) — acceptance is *"a second deploy is one command"* | 4 | 2–3 h |
-| 6 | **Frontend** (U17 design + dashboard, U18 remaining screens) | #43, 5 | 6–8 h |
-| 7 | **Deploy web to Vercel** (U19) | 6 | 1 h |
-| 8 | **AUDIT-4** final pre-submission pass | 7 | 2 h |
-| 9 | **U20** — accuracy report, README, pitch video, build-challenges write-up | 8 | 3–4 h |
-| — | *below the line* | | |
-| | U16 scale benchmark | — | 1–2 h, cut if needed |
-| | Analyst scoring in `tools/score` | 4, and affordable runs | 3 h, may be unaffordable |
+| ~~1~~ | ~~Anthropic swap~~ | | ✅ ADR-093 |
+| ~~2~~ | ~~The two unfiled bounds~~ | | ✅ ADR-094 |
+| ~~3~~ | ~~#52 — S13 explain grounding~~ | | ✅ ADR-092 |
+| ~~4~~ | ~~ONE bounded verification run~~ | | ✅ $2.83, six runs |
+| **5** | **[#61](https://github.com/flare19/payment-reconciliation-agent-platform/issues/61) — bound endpoint 25.** On-demand is the product path and it is unbounded | nothing | **1–2 h, BEFORE the frontend** |
+| 6 | **Deploy API to Railway** (U14, ADR-061/074) — acceptance is *"a second deploy is one command"* | 5 | 2–3 h |
+| 7 | **Frontend** (U17 design + dashboard, U18 remaining screens) | #43 ✅, 5, 6 | 6–8 h |
+| 8 | **Deploy web to Vercel** (U19) | 7 | 1 h |
+| 9 | **AUDIT-4** final pre-submission pass | 8 | 2 h |
+| 10 | **U20** — accuracy report, README, pitch video, build-challenges write-up | 9 | 3–4 h |
+| — | *below the line — cut in this order* | | |
+| | Analyst scoring in `tools/score` | today's 10+5 persisted verdicts | 3 h · **now affordable: it is OFFLINE, $0 of API** |
+| | U16 scale benchmark | — | 1–2 h |
 | | U15 Q&A loop | — | **already cut** |
 
-> **#43 gates the frontend and is on the nightly Sonnet routine.** If that routine has not landed it by the time U17 starts, do it by hand first — the browse list otherwise implies a match rate the headline contradicts, and a panelist will see both numbers on the same screen.
+**≈ 16–21 hours left, and the frontend is over a third of it.**
+
+> **Analyst scoring moved ABOVE "unaffordable".** It was parked because it needed runs nobody could pay for. Today's run persisted **10 investigations and 5 corroborations** in `recon_v2` against the committed answer key, and scoring them is offline work in `tools/score` that costs **$0 of API**. n=15 is small and any figure must be reported as a raw fraction with its denominator (ADR-020's discipline), but "unmeasured" and "measured on fifteen" are different claims and the second is available for free.
+
+> **What the Q&A loop is, since it keeps coming up.** `agent-design.md` §9 and endpoint 28: `POST /api/runs/:runId/ask` — a *second* loop over the same nine tools that answers a typed question about a finished run ("why wasn't settlement SBIN0R52 matched?") with clickable citations. `qa-loop.ts` is a two-line stub. §11's pre-agreed degradation order names it **cut first**, because it is the most demoable piece and the least defensible one. It stays cut.
+
+### The demo budget, and what a live demo actually costs
+
+**~$2.17 of the original $5 remains.** Measured today: **$0.10–0.12 per investigation**, ~$0.03 per engine run's explain pass.
+
+A five-minute demo that runs one engine pass and investigates two or three exceptions on camera costs **well under $1**. Leaving headroom for judges to click through it themselves is the reason to top up, not the demo itself. **The on-demand design is what makes that affordable** — a batch sweep of 212 exceptions would be ~$23 and is the shape this project deliberately does not have.
 
 ### Day 14 (Sep 3) — frontend
 
