@@ -655,3 +655,26 @@ describe('prose instead of a verdict earns ONE re-ask (ADR-093)', () => {
     assert.match(out.verdict.groundingFailure!, /never called/);
   });
 });
+
+describe('a citation is a record id, never a checksum (ADR-093)', () => {
+  // The first run on the shortened digest had SIX of ten investigations cite the
+  // DIGEST as a record id. The gate was right to reject them -- a digest is in no
+  // tool's `returnedIds` -- but the prompt had only ever said "cite ids a tool
+  // returned", and `get_exception#9e738444619a` reads exactly like one. Two
+  // changes, because either alone leaves the trap half-set: the digest now says
+  // `sha256` out loud, and the prompt says what a citation IS rather than only
+  // what it is not.
+  test('the prompt defines a citation by SHAPE and excludes the digest', () => {
+    const p = systemPrompt();
+    assert.match(p, /CITATIONS ARE RECORD IDs/);
+    assert.match(p, /UUID-shaped/);
+    assert.match(p, /resultDigest is NOT a record id/);
+    assert.match(p, /NEVER appear in "citations"/);
+  });
+
+  test('the digest format the prompt shows is the one the registry emits', () => {
+    // A prompt that illustrates a stale format teaches the model to produce
+    // something the gate will refuse — which reads as the model being wrong.
+    assert.match(systemPrompt(), /:sha256:/);
+  });
+});

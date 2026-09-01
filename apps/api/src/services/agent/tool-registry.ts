@@ -153,7 +153,11 @@ function recordDigest(t: NormalizedTransaction): Record<string, unknown> {
  */
 function digestOf(label: string, value: unknown): string {
   const json = JSON.stringify(value) ?? 'undefined';
-  return `${label}#${createHash('sha256').update(json, 'utf8').digest('hex').slice(0, 12)}`;
+  // `label:sha256:hex`, not `label#hex`. The first live run with the short form
+  // had SIX of ten investigations cite the DIGEST as though it were a record id
+  // -- it looked like one. A checksum should not be mistakable for an
+  // identifier, and saying `sha256` out loud costs nothing.
+  return `${label}:sha256:${createHash('sha256').update(json, 'utf8').digest('hex').slice(0, 12)}`;
 }
 
 /**
