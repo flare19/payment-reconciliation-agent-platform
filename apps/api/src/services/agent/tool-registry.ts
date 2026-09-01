@@ -43,6 +43,8 @@
  * arguments — an argument is what the model ASKED for, not what it was shown.
  */
 
+import { createHash } from 'node:crypto';
+
 import { withReadOnlyTransaction, type TxClient } from '../../db/pool.js';
 import { AGENT_DEFAULTS } from '../../config/defaults.js';
 import { formatPaise } from '../ingestion/money.js';
@@ -127,9 +129,35 @@ function recordDigest(t: NormalizedTransaction): Record<string, unknown> {
   };
 }
 
+/**
+ * A digest is a CHECKSUM the model echoes back, not a summary it reads.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * IT IS SHORT BECAUSE THE MODEL HAS TO REPRODUCE IT BYTE-FOR-BYTE.
+ *
+ * This used to embed up to 4,000 characters of the result JSON. Measured on the
+ * first live Sonnet run, real digests reached 1,192 characters — and A3 requires
+ * them echoed VERBATIM in the reasoning chain. Asking any model to reproduce
+ * 1,192 characters exactly is asking it to fail, and it did: the corroboration
+ * that reached a verdict was rejected with `reports a "get_transaction" result
+ * the runtime did not record` because the model paraphrased what it could not
+ * copy. A gate that rejects honest work because the token it demanded was
+ * impractical to carry is measuring our design, not the model's honesty.
+ *
+ * The content was never needed here. `investigation-loop.ts` hands the model the
+ * FULL result alongside the digest, so the digest carries no information the
+ * model lacks; its only job is to be unforgeable. A truncated hash is: the model
+ * cannot compute SHA-256 over a payload it never received, and 12 hex characters
+ * is short enough to copy without error.
+ * ══════════════════════════════════════════════════════════════════════════════
+ */
 function digestOf(label: string, value: unknown): string {
-  const json = JSON.stringify(value);
-  return `${label}: ${json.length > 4000 ? `${json.slice(0, 4000)}… (truncated)` : json}`;
+  const json = JSON.stringify(value) ?? 'undefined';
+  // `label:sha256:hex`, not `label#hex`. The first live run with the short form
+  // had SIX of ten investigations cite the DIGEST as though it were a record id
+  // -- it looked like one. A checksum should not be mistakable for an
+  // identifier, and saying `sha256` out loud costs nothing.
+  return `${label}:sha256:${createHash('sha256').update(json, 'utf8').digest('hex').slice(0, 12)}`;
 }
 
 /**
@@ -650,17 +678,32 @@ function buildTools(ctx: ToolContext): AgentTool[] {
           // nothing was narrowed, and the agent may pass bounds BELOW the run's.
           // Asserting it unconditionally handed the model a false statement in
           // deterministic prose, which is the one place it cannot check us.
-          interpretation: !o.stats.exhaustive
-            ? `The search stopped at a bound (${o.stats.boundHit?.bound ?? 'unknown'}). `
-              + 'A decomposition may still exist; this is not a proof.'
-            : widerThanEngine
-              ? 'The whole declared space was searched, over the same candidate '
-                + 'population the engine uses and at bounds no narrower than its own. '
-                + 'This is a STRONGER claim than the engine\'s original one.'
-              : 'The whole declared space was searched AT THESE BOUNDS, which are '
-                + 'narrower than the engine\'s in at least one dimension (see '
-                + 'engineBounds). This is NOT a stronger claim than the engine\'s. '
-                + 'Re-run at or above the engine\'s bounds before concluding.',
+          interpretation: o.stats.poolSize === 0
+            // AN EMPTY SEARCH IS TRIVIALLY EXHAUSTIVE, AND SAYING SO MATTERS
+            // (#55). No gateway payment was eligible at all -- none in the
+            // credit's date window sharing its counterparty -- so nothing was
+            // combined and nothing was ruled out by combination. That is a real
+            // finding and often the right one, but it is a claim about
+            // ELIGIBILITY, not about arithmetic, and the two must not be dressed
+            // the same. This is the audit finding that opened #55 arriving one
+            // level down: the pool is now the engine's own, and an empty result
+            // still has to describe itself honestly.
+            ? 'NO candidate payments were eligible for this credit at all — none in its '
+              + 'date window sharing its counterparty. Nothing was combined and nothing was '
+              + 'ruled out by combination. This is NOT a proof that no decomposition exists; '
+              + 'it says the engine had nothing to search. Report it as an eligibility '
+              + 'finding, not as an exhaustive search.'
+            : !o.stats.exhaustive
+              ? `The search stopped at a bound (${o.stats.boundHit?.bound ?? 'unknown'}). `
+                + 'A decomposition may still exist; this is not a proof.'
+              : widerThanEngine
+                ? 'The whole declared space was searched, over the same candidate '
+                  + 'population the engine uses and at bounds no narrower than its own. '
+                  + 'This is a STRONGER claim than the engine\'s original one.'
+                : 'The whole declared space was searched AT THESE BOUNDS, which are '
+                  + 'narrower than the engine\'s in at least one dimension (see '
+                  + 'engineBounds). This is NOT a stronger claim than the engine\'s. '
+                  + 'Re-run at or above the engine\'s bounds before concluding.',
         };
         return {
           result,

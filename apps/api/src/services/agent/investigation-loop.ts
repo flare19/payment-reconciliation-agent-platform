@@ -116,8 +116,12 @@ const SYSTEM_PROMPT = [
   'falls inside a window. Call score_pair or rerun_subset_search and use what they return. A',
   'number you calculated yourself is not evidence and will be rejected.',
   '',
-  'Cite only ids that a tool actually returned to you in THIS investigation. An id you did not',
-  'retrieve is an id you invented, and a deterministic gate will catch it and void your verdict.',
+  'CITATIONS ARE RECORD IDs -- the UUID-shaped values a tool returned, like',
+  '"9f1c4d7e-0000-4000-8000-00000000000a": a transactionId, exceptionId or matchId. Cite only',
+  'ones a tool actually returned to you in THIS investigation; an id you did not retrieve is an',
+  'id you invented, and a deterministic gate will catch it and void your verdict.',
+  'A resultDigest is NOT a record id and must NEVER appear in "citations". It belongs only in',
+  'reasoning[].resultDigest. Putting a checksum in citations voids the verdict.',
   '',
   'Verdicts:',
   '  RESOLUTION_PROPOSED     a concrete, human-confirmable action with cited evidence',
@@ -135,16 +139,17 @@ const SYSTEM_PROMPT = [
   'against the tools you ACTUALLY called: naming a tool you did not call voids the verdict',
   'outright. Do not describe a search you did not run.',
   '',
-  'YOU HAVE A STEP BUDGET AND YOU CAN SEE IT. Each turn tells you how many steps remain.',
+  'YOU HAVE A TURN BUDGET AND YOU CAN SEE IT. Each turn tells you how many turns remain.',
   'Use them. Being cut off mid-thought wastes the work, but so does answering before you',
-  'have looked -- and only one of those two is dishonest. When one step remains, stop',
+  'have looked -- and only one of those two is dishonest. When one turn remains, stop',
   'calling tools and write the verdict from what you actually retrieved.',
   'CONFIRMED_UNRESOLVABLE with a stated reason is a real and valuable answer.',
   '',
-  'Every tool result carries a "resultDigest" string. Copy it back VERBATIM in the matching',
-  'reasoning step. It is a checksum, not a summary: a deterministic gate compares what you',
-  'echo against what the tool actually returned, so a digest you paraphrase or invent voids',
-  'the verdict. Do not rewrite it, shorten it, or reformat it.',
+  'Every tool result carries a short "resultDigest" like `get_exception:sha256:a3f9c1d20b44`.',
+  'Copy',
+  'it back EXACTLY in the matching reasoning step. It is a checksum, not a summary: a',
+  'deterministic gate compares what you echo against what the tool actually returned, so a',
+  'digest you alter or invent voids the verdict. It is deliberately short — copy all of it.',
   '',
   // ── THE PROPOSAL SCHEMA (issue #53) ──
   // Absent until AUDIT-3. The gate validated all four variants and the prompt
@@ -263,13 +268,21 @@ export async function runAgentLoop(
 
   const declarations = deps.registry.declarations();
 
+  // ── THE THIRD OPTION: CONCLUDE, RATHER THAN BE CUT OFF (see #64) ──
+  // Set when a bound will bind on the NEXT turn. That turn still happens, with
+  // no tools and an instruction to write the verdict now, and then the loop
+  // stops. Measured on the holdout: the 10-step ceiling fired ZERO times and
+  // the 40,000-token ceiling fired FIFTEEN, at steps 6-9 -- so fifteen
+  // investigations were killed mid-reasoning, discarding 6-9 steps of real
+  // retrieval each, and the `remaining === 0` branch that says "write your
+  // verdict now" was unreachable. The file's own words: "being cut off loses
+  // work, answering early invents it." This is the option it did not take.
+  let concludeNow = false;
+  let concludeBecause = '';
+
   for (;;) {
     // ── BOUNDS, CHECKED BEFORE THE CALL THAT WOULD BREACH THEM ──
-    if (steps >= budget.maxSteps) {
-      stopCause = 'steps';
-      stopReason = `stopped at the ${budget.maxSteps}-step ceiling before reaching a verdict`;
-      break;
-    }
+    // Hard stops: already breached, nothing to recover.
     if (toolCalls.length >= budget.maxToolCalls) {
       stopCause = 'tool_calls';
       stopReason = `stopped at the ${budget.maxToolCalls}-tool-call ceiling`;
@@ -281,13 +294,39 @@ export async function runAgentLoop(
       stopReason = `stopped after ${elapsed} ms, at the ${budget.maxWallMs} ms ceiling`;
       break;
     }
-    if (usage.tokensIn + usage.tokensOut >= budget.maxTokens) {
-      stopCause = 'tokens';
-      stopReason =
-        `stopped after ${usage.tokensIn + usage.tokensOut} tokens, at the `
-        + `${budget.maxTokens}-token ceiling`;
+
+    // Soft stops: reserve room for ONE more turn and spend it concluding.
+    // `spent / steps` is the measured average for THIS investigation rather than
+    // a constant, because token cost per turn varies by an order of magnitude
+    // with the tool payloads it happened to fetch -- `rerun_subset_search`
+    // returns far more than `get_exception`, and the holdout showed 41,632 vs
+    // 51,396 tokens at the same step count.
+    const spent = usage.tokensIn + usage.tokensOut;
+    const reserve = steps === 0 ? 0 : Math.ceil(spent / steps);
+    const tokensBinding = steps > 0 && spent + reserve >= budget.maxTokens;
+    const stepsBinding = steps + 1 >= budget.maxSteps;
+
+    if (!concludeNow && (tokensBinding || stepsBinding)) {
+      // NAMED, so the reason a verdict was rushed is in the audit trail rather
+      // than inferred. `agent-design.md` §8: the system says WHICH bound stopped it.
+      concludeBecause = tokensBinding
+        ? `the ${budget.maxTokens}-token ceiling (${spent} spent, ~${reserve}/turn)`
+        : `the ${budget.maxSteps}-step ceiling`;
+      concludeNow = true;
+    }
+    if (concludeNow && (spent >= budget.maxTokens || steps >= budget.maxSteps)) {
+      // The conclude turn itself has now been taken and still produced nothing.
+      stopCause = tokensBinding ? 'tokens' : 'steps';
+      stopReason = `stopped at ${concludeBecause} after being asked to conclude`;
       break;
     }
+
+    // A SPEND refusal is a HARD stop, and the distinction from the bounds above
+    // is the whole point. A token or step ceiling is a WORK bound: the money is
+    // already spent, so one more turn to turn that work into a verdict is free
+    // of regret. A spend ceiling is a MONEY bound: granting a final turn spends
+    // exactly what the guard just said could not be afforded. On a prepaid key
+    // with auto-reload off, the failure mode is a dead balance mid-run.
     const refusal = deps.preflight?.({ step: steps + 1, usageSoFar: { ...usage } }) ?? null;
     if (refusal !== null) {
       stopCause = 'tokens';
@@ -310,23 +349,50 @@ export async function runAgentLoop(
     // a tool it had never called — which the A3 gate caught, but which is the
     // worse failure of the two: being cut off loses work, answering early
     // invents it.
-    const remaining = budget.maxSteps - steps;
-    const pacing = remaining === 0
-      ? 'FINAL STEP. Do not call any more tools. Write your verdict JSON now, using only '
-        + 'what you actually retrieved. If the evidence does not support a proposal, say so.'
+    // ── THE COUNTDOWN NOW TRACKS THE BOUND THAT ACTUALLY BINDS (see #64) ──
+    // It used to be `budget.maxSteps - steps`, so the model was told "2 steps
+    // left" and then killed by a token ceiling it was never shown. `remaining`
+    // is now the smaller of the two, in TURNS, so the number it sees is the
+    // number of turns it really has.
+    const spentNow = usage.tokensIn + usage.tokensOut;
+    // `steps` was incremented above for the turn ABOUT to happen, so the number
+    // of turns actually billed so far is one fewer. Dividing by `steps` here
+    // halves the average on turn 2 and reports a countdown twice as generous as
+    // the tokens fund — which is the same class of error as the defect itself.
+    const completed = steps - 1;
+    const perTurn = completed === 0 ? 0 : Math.ceil(spentNow / completed);
+    const turnsOnTokens = perTurn === 0
+      ? Number.POSITIVE_INFINITY
+      : Math.floor((budget.maxTokens - spentNow) / perTurn);
+    const remaining = Math.max(0, Math.min(budget.maxSteps - steps, turnsOnTokens));
+
+    const pacing = concludeNow
+      ? 'FINAL STEP. Do not call any more tools — none are available on this turn. Reply '
+        + 'with ONLY the verdict JSON object and no other text: no preamble, no explanation '
+        + 'outside the JSON, no markdown fence. Use only what you actually retrieved. A verdict from '
+        + 'partial evidence, with its limits stated, is worth more than no verdict. If what '
+        + 'you found does not support a proposal, say CONFIRMED_UNRESOLVABLE or '
+        + 'NEEDS_EXTERNAL_DATA and state why.'
       : remaining <= 2
-        ? `[${remaining} step(s) left. Wrap up: gather anything essential, then conclude.]`
+        ? `[${remaining} turn(s) left. Wrap up: gather anything essential, then conclude.]`
         : toolCalls.length === 0
-          ? `[${remaining} steps left. Retrieve the exception first — do not conclude yet.]`
-          : `[${remaining} steps left. Keep investigating until you can answer from `
+          ? `[${remaining} turns left. Retrieve the exception first — do not conclude yet.]`
+          : `[${remaining} turns left. Keep investigating until you can answer from `
             + 'evidence you retrieved.]';
     const paced: AgentMessage[] = [...messages, { role: 'user', text: pacing }];
 
     const turn = await deps.client.turn({
       system,
       messages: paced,
-      tools: declarations,
-      maxOutputTokens: 2048,
+      // WITHHELD on the final turn, not merely discouraged. An instruction not
+      // to call tools is a request; an empty tool list is a property. The last
+      // live run's worst outcome was a model that concluded early and fabricated
+      // a tool call it had never made -- it cannot do that with nothing to call.
+      tools: concludeNow ? [] : declarations,
+      // The conclude turn needs room for BOTH the thinking and the verdict:
+      // `max_tokens` counts thinking on an adaptive model, so the allowance that
+      // is comfortable for a tool call can leave a verdict half-written.
+      maxOutputTokens: concludeNow ? 4096 : 2048,
     });
 
     // Usage accrues even on failure — a request that reached the model cost
@@ -342,9 +408,28 @@ export async function runAgentLoop(
 
     if (turn.kind === 'final') {
       raw = extractVerdict(turn.text);
+      // ── PROSE IS NOT A VERDICT, BUT IT IS NOT A HALLUCINATION EITHER ──
+      // Sonnet 5 at low effort ends turns in prose often enough that the first
+      // live run lost 2 of 2 investigations to "the model finished but its
+      // final message was not usable JSON" — after 4-7 REAL tool calls each,
+      // with no bound having bound. Discarding that is the same waste #64
+      // removed from the token ceiling, for a different reason.
+      //
+      // So a formatting miss earns ONE re-ask, with tools withheld and the
+      // schema restated. This does NOT weaken A3's no-retry rule: that rule
+      // forbids a second attempt at a HALLUCINATED answer, because a retry loop
+      // selects for whichever output happened to pass the gate. Nothing here is
+      // re-judged — the same evidence is re-serialised, and the gate still sees
+      // it exactly once.
+      if (raw === null && !concludeNow) {
+        concludeBecause = 'the previous reply was prose rather than the verdict JSON';
+        concludeNow = true;
+        messages.push({ role: 'assistant', text: turn.text, toolCalls: [] });
+        continue;
+      }
       stopCause = 'concluded';
       stopReason = raw === null
-        ? 'the model finished but its final message was not usable JSON'
+        ? 'the model finished but its final message was not usable JSON, twice'
         : `the model concluded after ${steps} step(s)`;
       break;
     }

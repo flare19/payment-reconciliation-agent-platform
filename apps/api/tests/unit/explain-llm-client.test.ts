@@ -5,6 +5,7 @@ import {
   parseResponse, buildUserMessage, createExplainClient, MAX_SIGNATURES_PER_REQUEST,
   type SignaturePrompt, findUngroundedSpecific,
 } from '../../src/services/explain/llm-client.js';
+import { unwrapJson } from '../../src/services/explain/anthropic-explain-client.js';
 
 /**
  * The client's two testable halves are its PARSER and its no-key behaviour.
@@ -238,5 +239,29 @@ describe('S13 rejects a specific the prompt never supplied (#52)', () => {
 
   test('a null occurrence count exempts nothing', () => {
     assert.notEqual(findUngroundedSpecific('This shape covers 147 exceptions.', null), null);
+  });
+});
+
+describe('the Anthropic explain client unwraps a fenced response (ADR-093)', () => {
+  // The first live Anthropic run generated 10 of 21 signatures and lost 2 whole
+  // batches to "not usable JSON". The Gemini client constrained output with a
+  // response schema; porting the request without porting the constraint left
+  // the gap. Lenient about wrapping, strict about content.
+  test('a ```json fence is stripped', () => {
+    assert.equal(unwrapJson('```json\n{"explanations":[]}\n```'), '{"explanations":[]}');
+  });
+  test('a bare fence is stripped', () => {
+    assert.equal(unwrapJson('```\n{"a":1}\n```'), '{"a":1}');
+  });
+  test('preamble around the object is dropped', () => {
+    assert.equal(unwrapJson('Here you go:\n{"a":1}\nHope that helps.'), '{"a":1}');
+  });
+  test('clean JSON is returned unchanged', () => {
+    assert.equal(unwrapJson('{"a":1}'), '{"a":1}');
+  });
+  test('it does not manufacture JSON from prose', () => {
+    // Strict about content: unwrapping must not turn a refusal into an object.
+    assert.equal(unwrapJson('I cannot help with that.'), 'I cannot help with that.');
+    assert.equal(parseResponse(unwrapJson('I cannot help with that.'), new Set(['sig_1'])), null);
   });
 });

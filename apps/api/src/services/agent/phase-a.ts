@@ -52,6 +52,7 @@ import { buildInvestigationPrompt } from './investigation-prompt.js';
 import { createToolRegistry } from './tool-registry.js';
 import { triageRun, type TriagePlan, type TriageBudget } from './triage.js';
 import type { AgentLlmClient, AgentUsage, CostModel } from './agent-client.js';
+import type { SpendGuard } from './spend-guard.js';
 import { usdFor } from './agent-client.js';
 import type { RunConfig } from '../../types/engine.js';
 import type { GateContext } from './grounding-gate.js';
@@ -116,6 +117,12 @@ export interface PhaseADeps {
    * the loop falls back to steps plus a worst-case charge for failures.
    */
   requestsIssued?: () => number;
+  /**
+   * ADR-094. Supplied by the caller so ONE guard spans the whole phase — a
+   * per-investigation guard would let twenty investigations each spend up to the
+   * run ceiling. Absent means no cap, which is correct only on a free tier.
+   */
+  spendGuard?: SpendGuard;
 }
 
 export interface PhaseAResult {
@@ -258,6 +265,9 @@ async function investigateOnceOpened(
       registry,
       gateContext,
       ...(deps.now === undefined ? {} : { now: deps.now }),
+      // ADR-094: the cost ceiling, enforced before each call rather than
+      // reported after the run.
+      ...(deps.spendGuard === undefined ? {} : { preflight: deps.spendGuard.preflight }),
       // §3: written AS IT HAPPENS, so a budget-stopped investigation still
       // leaves a complete ordered trail of what it actually did.
       onToolCall: async (record: ToolCallRecord) => {
@@ -535,6 +545,9 @@ export async function runPhaseA(
     // starting one that cannot finish spends requests to produce
     // INSUFFICIENT_EVIDENCE, which is the worst way to run out.
     if (spent() + budget.maxSteps > maxRequests) break;
+    // ADR-094: a phase that cannot afford another investigation stops here
+    // rather than starting one it will refuse on its first turn.
+    if (deps.spendGuard !== undefined && deps.spendGuard.remainingUsd() <= 0) break;
 
     try {
       const { outcome, auditEntries: n } = await investigateOne(
@@ -544,6 +557,9 @@ export async function runPhaseA(
       stepsSpent += outcome.steps;
       usage.tokensIn += outcome.usage.tokensIn;
       usage.tokensOut += outcome.usage.tokensOut;
+      // ADR-094: settle this investigation into the running total, so the guard
+      // spans the phase rather than resetting per investigation.
+      deps.spendGuard?.record(outcome.usage);
       verdicts[outcome.verdict.verdict] = (verdicts[outcome.verdict.verdict] ?? 0) + 1;
       if (!outcome.verdict.groundingPassed) groundingFailures += 1;
       if (outcome.verdict.budgetExhausted) budgetExhaustedCount += 1;
@@ -585,6 +601,7 @@ export async function runPhaseA(
       stepsSpent += outcome.steps;
       usage.tokensIn += outcome.usage.tokensIn;
       usage.tokensOut += outcome.usage.tokensOut;
+      deps.spendGuard?.record(outcome.usage);
       corroborationVerdicts[outcome.verdict.verdict] =
         (corroborationVerdicts[outcome.verdict.verdict] ?? 0) + 1;
       if (!outcome.verdict.groundingPassed) corroborationGroundingFailures += 1;

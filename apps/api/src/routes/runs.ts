@@ -21,7 +21,7 @@ import type { Env } from '../config/env.js';
 import { ENGINE_DEFAULTS } from '../config/defaults.js';
 import type { RunConfig } from '../types/engine.js';
 import { executeRun, type RunSources } from '../services/run/orchestrator.js';
-import { createExplainClient } from '../services/explain/llm-client.js';
+import { createExplainClient } from '../services/llm-provider.js';
 import * as runsRepo from '../repositories/runs.js';
 import * as txnRepo from '../repositories/transactions.js';
 import * as matchRepo from '../repositories/matches.js';

@@ -150,8 +150,10 @@ describe('Phase A (integration)',
       const { rows } = await getPool().query<{ reasoning: { resultDigest: string }[] }>(
         `SELECT reasoning FROM agent_investigations WHERE run_id=$1 LIMIT 1`, [runId]);
       const step = rows[0]!.reasoning[0]!;
-      assert.match(step.resultDigest, /^get_exception:/,
-        'the digest is the tool\'s own, recorded by the runtime');
+      // `label#<12 hex>` since ADR-093: a checksum the model can actually copy,
+      // not 1,192 characters of result JSON it has to reproduce byte-for-byte.
+      assert.match(step.resultDigest, /^get_exception:sha256:[0-9a-f]{12}$/,
+        'the digest is the tool\'s own checksum, recorded by the runtime');
     });
 
     test('the audit trail is written AS IT HAPPENS, one entry per tool call (§3)', async () => {

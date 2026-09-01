@@ -7,7 +7,8 @@
  */
 
 import {
-  AGENT_DEFAULTS, DEFAULT_AGENT_MODEL, DEFAULT_EXPLAIN_MODEL, DEFAULT_PROMPT_VERSION,
+  AGENT_DEFAULTS, DEFAULT_AGENT_MODEL, DEFAULT_ANTHROPIC_AGENT_MODEL,
+  DEFAULT_ANTHROPIC_EXPLAIN_MODEL, DEFAULT_EXPLAIN_MODEL, DEFAULT_PROMPT_VERSION,
 } from './defaults.js';
 import { RATE_LIMIT_DEFAULTS } from '../services/agent/rate-limiter.js';
 
@@ -58,7 +59,17 @@ export interface Env {
   logLevel: string;
 
   /** ONE key, both layers. Null is a legitimate state — see `llmConfigured`. */
+  /**
+   * ADR-093: `anthropic` is the shipped provider; `gemini` is kept so the
+   * free-tier path still runs without a paid key. One switch, both surfaces —
+   * a per-surface provider would let S13 and Phase A disagree about what
+   * `llmConfigured` means, which the health endpoint reports as one boolean.
+   */
+  llmProvider: 'anthropic' | 'gemini';
   geminiApiKey: string | null;
+  anthropicApiKey: string | null;
+  /** ADR-093: `output_config.effort` for the Analyst. Not used by S13. */
+  agentEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   /** S13 explain (ADR-080). The signature hash includes it, so a change invalidates the cache. */
   explainModel: string;
   /** Phase A investigation and Q&A loops (ADR-080). */
@@ -99,8 +110,27 @@ export interface Env {
   holdoutSeed: number;
 }
 
+const AGENT_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+
 export function loadEnv(): Env {
   const key = process.env['GEMINI_API_KEY'];
+  const anthropicKey = process.env['ANTHROPIC_API_KEY'];
+  // Defaults to anthropic (ADR-093). An unset LLM_PROVIDER on a machine holding
+  // only a Gemini key would otherwise report `llmConfigured: false` and silently
+  // take the template floor — a wrong-looking run with no error.
+  const rawProvider = optional('LLM_PROVIDER', 'anthropic');
+  if (rawProvider !== 'anthropic' && rawProvider !== 'gemini') {
+    throw new Error(`LLM_PROVIDER must be 'anthropic' or 'gemini', got '${rawProvider}'`);
+  }
+  const provider: 'anthropic' | 'gemini' = rawProvider;
+
+  const rawEffort = optional('AGENT_EFFORT', 'high');
+  if (!(AGENT_EFFORTS as readonly string[]).includes(rawEffort)) {
+    throw new Error(
+      `AGENT_EFFORT must be one of ${AGENT_EFFORTS.join(', ')}, got '${rawEffort}'`);
+  }
+  const effort = rawEffort as Env['agentEffort'];
+
   return {
     nodeEnv: optional('NODE_ENV', 'development'),
     // Railway injects PORT. Binding a hardcoded port is the single most common
@@ -110,9 +140,18 @@ export function loadEnv(): Env {
     corsOrigins: required('CORS_ORIGIN').split(',').map((s) => s.trim()).filter(Boolean),
     logLevel: optional('LOG_LEVEL', 'info'),
 
+    llmProvider: provider,
     geminiApiKey: key === undefined || key === '' ? null : key,
-    explainModel: optional('GEMINI_EXPLAIN_MODEL', DEFAULT_EXPLAIN_MODEL),
-    agentModel: optional('GEMINI_AGENT_MODEL', DEFAULT_AGENT_MODEL),
+    anthropicApiKey: anthropicKey === undefined || anthropicKey === '' ? null : anthropicKey,
+    agentEffort: effort,
+    // The model defaults follow the provider, so switching LLM_PROVIDER does not
+    // also require remembering to change two model names.
+    explainModel: optional('LLM_EXPLAIN_MODEL',
+      optional('GEMINI_EXPLAIN_MODEL',
+        provider === 'anthropic' ? DEFAULT_ANTHROPIC_EXPLAIN_MODEL : DEFAULT_EXPLAIN_MODEL)),
+    agentModel: optional('LLM_AGENT_MODEL',
+      optional('GEMINI_AGENT_MODEL',
+        provider === 'anthropic' ? DEFAULT_ANTHROPIC_AGENT_MODEL : DEFAULT_AGENT_MODEL)),
     llmExplainEnabled: bool('LLM_EXPLAIN_ENABLED', true),
     llmMaxCallsPerRun: int('LLM_MAX_CALLS_PER_RUN', 8),
     promptVersion: optional('PROMPT_VERSION', DEFAULT_PROMPT_VERSION),
@@ -148,5 +187,7 @@ export function loadEnv(): Env {
 
 /** Boolean only — never a prefix, never a masked fragment (deployment.md §4.6). */
 export function llmConfigured(env: Env): boolean {
-  return env.geminiApiKey !== null;
+  return env.llmProvider === 'anthropic'
+    ? env.anthropicApiKey !== null
+    : env.geminiApiKey !== null;
 }

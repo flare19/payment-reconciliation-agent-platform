@@ -44,14 +44,21 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 import { runMigrations } from '../db/migrate.js';
 import { createPool, closePool, getPool } from '../db/pool.js';
-import { ENGINE_DEFAULTS, AGENT_DEFAULTS } from '../config/defaults.js';
+import {
+  ENGINE_DEFAULTS, AGENT_DEFAULTS, ANTHROPIC_COST_PER_MILLION,
+  DEFAULT_ANTHROPIC_AGENT_MODEL,
+} from '../config/defaults.js';
 import { createRun, findRun } from '../repositories/runs.js';
 import { executeRun } from '../services/run/orchestrator.js';
 import { runPhaseA, type PhaseADeps } from '../services/agent/phase-a.js';
 import { triageRun, type TriageBudget } from '../services/agent/triage.js';
 import { createGeminiAgentClient } from '../services/agent/gemini-agent-client.js';
+import {
+  createAnthropicAgentClient, type AgentEffort,
+} from '../services/agent/anthropic-agent-client.js';
+import { createSpendGuard } from '../services/agent/spend-guard.js';
 import { withRateLimit, RATE_LIMIT_DEFAULTS } from '../services/agent/rate-limiter.js';
-import type { AgentLlmClient } from '../services/agent/agent-client.js';
+import type { AgentLlmClient, CostModel } from '../services/agent/agent-client.js';
 import type { RunConfig } from '../types/engine.js';
 
 const FIX = new URL('../../../../data/fixtures/holdout/', import.meta.url).pathname;
@@ -112,7 +119,15 @@ async function main(): Promise<void> {
   if (databaseUrl === undefined || databaseUrl === '') {
     throw new Error('DATABASE_URL is not set');
   }
-  const model = arg('model') ?? get('GEMINI_AGENT_MODEL') ?? 'gemini-3.1-flash-lite';
+  // ADR-093: the model follows the provider. Reading GEMINI_AGENT_MODEL while
+  // LLM_PROVIDER=anthropic sent a Gemini model id to the Anthropic API — caught
+  // by `--dry-run` printing `gemini-3.7-flash` on a configured-for-Anthropic
+  // run, which is exactly what a free dry run is for.
+  const cliProvider = get('LLM_PROVIDER') ?? 'anthropic';
+  const model = arg('model')
+    ?? (cliProvider === 'anthropic'
+      ? get('LLM_AGENT_MODEL') ?? DEFAULT_ANTHROPIC_AGENT_MODEL
+      : get('GEMINI_AGENT_MODEL') ?? 'gemini-3.1-flash-lite');
   const dryRun = flag('dry-run');
 
   createPool({ databaseUrl, corsOrigins: [] } as never);
@@ -185,21 +200,51 @@ async function main(): Promise<void> {
     return;
   }
 
-  const apiKey = get('GEMINI_API_KEY');
-  if (apiKey === undefined || apiKey === '') throw new Error('GEMINI_API_KEY is not set');
+  // ADR-093: the provider follows LLM_PROVIDER, and so does the key it demands.
+  // Naming the missing variable matters — "GEMINI_API_KEY is not set" on a run
+  // configured for Anthropic sends you looking in the wrong place.
+  const provider = cliProvider;
+  const keyVar = provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'GEMINI_API_KEY';
+  const apiKey = get(keyVar);
+  if (apiKey === undefined || apiKey === '') {
+    throw new Error(`${keyVar} is not set (LLM_PROVIDER=${provider})`);
+  }
 
   const latencies: number[] = [];
+  const inner = provider === 'anthropic'
+    ? createAnthropicAgentClient({
+      apiKey, model, effort: (get('AGENT_EFFORT') ?? 'high') as AgentEffort })
+    : createGeminiAgentClient({ apiKey, model });
   const paced = withRateLimit(
-    timed(createGeminiAgentClient({ apiKey, model }), latencies),
+    timed(inner, latencies),
     { maxRequestsPerMinute: rpm, maxTokensPerMinute: tpm },
   );
+
+  // ADR-094. The cap the CLI actually enforces, and it is announced before the
+  // first call so a run that cannot afford itself is visible immediately.
+  const maxCostUsd = Number(get('AGENT_MAX_COST_USD_PER_RUN') ?? '1.0');
+  const costModel = provider === 'anthropic'
+    ? ((ANTHROPIC_COST_PER_MILLION as Record<string, CostModel | undefined>)[model] ?? null)
+    : null;
+  const spendGuard = createSpendGuard({
+    maxUsd: maxCostUsd, cost: costModel, maxOutputTokensPerTurn: 2048,
+  });
+  process.stdout.write(costModel === null
+    ? 'spend guard  INERT — no published rate for this model, nothing to cap\n\n'
+    : `spend guard  $${maxCostUsd.toFixed(2)} ceiling at `
+      + `$${costModel.inputUsdPerMillion}/$${costModel.outputUsdPerMillion} per MTok, `
+      + 'refused pre-flight on worst case\n\n');
 
   const deps: PhaseADeps = {
     client: paced.client,
     config,
-    // NULL on a free tier. A projection at another provider's rates is computed
-    // below and LABELLED as such; it must never be reported as this run's cost.
-    cost: null,
+    spendGuard,
+    // The REAL rate when we are actually billed (ADR-093), null on the free
+    // tier. A projection at another provider's rates is computed below and
+    // LABELLED as such; it must never be reported as this run's cost.
+    cost: provider === 'anthropic'
+      ? ((ANTHROPIC_COST_PER_MILLION as Record<string, CostModel | undefined>)[model] ?? null)
+      : null,
     maxLlmRequests: maxRequests,
     triageBudget,
     requestsIssued: () => paced.stats().requestsIssued,

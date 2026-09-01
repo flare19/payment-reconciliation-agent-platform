@@ -27,7 +27,7 @@ import * as excRepo from '../repositories/exceptions.js';
 import * as runsRepo from '../repositories/runs.js';
 import { handler, found, pageParams, pathParam, requireString } from './helpers.js';
 import { investigationDto, questionDto, paginate } from './serialize.js';
-import { createAgentClient } from '../services/agent/gemini-agent-client.js';
+import { createAgentClient } from '../services/llm-provider.js';
 import { investigateOne } from '../services/agent/phase-a.js';
 import { isEligibleCategory } from '../services/agent/triage.js';
 import * as txnRepo from '../repositories/transactions.js';
