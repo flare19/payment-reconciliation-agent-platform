@@ -141,7 +141,14 @@ async function main(): Promise<void> {
       : '  ✓ Inside the bound at this effort.',
     '',
     `this smoke test cost ${cost === null ? 'unknown (no rate for this model)' : `$${cost.toFixed(5)}`}`,
-    cost === null ? '' : `a 10-turn investigation at this shape ≈ $${(cost * 5).toFixed(3)}`,
+    '',
+    'DO NOT EXTRAPOLATE A RUN COST FROM THIS NUMBER. This is a 2-turn toy with',
+    'a few hundred tokens of context. A real investigation resends the whole',
+    'growing conversation every turn — the quadratic growth that IS the token',
+    'defect — and the holdout measured ~47,500 input tokens for ONE. Multiplying',
+    'this number by turns understates a real investigation by roughly 8x, and a',
+    'plausible number with nothing measured behind it is how this repo has been',
+    'burned five times. Size a run from `npm run analyst -- --dry-run` instead.',
     '',
   ].join('\n'));
 }

@@ -46,6 +46,7 @@ import { runMigrations } from '../db/migrate.js';
 import { createPool, closePool, getPool } from '../db/pool.js';
 import {
   ENGINE_DEFAULTS, AGENT_DEFAULTS, ANTHROPIC_COST_PER_MILLION,
+  DEFAULT_ANTHROPIC_AGENT_MODEL,
 } from '../config/defaults.js';
 import { createRun, findRun } from '../repositories/runs.js';
 import { executeRun } from '../services/run/orchestrator.js';
@@ -118,7 +119,15 @@ async function main(): Promise<void> {
   if (databaseUrl === undefined || databaseUrl === '') {
     throw new Error('DATABASE_URL is not set');
   }
-  const model = arg('model') ?? get('GEMINI_AGENT_MODEL') ?? 'gemini-3.1-flash-lite';
+  // ADR-093: the model follows the provider. Reading GEMINI_AGENT_MODEL while
+  // LLM_PROVIDER=anthropic sent a Gemini model id to the Anthropic API — caught
+  // by `--dry-run` printing `gemini-3.7-flash` on a configured-for-Anthropic
+  // run, which is exactly what a free dry run is for.
+  const cliProvider = get('LLM_PROVIDER') ?? 'anthropic';
+  const model = arg('model')
+    ?? (cliProvider === 'anthropic'
+      ? get('LLM_AGENT_MODEL') ?? DEFAULT_ANTHROPIC_AGENT_MODEL
+      : get('GEMINI_AGENT_MODEL') ?? 'gemini-3.1-flash-lite');
   const dryRun = flag('dry-run');
 
   createPool({ databaseUrl, corsOrigins: [] } as never);
@@ -194,7 +203,7 @@ async function main(): Promise<void> {
   // ADR-093: the provider follows LLM_PROVIDER, and so does the key it demands.
   // Naming the missing variable matters — "GEMINI_API_KEY is not set" on a run
   // configured for Anthropic sends you looking in the wrong place.
-  const provider = get('LLM_PROVIDER') ?? 'anthropic';
+  const provider = cliProvider;
   const keyVar = provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'GEMINI_API_KEY';
   const apiKey = get(keyVar);
   if (apiKey === undefined || apiKey === '') {
