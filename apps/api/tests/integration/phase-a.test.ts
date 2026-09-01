@@ -146,66 +146,6 @@ describe('Phase A (integration)',
       assert.ok(stored!.reasoning.length > 0);
     });
 
-    test('#57: a throw after startInvestigation leaves the row FAILED, not stuck at running, '
-      + 'and the exception is investigable again', async () => {
-      const throwing: AgentLlmClient = {
-        model: 'throwing-model',
-        async turn() { throw new Error('simulated transport failure'); },
-      };
-      // A fresh exception, never investigated by an earlier test in this file.
-      const candidate = (await listExceptionTriageCandidates(runId, ELIGIBLE_CATEGORIES, 25))
-        .find((c) => !ourInvestigated.has(c.exceptionId));
-      assert.ok(candidate, 'need an exception no earlier test in this file has investigated');
-      ourInvestigated.add(candidate!.exceptionId);
-
-      await assert.rejects(
-        () => investigateOne(runId, candidate!.exceptionId, { ...deps, client: throwing }, {
-          runId, records: new Map(), activeAliases: new Map(),
-        }),
-        /investigation of exception .* failed: simulated transport failure/);
-
-      const failedRow = await findInvestigationForException(candidate!.exceptionId);
-      assert.ok(failedRow, 'startInvestigation must have persisted a row before the throw');
-      assert.equal(failedRow!.status, 'failed',
-        'a throw must not leave the row at status=running -- ux_inv_exc_active would then '
-        + 'permanently block this exception from ever being investigated again');
-
-      // ux_inv_exc_active is `UNIQUE (exception_id) WHERE status <> 'failed'` -- this second
-      // call only succeeds if the first row genuinely reached 'failed', not merely 'running'.
-      const { investigationId } = await investigateOne(
-        runId, candidate!.exceptionId, deps, {
-          runId, records: new Map(), activeAliases: new Map(),
-        });
-      const stored = await findInvestigation(investigationId);
-      assert.equal(stored!.status, 'concluded', 'the exception must be investigable again');
-    });
-
-    test('#57: the same throw-and-recover property holds for a corroboration', async () => {
-      const throwing: AgentLlmClient = {
-        model: 'throwing-model',
-        async turn() { throw new Error('simulated transport failure'); },
-      };
-      const candidate = (await listQueueTriageCandidates(runId, 5))[0]!;
-
-      await assert.rejects(
-        () => corroborateOne(runId, candidate.matchId, { ...deps, client: throwing }, {
-          runId, records: new Map(), activeAliases: new Map(),
-        }),
-        /corroboration of match .* failed: simulated transport failure/);
-
-      const failedRow = await findCorroborationForMatch(candidate.matchId);
-      assert.ok(failedRow, 'startCorroboration must have persisted a row before the throw');
-      assert.equal(failedRow!.status, 'failed',
-        'a throw must not leave the row at status=running -- ux_corr_match_active would then '
-        + 'permanently block this match from ever being corroborated again');
-
-      // ux_corr_match_active is `UNIQUE (match_id) WHERE status <> 'failed'`.
-      const { outcome } = await corroborateOne(runId, candidate.matchId, deps, {
-        runId, records: new Map(), activeAliases: new Map(),
-      });
-      assert.ok(outcome.verdict.verdict, 'the match must be corroborable again');
-    });
-
     test('the reasoning chain stores the RUNTIME digest, not the model\'s word for it', async () => {
       const { rows } = await getPool().query<{ reasoning: { resultDigest: string }[] }>(
         `SELECT reasoning FROM agent_investigations WHERE run_id=$1 LIMIT 1`, [runId]);
@@ -416,5 +356,79 @@ describe('Phase A (integration)',
           WHERE run_id=$1 AND event_type='AGENT_GROUNDING_FAILED'
             AND subject_id=$2`, [runId, investigationId]);
       assert.equal(rows[0]!.c, 1);
+    });
+
+    test('#57: a throw after startInvestigation leaves the row FAILED, not stuck at running, '
+      + 'and the exception is investigable again', async () => {
+      const throwing: AgentLlmClient = {
+        model: 'throwing-model',
+        async turn() { throw new Error('simulated transport failure'); },
+      };
+      // A fresh exception, never investigated by an earlier test in this file.
+      const candidate = (await listExceptionTriageCandidates(runId, ELIGIBLE_CATEGORIES, 25))
+        .find((c) => !ourInvestigated.has(c.exceptionId));
+      assert.ok(candidate, 'need an exception no earlier test in this file has investigated');
+      ourInvestigated.add(candidate!.exceptionId);
+
+      await assert.rejects(
+        () => investigateOne(runId, candidate!.exceptionId, { ...deps, client: throwing }, {
+          runId, records: new Map(), activeAliases: new Map(),
+        }),
+        /investigation of exception .* failed: simulated transport failure/);
+
+      const failedRow = await findInvestigationForException(candidate!.exceptionId);
+      assert.ok(failedRow, 'startInvestigation must have persisted a row before the throw');
+      assert.equal(failedRow!.status, 'failed',
+        'a throw must not leave the row at status=running -- ux_inv_exc_active would then '
+        + 'permanently block this exception from ever being investigated again');
+
+      // ux_inv_exc_active is `UNIQUE (exception_id) WHERE status <> 'failed'` -- this second
+      // call only succeeds if the first row genuinely reached 'failed', not merely 'running'.
+      const { investigationId } = await investigateOne(
+        runId, candidate!.exceptionId, deps, {
+          runId, records: new Map(), activeAliases: new Map(),
+        });
+      const stored = await findInvestigation(investigationId);
+      assert.equal(stored!.status, 'concluded', 'the exception must be investigable again');
+    });
+
+    test('#57: the same throw-and-recover property holds for a corroboration', async () => {
+      const throwing: AgentLlmClient = {
+        model: 'throwing-model',
+        async turn() { throw new Error('simulated transport failure'); },
+      };
+      // A match no earlier test in this file has corroborated. `ux_corr_match_active`
+      // is UNIQUE (match_id) WHERE status <> 'failed', so reusing one that already
+      // has a live row fails at INSERT and never reaches the property under test.
+      const queue = await listQueueTriageCandidates(runId, 25);
+      const { rows: taken } = await getPool().query<{ match_id: string }>(
+        `SELECT match_id FROM agent_corroborations WHERE status <> 'failed'`);
+      const used = new Set(taken.map((r) => r.match_id));
+      const candidate = queue.find((c) => !used.has(c.matchId));
+      assert.ok(candidate, 'need a pending_review match with no live corroboration');
+
+      await assert.rejects(
+        () => corroborateOne(runId, candidate!.matchId, { ...deps, client: throwing }, {
+          runId, records: new Map(), activeAliases: new Map(),
+        }),
+        /corroboration of match .* failed: simulated transport failure/);
+
+      // NOT `findCorroborationForMatch` -- it filters `status <> 'failed'` (it answers
+      // "is one already live for this match"), so a correctly-FAILED row is invisible
+      // to it. Query directly, or this asserts the opposite of what it means.
+      const { rows: failedRows } = await getPool().query<{ status: string }>(
+        `SELECT status FROM agent_corroborations WHERE match_id = $1
+          ORDER BY started_at DESC LIMIT 1`, [candidate!.matchId]);
+      assert.equal(failedRows.length, 1,
+        'startCorroboration must have persisted a row before the throw');
+      assert.equal(failedRows[0]!.status, 'failed',
+        'a throw must not leave the row at status=running -- ux_corr_match_active would then '
+        + 'permanently block this match from ever being corroborated again');
+
+      // ux_corr_match_active is `UNIQUE (match_id) WHERE status <> 'failed'`.
+      const { outcome } = await corroborateOne(runId, candidate!.matchId, deps, {
+        runId, records: new Map(), activeAliases: new Map(),
+      });
+      assert.ok(outcome.verdict.verdict, 'the match must be corroborable again');
     });
   });
