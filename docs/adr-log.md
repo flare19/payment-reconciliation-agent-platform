@@ -1363,3 +1363,37 @@ Now generated deterministically: a suggestion exists when a pending match's memb
 **Consequence for the plan.** F10 and F11 are not "verification" tasks any more; they are downstream of this. F28's approve/reject, F9's teach-an-alias, endpoint 25's Ask-Analyst button and the audit chain's verify button are all unreachable until it is fixed. **It outranks every remaining P1 on the Day 17 list**, and it must be fixed before the pitch video, because the demo path is a sequence of clicks.
 
 Root cause is **not yet identified** and is deliberately not guessed at here. The next step is a minimal reproduction — one page, one `'use client'` button with an `onClick` that logs — to establish whether the failure is app-wide or specific to how these pages are composed.
+
+---
+
+### ADR-127 · F9.1 — the hydration failure is caused by STREAMED SUSPENSE BOUNDARIES, and one question remains open
+
+**Reproduced minimally, in four steps, each isolating one variable.** Every probe was a page rendering one `'use client'` counter button with a `useEffect`; "hydrated" means the button gained a React fiber, the effect ran, and clicking incremented the count.
+
+| Probe | Page component | Result |
+|---|---|---|
+| 1 | sync | **hydrates** |
+| 2 | sync + `export const dynamic = 'force-dynamic'` | **hydrates** |
+| 3 | `async` + `await new Promise(setTimeout, 50)` — no network | **DEAD** |
+| 4 | `async` + a real API fetch | **DEAD** |
+
+So it is not `force-dynamic`, not the API client, not the network: **an `async` page component is enough.**
+
+**The mechanism is the Suspense boundary, not the async-ness.** An async page streams into a boundary, and the payload ends with React's reveal script `$RC("B:0","S:0")`; a sync page's payload has no `$RC`. Removing `app/loading.tsx` — which is what creates that boundary for every route — removes the `$RC`, **and probe 3 and `/review` both hydrate immediately afterwards**, `/review` going from 0 of 6 interactive elements to 6 of 6, Approve Match included.
+
+**Any boundary that actually streams is enough**, from any source. With `loading.tsx` removed, `/` and `/exceptions` still emit one `$RC` — from **F1's own Masthead Suspense** (ADR-121's `useSearchParams` requirement, the only other Suspense in the app) — and those two routes still fail. `/review`, which emits none, works.
+
+**Ruled out by measurement, not by argument:** a stale `.next` (survives a clean rebuild); a duplicate React (one copy, 19.2.8, resolved from `apps/web`); a truncated response (318 KB, 112 payload pushes, closing `</html>`); a failed chunk (all 200); a console error (none); **and the React version — pinning `react`/`react-dom` to 19.1.1 changes nothing.** The first React-pin test was run while `loading.tsx` was still present and was therefore confounded; it was repeated afterwards and still showed no effect.
+
+#### THE OPEN QUESTION, AND IT IS NOT ONE I CAN ANSWER
+
+**Every observation above comes from the embedded browser pane.** Claude-in-Chrome was not connected, so there was no second browser to check against. A streamed-boundary hydration failure this total would be an extremely prominent bug in Next 15.5, which makes it genuinely plausible that **the pane, not the application, is what fails to complete a streamed response**.
+
+The distinction decides the fix and they are opposite:
+
+- **If a real browser fails too**, this is a P0 and the mitigation is to remove the streaming boundaries — delete `app/loading.tsx` (losing ui-spec §9's skeleton) and rework F1's Masthead Suspense.
+- **If a real browser works**, there is no defect, the skeleton stays, and what needs fixing is the *belief* that these controls are verified — because they still would never have been clicked by a human.
+
+**Nothing is changed in the app until that is answered**, because deleting the skeleton to fix a bug that does not exist is a real loss for nothing. The test takes thirty seconds in any ordinary browser: open the dashboard, click **Run It Again**, and see whether a confirmation panel appears.
+
+> **Either answer is worth having.** The second one still leaves the backlog's own words standing — *"AskAnalyst arm → confirm panel: never watched render"*, *"Run launcher open state: same"* — and Day 16's resolve was exercised **against the live local API**, not through a browser. No interactive control in this product has been confirmed by a human clicking it, and that is true regardless of which way this lands.
