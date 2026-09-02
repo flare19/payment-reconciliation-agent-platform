@@ -220,6 +220,16 @@ for a static frontend, which has no in-flight work to lose.
 - [ ] Audit drill-down works for at least one alias-tier match
 - [ ] `GET /api/runs/:runId/audit/verify` returns `valid: true` on the demo run (ADR-042)
 - [ ] A score report exists for the demo run, so the dashboard shows **measured** accuracy rather than "not measured" (ADR-041)
+- [ ] **`npm run score:watch --api <railway-url>` is RUNNING, not just run once, for the entire judging window.**
+      F19 put a free, spendable-nothing "Run It Again" button in the hero, and a judge clicking
+      it starts a REAL run against the live API — one `score:watch` has never seen before. A
+      one-time pass before recording the pitch video only measures the run that already existed
+      at that moment; it does nothing for the next one a judge starts themselves. Found on
+      2026-09-03: two local runs sat unmeasured because the watcher had stopped and nobody
+      restarted it — one of them was the run on screen. `--once` is for the video-recording pass;
+      the live judging window needs the loop, kept alive on a laptop that stays open (or a small
+      persistent Railway worker, if that gets built before Day 5). Verify it is still running
+      immediately before handing the URL to a judge, not the night before.
 - [ ] The scale-benchmark table is committed and linked from the README (ADR-045)
 - [ ] Phase A has run on the demo run: investigations visible, at least one `RESOLUTION_PROPOSED` and one `CONFIRMED_UNRESOLVABLE` on screen
 - [ ] **Hallucinated resolutions is 0** on the holdout run (ADR-053 — build blocker, verify before recording the video)

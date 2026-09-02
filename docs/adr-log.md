@@ -1838,3 +1838,13 @@ after    Reproduce What You're Seeing     Try a Second Dataset
 **One token fix landed in the same pass, because it was the adjacent property of the element already being edited.** The radio's checked-state border and accent colour were `--sev-medium` — severity amber — the same misuse already corrected twice this session (ADR-141, ADR-145). Picking a dataset carries no severity; now `--ink`, the site's one primary-action colour.
 
 Verified: option one (`Reproduce What You're Seeing`, `Recommended` badge) confirmed visually; option two (`Try a Second Dataset`) confirmed present in the rendered DOM. Typecheck and production build clean.
+
+---
+
+### ADR-148 · Two headline tiles read "not measured" not because ADR-021 was wrong, but because the watcher had stopped
+
+**Tejas's report:** False Positives and Best Possible on the default run both showed absent, and the concern was real - a judge should not see empty boxes, but the fix cannot be an API endpoint reading the answer key. It does not need to be. `npm run score:watch` already exists precisely so the API never has to: it polls for completed runs with no score report and posts one through endpoint 23, outside the wall ADR-021 draws.
+
+**What was actually wrong: the watcher was not running.** `ps aux` found no `score:watch` process. Two completed local runs, including the exact one on screen, had no `score_reports` row - not because scoring them would violate the architecture, but because nobody had the loop started. Restarted it (`npm run score:watch --api http://localhost:8080 --interval 5`); it found and scored both within one cycle. The run the report was filed against now returns `falsePositives: 0` and `ceiling: 93` through the same endpoint that was showing absent five minutes earlier - no code changed, no wall crossed.
+
+**The gap this exposes for the actual judging day is bigger than a stale local process.** F19 put a free, real "Run It Again" button in the hero. A judge who clicks it starts a genuine run against the live Railway API that `score:watch` has never seen - a one-time pre-video pass does not cover it. `docs/deployment.md`'s pre-submission checklist previously listed "a score report exists for the demo run" as a single checkbox, true once and never re-verified. It now says explicitly: the watcher must be RUNNING, not run, for the whole judging window, checked immediately before handing a judge the URL rather than the night before.
