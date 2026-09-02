@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ScoreBars } from '@/components/ui/ScoreBars';
 import { ApiClientError, approveMatch, rejectMatch } from '@/lib/api-client';
 import { count, day, ratio4 } from '@/lib/format';
@@ -48,6 +48,24 @@ export function ReviewCard(
 
   const suggestion = item.aliasSuggestions[0];
   const who = () => reviewedBy.trim() || 'unattributed reviewer';
+
+  /**
+   * TEACHING AND REJECTING ARE MUTUALLY EXCLUSIVE, MADE STRUCTURALLY TRUE
+   * RATHER THAN MERELY DISCOURAGED -- the same discipline ADR-025's conflict
+   * interlock already holds this screen to.
+   *
+   * `approve()` is the only path that ever reads `teachAlias`, so a stray
+   * checked box was never actually reachable through `reject()` -- but a
+   * reviewer typing a rejection reason with "teach this alias" still visibly
+   * checked reads as a contradiction on screen even when it is inert underneath,
+   * and inviting that reading is itself the defect (Tejas, 2026-09-03). Once a
+   * rejection reason exists, teaching is force-cleared, not merely disabled --
+   * so the STATE agrees with the checkbox, not just its interactivity.
+   */
+  const rejecting = rejectReason.trim() !== '';
+  useEffect(() => {
+    if (rejecting) setTeachAlias(false);
+  }, [rejecting]);
 
   async function approve(confirmConflict: boolean) {
     setBusy('approve');
@@ -133,10 +151,11 @@ export function ReviewCard(
 
       {suggestion && (
         <section className={styles.alias}>
-          <label className={styles.aliasToggle}>
+          <label className={`${styles.aliasToggle} ${rejecting ? styles.aliasToggleOff : ''}`}>
             <input
               type="checkbox"
               checked={teachAlias}
+              disabled={rejecting}
               onChange={(e) => setTeachAlias(e.target.checked)}
             />
             <span>
@@ -150,6 +169,12 @@ export function ReviewCard(
                 <span className="num">{count(suggestion.wouldAlsoResolve)}</span> other
                 {suggestion.wouldAlsoResolve === 1 ? ' record' : ' records'} in this run.
               </span>
+              {rejecting && (
+                <span className={styles.aliasOffNote}>
+                  Not available while rejecting this match — a rule is only learned from a
+                  confirmed match. Clear the rejection reason to teach it instead.
+                </span>
+              )}
             </span>
           </label>
         </section>

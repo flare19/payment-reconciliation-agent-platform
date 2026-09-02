@@ -1878,3 +1878,27 @@ Verified: option one (`Reproduce What You're Seeing`, `Recommended` badge) confi
 **Historical docs (`adr-log.md`'s own earlier entries, `what-broke.md`, `day17-backlog.md`) were left as they were written.** They are an account of what was true at the time, the same append-only discipline the audit log itself follows - a past entry describing a 120/min limit was accurate when written and stays that way; only current-state references (the code, the contract, the running config) move.
 
 Verified live: hot-reload (`tsx watch`) picked up the change without a restart, `X-RateLimit-Limit: 240` confirmed on a real response, and the reload cleared the in-memory bucket along with it - 138/240 remaining immediately after. Unit and integration rate-limit suites both green.
+
+---
+
+### ADR-151 · `resolveRun` treated a 25-item convenience list as a lookup table, and the 26th run made it silently wrong
+
+**Chasing a straightforward question about the alias-teach checkbox found something far more serious.** Tejas asked whether "Teach this alias" was correctly scoped per review item — it was; `ReviewCard` is keyed on `matchId` and this exact leak had already been found and fixed once before (the doc comment in `ReviewQueue.tsx` names it). Verifying that on the live page surfaced a different bug entirely: navigating to `verify`'s review queue by its exact run id loaded a **demo dataset run** instead — different queue length (74 vs 47), different counterparties, no error, no indication anything had substituted.
+
+**The cause: `resolveRun` never looked past page one.** `listRuns()` defaults to the 25 most recent runs; `resolveRun` searched only inside that array with `.find((r) => r.runId === requested)`, and treated a miss as "this run does not exist" rather than "this run is not among the 25 most recent." **The 26th run created today (`837d4cb3`) pushed `verify` off page one**, and the function fell back to its default-selection path — most recent completed — landing on a demo run, silently, with total confidence on screen. `verify` is the one run this session's own rehearsal notes name for a live alias-teaching demo. Had this not been caught now, it would have failed exactly during a live pitch, on the one screen most likely to be bookmarked for it.
+
+**Fixed by treating `listRuns()` as what it actually is.** When a specific run is requested and it is not on the default page, `resolveRun` now asks for it directly via `getRun(requested)` — endpoint 4, unaffected by how many runs exist — before falling back to the default. The fallback path itself is unchanged, and now only fires when nothing was explicitly requested or the id genuinely does not exist.
+
+> **Named because it is the same shape of bug `what-broke.md`'s F1 entry already described, from a different cause.** F1 was nav links losing their `?run=` param on the way OUT. This is the resolver silently substituting a run on the way IN, once the run count crossed a threshold nobody had reason to think about until it did. Both read as "the numbers on screen are simply wrong, with nothing to say so" — the failure mode this project has spent this entire session hunting, this time in a function six screens all share.
+
+Verified live: the exact failing URL (`/review?run=771829ef…&page=18`) now returns `Proposal 18 of 47` / BIGBASKET, matching the API directly, both before and after the fix compared side by side.
+
+---
+
+### ADR-152 · Teaching an alias and rejecting a match made structurally exclusive
+
+**Tejas's direct request: the two cannot be true at once.** `approve()` was already the only path that ever read `teachAlias` — `reject()` never touched it — so a checked box was never actually reachable through rejection. But a reviewer typing a rejection reason with "Teach this alias" still visibly checked reads as a contradiction on screen even when it is inert underneath, and a screen inviting that reading is a defect on a project whose whole design otherwise makes contradictory states structurally impossible rather than merely discouraged (the same argument ADR-025's conflict interlock already makes on this exact card).
+
+**Fixed with force-clear, not just disable.** Once `rejectReason.trim() !== ''`, a `useEffect` sets `teachAlias` back to `false` — the STATE agrees with the checkbox, not only its `disabled` attribute — and the checkbox itself is disabled with an inline note explaining why (*"Not available while rejecting this match... clear the rejection reason to teach it instead"*), muted rather than hidden, so the reader sees why the option went away rather than wondering if it was ever there.
+
+Verified functionally in the live page, not just by reading the source: checked the box (`checked: true`), typed a rejection reason, and confirmed both `checked: false` and `disabled: true` landed in the same render pass; cleared the reason and confirmed the control re-enabled.

@@ -91,6 +91,22 @@
 
 .wouldAlsoResolve { font-size: var(--t-meta); color: var(--verified); font-weight: 500; }
 
+/* Teaching and rejecting cannot both be true (Tejas, 2026-09-03). Muted
+   rather than hidden -- the reader should see WHY the option went away, not
+   wonder whether it was ever there. */
+.aliasToggleOff {
+  border-color: var(--rule);
+  cursor: not-allowed;
+}
+.aliasToggleOff strong,
+.aliasToggleOff .wouldAlsoResolve { color: var(--ink-3); }
+
+.aliasOffNote {
+  font-size: var(--t-micro);
+  color: var(--ink-3);
+  font-style: italic;
+}
+
 /* ── conflict interlock ───────────────────────────────────────────────────── */
 
 .conflict {

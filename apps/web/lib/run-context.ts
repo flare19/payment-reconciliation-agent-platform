@@ -1,4 +1,4 @@
-import { listRuns } from '@/lib/api-client';
+import { ApiClientError, getRun, listRuns } from '@/lib/api-client';
 import type { RunSummary } from '@/types/api';
 
 /**
@@ -20,12 +20,54 @@ export interface RunContext {
   runs: RunSummary[];
 }
 
+/**
+ * WAS SILENTLY WRONG THE MOMENT A 26TH RUN EXISTED (found live, 2026-09-03).
+ *
+ * `listRuns()` is a PAGINATED CONVENIENCE LIST — its default page holds the
+ * 25 most recent runs, nothing more. This function used to look for the
+ * requested run ONLY inside that page: `runs.find((r) => r.runId ===
+ * requested)`. The moment a 26th run existed, any older run named by an
+ * explicit `?run=` — a bookmarked link, a memorized URL for a demo — fell
+ * off page 1, `find` returned `undefined`, and the function fell back to
+ * "most recently completed" with NO error, no banner, nothing on screen to
+ * say the requested run had been swapped out. A reader would see a
+ * different run's numbers with full confidence they were the ones asked
+ * for. `verify`, the one run this project's own rehearsal notes name for a
+ * live alias-teaching demo, was the run that fell off — silently replaced
+ * by a demo-dataset run with a different queue, different counterparties,
+ * different everything.
+ *
+ * Fixed by treating `listRuns()` as what it is — a list for browsing, not
+ * a lookup table — and asking for a SPECIFIC id the way `getRun` (endpoint
+ * 4) exists to answer: directly, unaffected by how many runs exist. The
+ * default-selection fallback (newest completed) is unchanged; it now only
+ * fires when nothing was explicitly requested, or when the id genuinely
+ * does not exist.
+ */
 export async function resolveRun(requested: string | undefined): Promise<RunContext | null> {
   const { runs } = await listRuns();
   if (runs.length === 0) return null;
 
-  const asked = requested ? runs.find((r) => r.runId === requested) : undefined;
-  const run = asked ?? runs.find((r) => r.status === 'completed') ?? runs[0];
+  if (requested) {
+    const asked = runs.find((r) => r.runId === requested);
+    if (asked) return { run: asked, runs };
+
+    // Not on the default page. Ask for it directly rather than concluding
+    // it does not exist — `runs` is a recency-ordered sample, not the truth
+    // about which ids are valid.
+    try {
+      const run = await getRun(requested);
+      return { run, runs };
+    } catch (err) {
+      // A GENUINE 404 (or the API being unreachable for this one call)
+      // falls through to the same default this function has always used.
+      // `runs` is never re-fetched here — a second `listRuns()` call would
+      // not change which ids are on page 1.
+      if (!(err instanceof ApiClientError)) throw err;
+    }
+  }
+
+  const run = runs.find((r) => r.status === 'completed') ?? runs[0];
   return run ? { run, runs } : null;
 }
 
