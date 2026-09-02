@@ -163,14 +163,42 @@ export function EnginePerformance(
 
         <h3 className={`label ${styles.subhead}`}>Alias Learning</h3>
         {aliasLearning.humanCorrectionsToDate > 0 ? (
-          <p className={styles.note}>
-            <span className="num">{count(aliasLearning.humanCorrectionsToDate)}</span> human
-            corrections have auto-resolved{' '}
-            <span className="num">{count(aliasLearning.recordsAutoResolvedByAliases)}</span> records
-            {aliasLearning.leverageRatio !== null && (
-              <> — a leverage ratio of <span className="num">{oneDp(aliasLearning.leverageRatio)}</span></>
-            )}.
-          </p>
+          <>
+            <p className={styles.note}>
+              <span className="num">{count(aliasLearning.humanCorrectionsToDate)}</span> human{' '}
+              {aliasLearning.humanCorrectionsToDate === 1 ? 'correction' : 'corrections'} touched{' '}
+              <span className="num">{count(aliasLearning.recordsAutoResolvedByAliases)}</span>{' '}
+              matched records
+              {aliasLearning.recordsDecidedByAliases !== null && (
+                <> and were <strong>decisive</strong> for{' '}
+                  <span className="num">{count(aliasLearning.recordsDecidedByAliases)}</span></>
+              )}
+              {aliasLearning.leverageRatio !== null && (
+                <> — a leverage ratio of{' '}
+                  <span className="num">{oneDp(aliasLearning.leverageRatio)}</span></>
+              )}.
+            </p>
+            {/*
+              TOUCHED AND DECISIVE ARE DIFFERENT NUMBERS AND THE GAP IS THE
+              POINT (ADR-132). Six records carried an alias-resolved key on the
+              first warm run; only three of them needed it — the rest matched on
+              amount and date regardless. The leverage ratio divides by the
+              decisive figure, because "one correction fixed six records" was a
+              claim the data did not support.
+            */}
+            {aliasLearning.recordsDecidedByAliases !== null
+              && aliasLearning.recordsDecidedByAliases
+                < aliasLearning.recordsAutoResolvedByAliases && (
+              <p className={styles.note}>
+                The other{' '}
+                <span className="num">
+                  {count(aliasLearning.recordsAutoResolvedByAliases
+                    - aliasLearning.recordsDecidedByAliases)}
+                </span>{' '}
+                would have matched anyway. Only the decisive count is credited to the correction.
+              </p>
+            )}
+          </>
         ) : (
           <p className={styles.note}>
             No aliases have been taught yet, so there is no leverage ratio to report. This is the

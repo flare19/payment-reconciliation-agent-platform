@@ -1497,3 +1497,40 @@ Sixth instance of declared-and-never-reached, after `datasetSeed`, `AGENT_MAX_CO
 **Verified live, in the order a reviewer meets it:** a conflicting proposal on a pending match returns **409**, leaves the alias untouched, and leaves the match **`human_confirmed`**; the retry with `confirmConflict: true` on that same already-approved match supersedes with a penalty and returns the new alias. Restoring the correct mapping through two confirmations then lifted the penalty exactly as §6.3 rule 3 says it should — `confirmation_count 2`, eligible for Tier 1.5 again.
 
 **The guard is structural, because the defect was.** `tests/unit/alias-conflict-interlock.test.ts` asserts the code is referenced outside the enum that declares it — the precise property that was missing when it lived in `types/dto.ts` and nowhere else — plus that `confirmConflict` survives validation and that only an exact `true` counts, so silence is never consent. All three watched failing against the pre-fix source.
+
+---
+
+### ADR-132 · F9.5 — the cold-start rate is computed by a second matching pass, not estimated
+
+**ADR-130 made cold start honest by reporting an absence. This makes it a number.**
+
+S5–S11 is extracted as `runMatchingPipeline(pool, config, aliases, time)` — a pure function of its arguments that touches no database, writes no audit entry and reads no clock — and a warm run calls it **twice**: once with its real alias set, which *is* the run, and once with an empty one. The second pass's matched set is the cold-start figure. Nothing from it is persisted except the count.
+
+**It is computed rather than derived, and the difference is not pedantic.** An alias rewrites `counterparty_key`, which feeds **blocking** and Tier 2 candidate generation as well as scoring. Subtracting alias-touched records therefore yields a *bound*, not an answer — and assignment is greedy and global (ADR-032), so a warm pass can in principle reassign a pair the cold pass matched. Only running the machine answers the question the label asks.
+
+**Measured on the holdout with one alias active:**
+
+```
+warm                65.56%   573 matched
+cold counterfactual 65.22%   ← computed in-run
+alias TOUCHED        6 records
+alias DECISIVE for   3 records
+```
+
+> **The counterfactual reproduces an independently produced cold run to the digit.** `verify` ran cold days earlier and scored **65.22%**; the in-run second pass computes **65.22%**. Two unrelated paths to the same number is the strongest corroboration available without a second implementation.
+
+#### The second figure this unlocked, and it corrects a claim ADR-130 shipped
+
+`recordsAutoResolvedByAliases` counts records an alias **touched** that ended up matched — six. Only **three** of those six needed it; the other three matched on amount and date regardless. `leverageRatio` divided by the touched count, so it read **6** where the causal figure is **3**: *"one correction fixed six records"* was a claim the data did not support.
+
+`recordsDecidedByAliases` is now the causal count, `leverageRatio` divides by it, and the dashboard states the gap explicitly — *"the other 3 would have matched anyway. Only the decisive count is credited to the correction."* **Neither figure was knowable without a cold pass**, which is why ADR-130 could only report the absence.
+
+#### The instrument is checked against a known-good case, because ADR-127 was not
+
+`tests/unit/cold-pass.test.ts` asserts the property that makes two passes comparable at all:
+
+1. **Two passes with the same alias set produce the identical matched set** — if the second pass saw different inputs, every cold figure would be a plausible wrong number, the worst failure available here.
+2. **The pipeline does not mutate the pool it is handed.** `runTier15` returns copied records rather than writing `counterpartyKey` in place; if it mutated, the cold pass would inherit the warm pass's alias-resolved keys and report the **warm** rate under the cold label — ADR-130's exact defect, reintroduced by the fix for it. **Watched failing**: making `runTier15` mutate in place fails this test and no other.
+3. **An alias only ever adds matched records.** Asserted on the shipped dataset rather than claimed as a law, because greedy global assignment does not guarantee it — if it ever fires, the cold/warm pairing has to be stated differently.
+
+**Cost:** one extra matching pass per warm run, roughly a second, and nothing on a cold run — the pass is skipped entirely where the run's own figures already are the cold ones.

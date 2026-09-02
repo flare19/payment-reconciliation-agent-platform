@@ -120,6 +120,9 @@ export interface EngineMetrics {
     aliasesSuperseded: number;
     humanCorrectionsToDate: number;
     recordsAutoResolvedByAliases: number;
+    /** Records that matched ONLY because of an alias — the causal figure, from
+     *  a real second pass. `null` on a cold run (ADR-132). */
+    recordsDecidedByAliases: number | null;
     leverageRatio: number | null;
   };
   /** `null`, never `0`, when S13 did not run — a stage that did not run reports no figure. */

@@ -142,15 +142,20 @@ export function HeadlineRow({
           label="Without Learned Rules"
           provenance="engine"
           value={pct(coldStart.matchRatePct)}
-          note={`No learned rules were active — this run is its own cold start`}
+          note={coldStart.isCold
+            ? 'No learned rules were active — this run is its own cold start'
+            : `Computed by running the engine again with all `
+              + `${count(coldStart.aliasesActiveAtStart)} learned `
+              + `${coldStart.aliasesActiveAtStart === 1 ? 'rule' : 'rules'} disabled`}
           basis={{
             summary: 'Cold and warm, always together',
             body:
               'A warm run reuses corrections a human taught the system earlier, so it will always '
               + 'score at least as well as a cold one. Reporting only the warm figure would credit '
-              + 'the engine for work a person did (ADR-020). This run had no learned rules active, '
-              + 'so its own rate IS the cold-start rate — on a warm run this tile reports an '
-              + 'absence instead, because the comparison has not been computed.',
+              + 'the engine for work a person did (ADR-020). On a warm run this figure is not an '
+              + 'estimate: the engine matches the same records a second time with the alias set '
+              + 'empty, because an alias changes blocking and candidate generation as well as '
+              + 'scoring — so subtracting alias-touched records would give a bound, not an answer.',
           }}
         />
       )}

@@ -1558,3 +1558,19 @@ The obvious test for #55 — *"at the engine's own bounds the tool reproduces th
   Verified in the order a reviewer meets it: 409 with the existing rule named, alias untouched, match still `human_confirmed`; then the confirmed retry supersedes with a §6.3 penalty; then two confirmations of the correct mapping lift the penalty and restore Tier 1.5 eligibility.
 
   > **The guard is structural because the defect was.** It asserts the code is referenced outside the enum declaring it — exactly the property missing when it lived in `types/dto.ts` alone — and that `confirmConflict` survives validation with only an exact `true` counting, so silence is never consent. Watched failing against the pre-fix source. **A broader version of this guard is worth having: nine other declared error codes could not be proven reachable by a naive search**, and while most are raised through the `found()` helper, that list is where the seventh instance will come from.
+
+- **2026-09-02 — Day 17, F9.5: the cold-start rate is now computed, and it corrected a number ADR-130 had just shipped (ADR-132).** S5–S11 extracted as a pure function and run twice on a warm run — once with the real alias set, once with none. The second pass's matched set is the cold figure; nothing but the count is kept.
+
+  **Computed, not derived.** An alias rewrites `counterparty_key`, which feeds blocking and candidate generation as well as scoring, and assignment is greedy and global — so subtracting alias-touched records gives a bound, not an answer.
+
+  ```
+  warm                65.56%   573 matched
+  cold counterfactual 65.22%   computed in-run
+  alias TOUCHED        6 · DECISIVE for 3
+  ```
+
+  > **The counterfactual reproduces an independently produced cold run to the digit** — `verify` ran cold days earlier at 65.22%, and the in-run pass computes 65.22%. Two unrelated paths, same number.
+
+  **It also corrected `leverageRatio`, which F9.2 had shipped hours earlier.** That divided by records an alias *touched* (6) rather than records it was *decisive* for (3) — "one correction fixed six records" was a claim the data did not support. Three of the six matched on amount and date regardless. The dashboard now says so out loud rather than quietly crediting the correction. **Neither number was knowable without the cold pass**, which is exactly why ADR-130 could only report an absence.
+
+  **The instrument is checked against a known-good case this time**, which ADR-127 was not: two passes with the same alias set must produce the identical matched set; the pipeline must not mutate the pool it is handed (**watched failing** — making `runTier15` mutate in place fails that test and no other, and would have made the cold pass silently report the warm rate); and an alias may only add matched records, asserted on the shipped dataset rather than claimed as a law, because greedy assignment does not guarantee it.

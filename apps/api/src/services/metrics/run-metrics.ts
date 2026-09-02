@@ -127,6 +127,13 @@ export interface MetricsInput {
    * attributed ZERO.
    */
   counterpartyResolutions: readonly { transactionId: string; appliedAliasId: string }[];
+  /**
+   * The groups a SECOND matching pass produced with the alias set empty
+   * (ADR-132). `null` on a cold run, where the run's own groups are already the
+   * cold ones. This is the only honest source for two figures: the cold-start
+   * rate, and how many records the aliases were DECISIVE for.
+   */
+  coldGroups: readonly ProposedMatch[] | null;
   /** Alias rows in each terminal state, at finalization. */
   aliasCounts: { active: number; superseded: number; revoked: number };
   /** Human corrections made to date — the denominator of the leverage ratio. */
@@ -231,6 +238,7 @@ export interface RunMetrics {
   aliasLearning: {
     humanCorrectionsToDate: number;
     recordsAutoResolvedByAliases: number;
+    recordsDecidedByAliases: number | null;
     leverageRatio: number | null;
     aliasesActive: number; aliasesSuperseded: number; aliasesRevoked: number;
   };
@@ -383,7 +391,7 @@ export function computeRunMetrics(input: MetricsInput): RunMetrics {
   const {
     population, pool, exactPairs, tier2, identity, groups, exceptions,
     aliasCountAtStart, aliasCounts, humanCorrectionsToDate, timings, batchOutcomes,
-    batchPairs, explain, counterpartyResolutions,
+    batchPairs, explain, counterpartyResolutions, coldGroups,
   } = input;
 
   const reconcilable = pool.filter((t) => t.statusNorm === 'reconcilable').length;
@@ -405,6 +413,26 @@ export function computeRunMetrics(input: MetricsInput): RunMetrics {
    */
   const aliasResolvedRecords = new Set(
     counterpartyResolutions.map((r) => r.transactionId).filter((id) => matched.has(id)));
+
+  /**
+   * WHAT THE ENGINE WOULD HAVE MATCHED ALONE, and what the aliases were
+   * DECISIVE for (ADR-132).
+   *
+   * `aliasResolvedRecords` counts records an alias TOUCHED and that ended up
+   * matched — six on the first warm run. Only three of those six actually
+   * needed it; the other three matched on amount and date regardless. Reporting
+   * six as leverage overstates it, and the difference is only knowable against
+   * a real cold pass.
+   */
+  const coldMatched = coldGroups === null ? null : matchedRecordIds(coldGroups);
+  if (isCold && coldMatched !== null) {
+    // A cold run's counterfactual is the run itself. If these disagree the two
+    // passes are not seeing the same inputs, and every figure below is fiction.
+    throw new Error(
+      'cold-pass invariant: a run with no active aliases must not compute a '
+      + 'separate cold counterfactual');
+  }
+  const aliasDecisiveRecords = coldMatched === null ? null : matched.size - coldMatched.size;
 
   const byCategory: Record<string, number> = {};
   const bySeverity: Record<Severity, number> = { high: 0, medium: 0, low: 0 };
@@ -454,7 +482,9 @@ export function computeRunMetrics(input: MetricsInput): RunMetrics {
        * pass with the alias set empty — so it is `null` and says so, rather than
        * a warm number wearing a cold label (ADR-130).
        */
-      matchRatePct: isCold ? pct(matched.size, reconcilable) : null,
+      matchRatePct: isCold
+        ? pct(matched.size, reconcilable)
+        : coldMatched === null ? null : pct(coldMatched.size, reconcilable),
       aliasesActiveAtStart: aliasCountAtStart,
       isCold,
     },
@@ -464,13 +494,25 @@ export function computeRunMetrics(input: MetricsInput): RunMetrics {
     aliasLearning: {
       humanCorrectionsToDate,
       recordsAutoResolvedByAliases: aliasResolvedRecords.size,
+      /**
+       * Records that matched ONLY because of an alias — the causal figure.
+       * `null` on a cold run (there is nothing to attribute) and whenever the
+       * cold pass was not run.
+       */
+      recordsDecidedByAliases: aliasDecisiveRecords,
       // The alias feature's honest headline. NULL rather than Infinity or 0 when
       // no corrections have been made: a ratio with an empty denominator is
       // undefined, and printing "0.0" would read as "the feature did nothing"
       // when the truth is "nobody has taught it anything yet".
-      leverageRatio: humanCorrectionsToDate === 0
+      /**
+       * THE HONEST HEADLINE, now over the CAUSAL numerator (ADR-132). It used
+       * to divide records the alias merely touched by corrections made, which
+       * read as "one correction fixed six records" when one correction was
+       * decisive for three.
+       */
+      leverageRatio: humanCorrectionsToDate === 0 || aliasDecisiveRecords === null
         ? null
-        : Math.round((aliasResolvedRecords.size / humanCorrectionsToDate) * 100) / 100,
+        : Math.round((aliasDecisiveRecords / humanCorrectionsToDate) * 100) / 100,
       aliasesActive: aliasCounts.active,
       aliasesSuperseded: aliasCounts.superseded,
       aliasesRevoked: aliasCounts.revoked,

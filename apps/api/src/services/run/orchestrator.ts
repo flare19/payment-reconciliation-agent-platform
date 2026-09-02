@@ -47,8 +47,7 @@ import { createHash } from 'node:crypto';
 import { withTransaction, type TxClient } from '../../db/pool.js';
 import type { BusinessDate } from '../../types/domain.js';
 import type {
-  ClassifiedException, NormalizedTransaction, RunConfig,
-} from '../../types/engine.js';
+  ClassifiedException, NormalizedTransaction, RunConfig, ActiveAlias,} from '../../types/engine.js';
 import type { CanonicalValue } from '../audit/canonical-json.js';
 
 import { ingestSources, CsvParseError } from '../ingestion/index.js';
@@ -176,6 +175,85 @@ const blank = {
  * Failure is caught here and recorded; this never throws for a data problem,
  * only for a programming error the caller should see.
  */
+
+/**
+ * S5-S11, as a pure function of (pool, config, aliases).
+ *
+ * Extracted so it can run TWICE (ADR-132): once with the run's real alias set —
+ * that IS the run — and once with an empty one, to compute what the engine
+ * would have matched on its own. Nothing here touches the database, writes an
+ * audit entry, or reads a clock. `time` is the only injected dependency, and
+ * the cold pass passes a no-op so a counterfactual can never pollute the run's
+ * reported stage timings.
+ *
+ * THE TWO PASSES SHARE NO MUTABLE STATE, and that is load-bearing rather than
+ * incidental: `runTier15` returns COPIED records (`{ ...t, counterpartyKey }`)
+ * instead of mutating, and each pass builds its own block indexes — the only
+ * thing `rebuildCounterpartyIndex` writes to. It is asserted rather than
+ * assumed: on a cold run the counterfactual must reproduce the run's own
+ * matched set exactly, and `computeRunMetrics` refuses to publish if it does
+ * not.
+ */
+export function runMatchingPipeline(
+  pool: NormalizedTransaction[],
+  config: RunConfig,
+  aliases: readonly ActiveAlias[],
+  time: <T>(name: string, f: () => T) => T,
+) {
+  const blocks = time('block', () => buildBlockIndexes(pool));
+  const t1 = time('tier1', () => runTier1(blocks, config));
+  const claimedByExact = new Set(t1.matches.flatMap((m) => [m.aId, m.bId]));
+  const t15 = time('tier15', () => runTier15(pool, config, aliases, claimedByExact));
+  rebuildCounterpartyIndex(blocks, t15.pool);
+
+  const exactPairs = [...t1.matches, ...t15.matches];
+
+  // S8 — identity short-circuit. Every verdict it reaches is a pair Tier 2 must
+  // NOT re-score: a similarity score may never overturn a deterministic identity
+  // verdict (matching-engine §6.3).
+  const identity = time('identity', () => resolveIdentities(t15.pool, config));
+  const settled = new Set<string>();
+  for (const { pair, verdict } of identity) {
+    if (verdict.kind !== 'not_established') settled.add(pairKeyOf(pair[0].id, pair[1].id));
+  }
+
+  // S6/S7's PAIRS, not their records (§6.3, issue #40). A gateway matched to its
+  // ledger row still needs Tier 2 to find its bank leg, or §10 rule 2's 3-way
+  // group can never form and the bank leg becomes a MISSING_IN_BANK exception
+  // that reports having considered nothing.
+  const tier2 = time('tier2', () => runTier2(blocks, config, exactPairs, settled));
+
+  // ── S10 BATCH (issue #46) ───────────────────────────────────────────────────
+  // Sees only what S6-S9 left unmatched, so it can extend the engine's output
+  // but never contradict it. The two decisions U6 declined to make alone — which
+  // records enter the pool, and how a decomposition interacts with S11's
+  // role-collision rule — are argued in `batch-stage.ts`'s header.
+  const byId = new Map<string, NormalizedTransaction>(t15.pool.map((t) => [t.id, t]));
+  const tierPairs: GroupPair[] = [
+    ...exactPairs.map((m) => fromTier1(m, byId)).filter((p): p is GroupPair => p !== null),
+    ...tier2.accepted.map(fromTier2),
+  ];
+  // S10 reads counterparts PER ROLE from these pairs (#49). "Has this gateway a
+  // BANK leg?" is the question; "is it in any group?" is the one that emptied
+  // the pool and is the #40 error one stage later.
+  const batch = time('batch', () => runBatchStage(t15.pool, tierPairs, config));
+
+  // A tier pair a split absorbed is dropped, not kept beside it (#51, ADR-079):
+  // rule 3 admits multiple members of one role only through pairs that DECLARE
+  // the exception, so a non-declaring fuzzy pair beside three declaring ones is
+  // refused and its leg falls out of the group the stage just proved.
+  const superseded = new Set(batch.supersededTierPairs.map((p) => pairKeyOf(p.aId, p.bId)));
+  const groupPairs: GroupPair[] = [
+    ...tierPairs.filter((p) => !superseded.has(pairKeyOf(p.a.id, p.b.id))),
+    ...batch.splitPairs,
+  ];
+  // S10's verdicts arrive as pre-formed GROUPS, not pairs: a decomposition is
+  // already a group, and `assembleGroups` marks their members `inBatch` so no
+  // pairwise pair can claim one of them (§10 rule 3).
+  const assembled = time('group', () => assembleGroups(groupPairs, batch.groups));
+  return { t15, exactPairs, identity, tier2, batch, assembled };
+}
+
 export async function executeRun(
   runId: string, sources: RunSources, baseConfig: Omit<RunConfig, 'referenceDate' | 'aliasCountAtStart'>,
   explain: ExplainDeps = DEFAULT_EXPLAIN_DEPS,
@@ -341,57 +419,22 @@ async function runPhases(
   // ── S5–S11 MATCHING (pure, in memory) ──────────────────────────────────────
   await runsRepo.setRunStatus(runId, 'matching');
 
-  const blocks = stage.time('block', () => buildBlockIndexes(deduped.pool));
-  const t1 = stage.time('tier1', () => runTier1(blocks, config));
-  const claimedByExact = new Set(t1.matches.flatMap((m) => [m.aId, m.bId]));
-  const t15 = stage.time('tier15', () => runTier15(deduped.pool, config, aliases, claimedByExact));
-  rebuildCounterpartyIndex(blocks, t15.pool);
+  const warm = runMatchingPipeline(deduped.pool, config, aliases, (n, f) => stage.time(n, f));
+  const { t15, exactPairs, identity, tier2, batch, assembled } = warm;
 
-  const exactPairs = [...t1.matches, ...t15.matches];
-
-  // S8 — identity short-circuit. Every verdict it reaches is a pair Tier 2 must
-  // NOT re-score: a similarity score may never overturn a deterministic identity
-  // verdict (matching-engine §6.3).
-  const identity = stage.time('identity', () => resolveIdentities(t15.pool, config));
-  const settled = new Set<string>();
-  for (const { pair, verdict } of identity) {
-    if (verdict.kind !== 'not_established') settled.add(pairKeyOf(pair[0].id, pair[1].id));
-  }
-
-  // S6/S7's PAIRS, not their records (§6.3, issue #40). A gateway matched to its
-  // ledger row still needs Tier 2 to find its bank leg, or §10 rule 2's 3-way
-  // group can never form and the bank leg becomes a MISSING_IN_BANK exception
-  // that reports having considered nothing.
-  const tier2 = stage.time('tier2', () => runTier2(blocks, config, exactPairs, settled));
-
-  // ── S10 BATCH (issue #46) ───────────────────────────────────────────────────
-  // Sees only what S6-S9 left unmatched, so it can extend the engine's output
-  // but never contradict it. The two decisions U6 declined to make alone — which
-  // records enter the pool, and how a decomposition interacts with S11's
-  // role-collision rule — are argued in `batch-stage.ts`'s header.
-  const byId = new Map<string, NormalizedTransaction>(t15.pool.map((t) => [t.id, t]));
-  const tierPairs: GroupPair[] = [
-    ...exactPairs.map((m) => fromTier1(m, byId)).filter((p): p is GroupPair => p !== null),
-    ...tier2.accepted.map(fromTier2),
-  ];
-  // S10 reads counterparts PER ROLE from these pairs (#49). "Has this gateway a
-  // BANK leg?" is the question; "is it in any group?" is the one that emptied
-  // the pool and is the #40 error one stage later.
-  const batch = stage.time('batch', () => runBatchStage(t15.pool, tierPairs, config));
-
-  // A tier pair a split absorbed is dropped, not kept beside it (#51, ADR-079):
-  // rule 3 admits multiple members of one role only through pairs that DECLARE
-  // the exception, so a non-declaring fuzzy pair beside three declaring ones is
-  // refused and its leg falls out of the group the stage just proved.
-  const superseded = new Set(batch.supersededTierPairs.map((p) => pairKeyOf(p.aId, p.bId)));
-  const groupPairs: GroupPair[] = [
-    ...tierPairs.filter((p) => !superseded.has(pairKeyOf(p.a.id, p.b.id))),
-    ...batch.splitPairs,
-  ];
-  // S10's verdicts arrive as pre-formed GROUPS, not pairs: a decomposition is
-  // already a group, and `assembleGroups` marks their members `inBatch` so no
-  // pairwise pair can claim one of them (§10 rule 3).
-  const assembled = stage.time('group', () => assembleGroups(groupPairs, batch.groups));
+  /**
+   * THE COLD COUNTERFACTUAL (ADR-132): the same pool and config with NO
+   * aliases. ADR-020 defines cold start as the rate "with aliases disabled",
+   * and until ADR-130 it was literally the same expression as the warm rate.
+   * It is COMPUTED here rather than estimated, because an alias changes
+   * blocking and candidate generation as well as scoring — so subtracting
+   * alias-touched records gives a bound, not an answer.
+   *
+   * Skipped on a cold run, where the run's own figures ARE the cold ones.
+   */
+  const cold = aliases.length === 0
+    ? null
+    : runMatchingPipeline(deduped.pool, config, [], (_n, f) => f());
 
   /**
    * EVERY alias that actually resolved a counterparty key, not only those that
@@ -543,6 +586,7 @@ async function runPhases(
     exceptions,
     aliasCountAtStart: config.aliasCountAtStart,
     counterpartyResolutions: t15.counterpartyResolutions,
+    coldGroups: cold === null ? null : cold.assembled.matches,
     aliasCounts,
     // Every alias ever taught is a correction a human made, revoked ones
     // included — see `aliasStatusCounts`. Dropping the revoked ones would
