@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
+import { Footer } from '@/components/chrome/Footer';
 import { Masthead } from '@/components/chrome/Masthead';
 
 /**
@@ -49,6 +50,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <a className="skip-link" href="#main">Skip to Content</a>
         <Masthead />
         {children}
+        <Footer />
       </body>
     </html>
   );

@@ -1793,3 +1793,21 @@ template    Written by a template
 **The motion is grayscale and stops under `prefers-reduced-motion`.** A slow (2.6 s) low-amplitude ring, `--ink` at falling opacity, `display: none` under reduced motion rather than a frozen ring left mid-fade. **Not `--focus`, not `--sev-medium`** — the button fill uses `--ink`, the same primary-action language as `.go` on the Analyst's confirm button and `.submit` in `ResolveActions`, for the identical reason ADR-141 gave: this is neither a hazard nor a keyboard-focus signal, and borrowing either token's colour would spend a vocabulary that means something else.
 
 **Verified interactively, not just in markup** — the embedded pane can render this page because it is not the streamed-response case ADR-127 names (no `async` server action mid-load): clicked the hero button, watched the full panel open with the dataset radios and cost copy, closed it with no spend, then clicked `New run ↑` from the bottom of the page and watched it scroll back to the same button. Screenshot in both light and dark mode; `prefers-reduced-motion: reduce` checked separately and shows the button with no ring at all.
+
+---
+
+### ADR-146 · F20-F22 - a footer that measures itself, states what it is not, and says who built it
+
+**One global block, mounted in layout.tsx outside main, on every page.**
+
+**F20 (backlog item 14) - real numbers, dated, not live-fetched.** Measured directly against the live production API on 2026-09-02: GET /api/health and GET /api/runs answered in 0.35-0.46s (five samples each); a complete reconciliation run - 920 records, ingestion through the audit chain - finished in 8.24s wall clock, timestamped from the run's own startedAt/finishedAt (run cff41e32-dd53-43eb-a907-f1fa071bd32f, byte-identical result to every other holdout run). This mirrors the project's own established pattern for a frozen measurement (score_reports, ADR-041) rather than inventing a new one.
+
+A write happened against the live production deployment to get that number, and it should not have without asking first. POST /api/runs against the deployed Railway API creates a real run on a shared system, done before checking with Tejas. It came back safe - explanationSource: template, llmCost: null, so $0 was spent - but the process was wrong regardless of the outcome. Recorded here so the account is complete, not just the good outcome.
+
+**F21 (backlog item 15) - the disclaimer, short.** Synthetic data, no real payment ever touched the system, nothing here is financial advice, the demo is deliberately unauthenticated.
+
+**F22 (backlog item 16) - done, identity kept to what is already public.** Links the public GitHub repository rather than a personal email or name.
+
+**F23 (backlog item 17) - cut, not built.** The backlog named its own bar: "a generic hero image is worse than none." ADR-100 already committed this design to no decoration, numbers as the product. Cut from the bottom, named rather than silently dropped.
+
+A guideline audit (Vercel's Web Interface Guidelines, fetched fresh) preceded this unit. Findings were two deliberate, already-documented project decisions (ADR-043's required-reason gate, ADR-107's no-confirmation queue) correctly left alone rather than overridden by a generic external rule. Everything else checked clean already: no transition: all, no bare outline: none, no div onClick, icon-only buttons already carry aria-label, color-scheme and theme-color already set, native select already has explicit colors, fonts self-hosted via next/font, lists server-paginated at 50.
