@@ -161,6 +161,20 @@ export const listMatches = (
 ) => apiFetch<MatchListResponse>(
   `/runs/${runId}/matches${qs({ ...filters, pageSize: 25 })}`);
 
+/**
+ * How many proposals are STILL waiting, right now.
+ *
+ * `runs.metrics.reviewBurden` is frozen at run completion (ADR-041) and is the
+ * engine's account of what it deferred; this is the live state of that same
+ * pile. The dashboard showed 71 while `/review` showed 49 and neither said
+ * which question it was answering (ADR-120). `pageSize: 1` because only
+ * `pagination.total` is wanted.
+ */
+export const countPendingReview = (runId: string) =>
+  apiFetch<MatchListResponse>(
+    `/runs/${runId}/matches${qs({ status: 'pending_review', pageSize: 1 })}`)
+    .then((r) => r.pagination.total);
+
 // ── endpoint 9 ───────────────────────────────────────────────────────────────
 export const getReviewQueue = (runId: string, page = 1) =>
   apiFetch<ReviewQueueResponse>(`/runs/${runId}/review-queue${qs({ page, pageSize: 1 })}`);

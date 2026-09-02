@@ -1203,3 +1203,25 @@ Run `verify` was scored at **recall 0.6075**. A re-score of the same run, with a
 **Verified.** Engine-alone reproduces `verify`'s pre-approval report to the digit (P 1.0000, R 0.6075, TP 435, FP 0). The guard was watched failing: widening `ENGINE_ALONE` to include `human_confirmed` — the pre-ADR behaviour — fails *"ENGINE_ALONE changed when a human clicked Approve"*. `SCORER_VERSION` 1.3.0 → 1.4.0, so re-posting appends rather than colliding with the unique constraint and the older measurements survive as history.
 
 > **THE SELF-CONSISTENCY CHECK THIS UNLOCKED, AND IT WAS PREVIOUSLY IMPOSSIBLE.** Three runs reconcile identical holdout bytes with identical code, so they must score identically. They now all report engine-alone recall **0.6075**. Before this change one of them reported 0.6941 and nothing was wrong with it. **An invariant that cannot be stated cannot be checked**, and "two runs over the same bytes agree" is the cheapest regression test this project has never had.
+
+---
+
+### ADR-120 · A frozen figure and a live one may both appear, provided each says which it is
+
+**The symptom.** The dashboard read **71 pending review** while `/review` and `/matches` read **49**, for the same run, at the same moment. Both were right. `runs.metrics` is frozen at run completion (ADR-041) and records what the **engine deferred**; the review screens count what is **still waiting**. Nothing on either screen said which question it was answering.
+
+**This is ADR-119's defect one layer up**, and the fix is the same shape: the problem was never that a number was frozen, it is that a frozen number and a moving number were presented as though they were the same number.
+
+**Decision.** Keep the frozen figure — it is the engine's own account of itself and ADR-041 is right that it should not be recomputed — and **render the live state beside it, labelled**:
+
+```
+71 groups · 219 records                       what the engine deferred
+22 have since been decided by a reviewer,     what has happened since
+so 49 are still waiting
+```
+
+**One extra request, not three.** `countPendingReview` fetches only `pagination.total` at `pageSize: 1`. The count of decisions is then `frozen − live`, which is exact rather than an estimate: `POST /api/matches/:matchId/approve` refuses anything that is not `pending_review` (`409 MATCH_NOT_REVIEWABLE`), so review moves matches **out of** the deferred pile and never into it. The identity `frozen = still_waiting + approved + rejected` holds on both reviewed runs (71 = 49 + 22 + 0, and 71 = 70 + 0 + 1). It does **not** split approvals from rejections, which is `/review`'s job — the dashboard's question is only "has this moved since the engine finished?"
+
+Request count matters here because renders are server-side, so the API sees the Next server's IP and all viewers draw from one 120/min bucket (ADR-116's note). A three-request version of this would have been a 43% increase on the dashboard's read cost for a distinction two numbers already answer.
+
+**A failed fetch renders as an absence, never as a fallback to the frozen number** — falling back would silently recreate the exact ambiguity this ADR removes, and would do it only under the conditions where nobody is watching.

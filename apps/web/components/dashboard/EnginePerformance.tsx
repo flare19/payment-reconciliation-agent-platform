@@ -11,8 +11,30 @@ import styles from './EnginePerformance.module.css';
  * so showing one alone would answer a question nobody asked with a number
  * someone will quote.
  */
-export function EnginePerformance({ engine }: { engine: EngineMetrics }) {
+/**
+ * `livePendingReview` is the CURRENT size of the review pile; `reviewBurden` is
+ * what the engine deferred, frozen at run completion (ADR-041). They are
+ * different questions and both are true, but the dashboard used to show only
+ * the frozen one while `/review` showed only the live one, so the same run read
+ * 71 here and 49 there with nothing saying why (ADR-120).
+ *
+ * `null` when the count could not be fetched — rendered as an absence rather
+ * than silently falling back to the frozen number, which would recreate exactly
+ * the ambiguity this fixes.
+ */
+export function EnginePerformance(
+  { engine, livePendingReview }: { engine: EngineMetrics; livePendingReview: number | null },
+) {
   const { throughput, llmCost, reviewBurden, aliasLearning } = engine;
+
+  /**
+   * Review only ever moves a match OUT of `pending_review` --- approve refuses
+   * anything else (409 MATCH_NOT_REVIEWABLE) --- so what the engine deferred
+   * minus what is still waiting is exactly what a human has decided since.
+   */
+  const decidedSince = livePendingReview === null
+    ? null
+    : reviewBurden.pendingReviewCount - livePendingReview;
 
   const stages = Object.entries(throughput.stageMs)
     .filter(([, v]) => v > 0)
@@ -119,9 +141,25 @@ export function EnginePerformance({ engine }: { engine: EngineMetrics }) {
         </p>
         <p className={styles.note}>
           <span className="num">{oneDp(reviewBurden.per100Records)}</span> proposals per 100 records
-          for a human to judge. These are excluded from the match rate rather than counted toward
-          it — a proposal is not a match.
+          for a human to judge, as the engine left them. These are excluded from the match rate
+          rather than counted toward it — a proposal is not a match.
         </p>
+        {livePendingReview !== null && decidedSince !== null && (
+          <p className={styles.note}>
+            {decidedSince > 0 ? (
+              <>
+                <span className="num">{count(decidedSince)}</span>{' '}
+                {decidedSince === 1 ? 'has' : 'have'} since been decided by a reviewer, so{' '}
+                <span className="num">{count(livePendingReview)}</span> are still waiting. The
+                figure above is the engine’s own, frozen when the run finished; it does not move
+                when somebody clicks.
+              </>
+            ) : (
+              <>Nobody has decided one yet, so all{' '}
+              <span className="num">{count(livePendingReview)}</span> are still waiting.</>
+            )}
+          </p>
+        )}
 
         <h3 className={`label ${styles.subhead}`}>Alias Learning</h3>
         {aliasLearning.humanCorrectionsToDate > 0 ? (

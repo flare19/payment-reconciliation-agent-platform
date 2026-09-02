@@ -8,7 +8,7 @@ import { RunPicker } from '@/components/dashboard/RunPicker';
 import { TierAttribution } from '@/components/dashboard/TierAttribution';
 import { Section } from '@/components/ui/Section';
 import {
-  getHealth, getInvestigationsIfAny, getMetricsIfComplete, listRuns,
+  countPendingReview, getHealth, getInvestigationsIfAny, getMetricsIfComplete, listRuns,
 } from '@/lib/api-client';
 import { at, count, day, plural } from '@/lib/format';
 import { hrefWith } from '@/lib/run-context';
@@ -63,6 +63,11 @@ export default async function DashboardPage(
   // ONE boolean for both LLM surfaces (ADR-093). The launcher disables the
   // explain option rather than offering a spend that would silently no-op.
   const health = await getHealth().catch(() => null);
+  // The LIVE size of the review pile, beside the frozen figure `runs.metrics`
+  // carries. `null` on failure, rendered as an absence (ADR-120).
+  const livePendingReview = run === undefined || run === null
+    ? null
+    : await countPendingReview(run.runId).catch(() => null);
   const defaultRunId = (runs.find((r) => r.status === 'completed') ?? runs[0])?.runId;
   const runQ = run && run.runId !== defaultRunId ? run.runId : undefined;
 
@@ -198,7 +203,7 @@ export default async function DashboardPage(
               </>
             }
           >
-            <EnginePerformance engine={metrics.engine} />
+            <EnginePerformance engine={metrics.engine} livePendingReview={livePendingReview} />
           </Section>
 
           <Section
