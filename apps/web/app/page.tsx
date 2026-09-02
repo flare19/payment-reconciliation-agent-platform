@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { AnalystBlock } from '@/components/dashboard/AnalystBlock';
 import { EnginePerformance } from '@/components/dashboard/EnginePerformance';
+import { EnginePipeline } from '@/components/dashboard/EnginePipeline';
 import { ExceptionBreakdown } from '@/components/dashboard/ExceptionBreakdown';
 import { HeadlineRow } from '@/components/dashboard/HeadlineRow';
 import { RunLauncher } from '@/components/dashboard/RunLauncher';
@@ -264,6 +265,31 @@ export default async function DashboardPage(
             }}
           >
             <TierAttribution engine={metrics.engine} />
+          </Section>
+
+          {/*
+            Placed directly after the tier bar on purpose: that section says
+            WHICH rule confirmed each pair, and the obvious next question is
+            what the rest of the machine did — the stages before matching and
+            the stages after it. Ahead of the Analyst, because the Analyst is
+            what runs downstream of all of this (ADR-156).
+          */}
+          <Section
+            id="engine"
+            title="How the Engine Works"
+            standfirst="Fourteen stages, in order, with what each did."
+            basis={{
+              summary: 'Every figure here is the engine’s own count',
+              body:
+                'None of these numbers is scored against the answer key, so none of them wears '
+                + 'the measured accent — that vocabulary belongs to figures a separate offline '
+                + 'pass verified. These are the engine’s account of its own work, taken from this '
+                + 'run and not from a previous one: where a stage publishes a count it shows the '
+                + 'count, and where it publishes only a measured time it shows the time. Nothing '
+                + 'here is illustrative.',
+            }}
+          >
+            <EnginePipeline engine={metrics.engine} />
           </Section>
 
           <Section
