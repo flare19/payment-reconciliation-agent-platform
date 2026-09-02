@@ -1366,7 +1366,35 @@ Root cause is **not yet identified** and is deliberately not guessed at here. Th
 
 ---
 
-### ADR-127 · F9.1 — the hydration failure is caused by STREAMED SUSPENSE BOUNDARIES, and one question remains open
+### ADR-127 · F9.1 — SUPERSEDED BY MEASUREMENT: there was no hydration bug. The instrument was wrong.
+
+> **CORRECTION, same day, before anything was changed.** Tejas opened the dashboard in an ordinary
+> browser and clicked **Run It Again**. It worked: a run was created and appears in the picker as
+> `demo-2026-09-02-13:41`. **The application hydrates correctly. The embedded browser pane used for
+> every observation below does not complete a streamed response, and that — not the app — is what
+> produced every symptom.**
+>
+> The reasoning below is left intact because the *method* was sound and the conclusion was not: four
+> probes isolating one variable each, five causes eliminated by measurement, and a mitigation
+> deliberately withheld pending a check only a human could run. **Withholding it is the only reason
+> `app/loading.tsx` still exists.** Had the diagnosis been acted on, a working skeleton would have
+> been deleted to fix a bug that was never there.
+>
+> **This is the fourth instrument failure in one day and by far the most expensive.** The others:
+> reading `tail`'s exit code instead of the scorer's; reading HTTP 200 from a server component that
+> had thrown; and `Object.keys` missing non-enumerable React fibers. Each time the *measurement* was
+> wrong and the code was fine. **The rule this earns: before reporting that something is broken,
+> establish that the instrument reports a known-good case correctly.** Probe 1 did exactly that —
+> a sync page hydrated in the pane — which is precisely why the false conclusion survived. A
+> known-good case that differs from the failing case *in the very dimension the instrument is weak
+> on* proves nothing.
+>
+> **What remains true and is not superseded:** no interactive control in this product had ever been
+> confirmed by a human clicking it until today. Day 16's resolve was exercised against the live
+> local API, and the backlog says *"never watched render"* against three separate controls. F10 and
+> F11 are still real work.
+
+### (superseded) The original diagnosis: streamed Suspense boundaries
 
 **Reproduced minimally, in four steps, each isolating one variable.** Every probe was a page rendering one `'use client'` counter button with a `useEffect`; "hydrated" means the button gained a React fiber, the effect ran, and clicking incremented the count.
 
