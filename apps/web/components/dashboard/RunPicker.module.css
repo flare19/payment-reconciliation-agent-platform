@@ -79,3 +79,9 @@
 .numCol { text-align: right; white-space: nowrap; }
 
 .muted { color: var(--ink-3); }
+
+/* A run still in flight has no metrics yet. An em dash, not a zero — a figure
+   that does not exist must never be drawn as one that does (ADR-098). */
+.pending {
+  color: var(--ink-muted);
+}

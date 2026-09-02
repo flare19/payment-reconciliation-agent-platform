@@ -40,13 +40,23 @@ export interface RunSummary {
   startedAt: string;
   finishedAt: string | null;
   progress: { stage: RunStage; pct: number };
-  referenceDate: string;
+  /**
+   * NULL UNTIL S1 HAS INGESTED. It is derived from the data (ADR-039), so it
+   * does not exist while `status` is `pending` or `ingesting`. `day()` throws
+   * `RangeError: Invalid time value` on null, not a placeholder string.
+   */
+  referenceDate: string | null;
   recordCounts: {
     gateway: number; bank: number; ledger: number;
     excluded: number; rejectedRows: number; nonPrimaryDuplicates: number;
     reconcilable: number;
   };
-  headline: RunHeadline;
+  /**
+   * NULL UNTIL THE RUN COMPLETES. `runs.metrics` is written by S14, so every
+   * field under it is absent for a run still in flight — and a run in flight is
+   * exactly what the run list shows while one is going.
+   */
+  headline: RunHeadline | null;
 }
 
 export interface RunListResponse {

@@ -34,7 +34,17 @@ export function RunPicker({ runs, selectedRunId }: { runs: RunSummary[]; selecte
       <tbody>
         {runs.map((run) => {
           const isSelected = run.runId === selectedRunId;
-          const isCold = run.headline.coldStartMatchRatePct === run.headline.matchRatePct;
+          /**
+           * A RUN IN FLIGHT HAS NO METRICS AND NO REFERENCE DATE, and this row
+           * is where the run list shows it. Reading through the null threw
+           * `Cannot read properties of null` inside the map, which took the
+           * WHOLE Runs section off the page — launcher included — while the
+           * request still returned 200 and the rest of the dashboard rendered.
+           * A silently missing section is worse than an error: nothing on
+           * screen said the picker was gone (ADR-121).
+           */
+          const h = run.headline;
+          const isCold = h !== null && h.coldStartMatchRatePct === h.matchRatePct;
           return (
             <tr key={run.runId} className={isSelected ? styles.selected : undefined}>
               <th scope="row" className={styles.runCell}>
@@ -49,13 +59,23 @@ export function RunPicker({ runs, selectedRunId }: { runs: RunSummary[]; selecte
                 {isSelected && <span className="sr-only">(currently shown)</span>}
               </th>
               <td>
-                <span className={`${styles.badge} ${isCold ? styles.cold : styles.warm}`}>
-                  {isCold ? 'Cold' : 'Warm'}
-                </span>
+                {h === null ? (
+                  <span className={styles.pending}>—</span>
+                ) : (
+                  <span className={`${styles.badge} ${isCold ? styles.cold : styles.warm}`}>
+                    {isCold ? 'Cold' : 'Warm'}
+                  </span>
+                )}
               </td>
-              <td className={styles.dateCell}>{day(run.referenceDate)}</td>
-              <td className={`${styles.numCol} num`}>{pct(run.headline.matchRatePct)}</td>
-              <td className={`${styles.numCol} num`}>{count(run.headline.exceptionCount)}</td>
+              <td className={styles.dateCell}>
+                {run.referenceDate === null ? '—' : day(run.referenceDate)}
+              </td>
+              <td className={`${styles.numCol} num`}>
+                {h === null ? '—' : pct(h.matchRatePct)}
+              </td>
+              <td className={`${styles.numCol} num`}>
+                {h === null ? '—' : count(h.exceptionCount)}
+              </td>
               <td className={`${styles.numCol} num ${styles.muted}`}>
                 {count(run.recordCounts.reconcilable)}
               </td>

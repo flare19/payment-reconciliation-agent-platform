@@ -1225,3 +1225,34 @@ so 49 are still waiting
 Request count matters here because renders are server-side, so the API sees the Next server's IP and all viewers draw from one 120/min bucket (ADR-116's note). A three-request version of this would have been a 43% increase on the dashboard's read cost for a distinction two numbers already answer.
 
 **A failed fetch renders as an absence, never as a fallback to the frozen number** — falling back would silently recreate the exact ambiguity this ADR removes, and would do it only under the conditions where nobody is watching.
+
+---
+
+### ADR-121 · A run in flight has no metrics and no reference date, and the run list is where it shows
+
+**Found by F6's nullability audit — the fifth instance of the type-level lie ADR-105, ADR-110 and ADR-112 each recorded once.**
+
+`types/api.ts` declared `RunSummary.headline: RunHeadline` and `RunSummary.referenceDate: string`. Both are false for a run that has not finished:
+
+| Field | Actually null while | Because |
+|---|---|---|
+| `referenceDate` | `pending`, `ingesting` | derived from the data at S1 (ADR-039), so it does not exist before ingestion |
+| `headline` | anything but `completed` | `runs.metrics` is written by S14 |
+
+**The failure mode is worse than a crash, which is why nobody had seen it.** `RunPicker` maps over *every* run and read `run.headline.coldStartMatchRatePct` unguarded. With a run in flight that throws inside the map, and React takes the **whole Runs section** off the page — picker, launcher and all — while the request still returns **HTTP 200** and the rest of the dashboard renders normally. There is no error message, no missing-data state, and no status code to alert on. The section is simply gone.
+
+That is why three separate probes said the page was fine: HTTP 200, no error-boundary markup, and the dashboard's own headline still present. The truth was only in the dev server's stderr:
+
+```
+⨯ TypeError: Cannot read properties of null (reading 'coldStartMatchRatePct')
+    at RunPicker.tsx:37
+ GET / 200 in 128ms
+```
+
+**Decision.** Both fields become `| null` in `types/api.ts`, and every reader renders the absence rather than a substitute. An in-flight row shows `—` in each metric column, never `0` — a figure that does not exist must not be drawn as one that does (ADR-098). `day()` is never called on a null: it throws `RangeError: Invalid time value` rather than returning a placeholder.
+
+**Correcting the type immediately found a second reader** — `app/exceptions/page.tsx:135` read `run.headline.exceptionCount` in its empty state — which `tsc` had been unable to see for as long as the annotation was wrong. That is the whole argument for fixing the type rather than the call site.
+
+> **THIS IS DIRECTLY IN F19's PATH.** The backlog wants a prominent "run a fresh dataset" control that lands on the new run's metrics. That lands a viewer on the dashboard during precisely the window where the run list disappears. **F19 cannot be built safely until this is fixed**, and it was found by an audit rather than by the demo only because F6 ran first.
+
+**On the probe method.** HTTP status was the wrong instrument, the same shape of error as reading `tail`'s exit code instead of the scorer's. A server component that throws still returns 200. **The reliable probe is the render's own output — is the section present? — plus the server log.** Add both to AUDIT-4's click-through script.

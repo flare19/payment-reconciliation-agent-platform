@@ -116,7 +116,7 @@ export default async function DashboardPage(
           </div>
           <div className={styles.runFact}>
             <dt className="label">Reference Date</dt>
-            <dd>{day(run.referenceDate)}</dd>
+            <dd>{run.referenceDate === null ? 'not yet ingested' : day(run.referenceDate)}</dd>
           </div>
           <div className={styles.runFact}>
             <dt className="label">Records</dt>

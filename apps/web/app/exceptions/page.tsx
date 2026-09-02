@@ -132,8 +132,14 @@ export default async function ExceptionsPage(
                 No exceptions match {activeFilters.length === 1 ? 'this filter' : 'these filters'}.
               </p>
               <p className={styles.emptyBody}>
-                This run has <span className="num">{count(run.headline.exceptionCount)}</span>{' '}
-                exceptions in total.
+                {run.headline === null ? (
+                  'This run has not finished, so its exception total is not known yet.'
+                ) : (
+                  <>
+                    This run has <span className="num">{count(run.headline.exceptionCount)}</span>{' '}
+                    exceptions in total.
+                  </>
+                )}
                 {activeFilters.length > 0 && (
                   <>
                     {' '}The narrowing came from{' '}
