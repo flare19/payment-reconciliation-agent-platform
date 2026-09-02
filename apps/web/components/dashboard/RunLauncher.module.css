@@ -95,6 +95,35 @@
 }
 .body strong { color: var(--ink); font-weight: 600; }
 
+/* The optional run-name field. Same idiom as ResolveActions/ReviewCard's own
+   .field pattern, deliberately, rather than a third look for one input. */
+.field { display: flex; flex-direction: column; gap: var(--s2); min-width: 0; }
+
+.field label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.optional { font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--ink-4); }
+
+.field input {
+  width: 100%;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  background-color: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--t-meta);
+}
+.field input::placeholder { color: var(--ink-4); }
+
 /* The dataset choice. Label and control share one hit target.
    NOT --sev-medium: picking a dataset carries no severity, and this is the
    same token-misuse this session already fixed twice (AskAnalyst F17,

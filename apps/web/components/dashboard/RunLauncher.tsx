@@ -63,6 +63,7 @@ export function RunLauncher(
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [seed, setSeed] = useState<number | undefined>(datasets[0]?.seed);
+  const [customName, setCustomName] = useState('');
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -76,12 +77,21 @@ export function RunLauncher(
     setBusy(true);
     setError(null);
     try {
-      // The label NAMES THE DATASET IT RAN. It used to read `demo-<timestamp>`
-      // on every run while reconciling the holdout — and now that a committed
-      // dataset is actually called `demo`, that label was a false statement.
+      // The DEFAULT label NAMES THE DATASET IT RAN. It used to read
+      // `demo-<timestamp>` on every run while reconciling the holdout — and
+      // now that a committed dataset is actually called `demo`, that label
+      // was a false statement.
+      //
+      // A TYPED NAME OVERRIDES IT ENTIRELY, on purpose (Tejas, 2026-09-03).
+      // Nothing else in this codebase parses a run's label to learn which
+      // dataset it reconciled — every screen that needs that reads
+      // `datasetSeed`, a real field, never the label string — so a custom
+      // name cannot break anything by not mentioning the dataset. It is
+      // cosmetic, exactly as asked for.
       const name = datasets.find((d) => d.seed === seed)?.label ?? 'holdout';
+      const autoLabel = `${name}-${new Date().toISOString().slice(0, 16).replace('T', '-')}`;
       const run = await startRun({
-        label: `${name}-${new Date().toISOString().slice(0, 16).replace('T', '-')}`,
+        label: customName.trim() || autoLabel,
         ...(seed === undefined ? {} : { datasetSeed: seed }),
         configOverrides: { llmExplainEnabled: false },
       });
@@ -223,6 +233,25 @@ export function RunLauncher(
           </span>
         </label>
       ))}
+
+      {/*
+        OPTIONAL, PURELY COSMETIC (Tejas, 2026-09-03). Falls back to the
+        dataset-truthful auto-generated label when left blank — nothing here
+        is a decision the engine or the audit trail depends on, it is just a
+        friendlier name in the Runs table for whoever started this one.
+      */}
+      <div className={styles.field}>
+        <label htmlFor="runName">Name this run <span className={styles.optional}>optional</span></label>
+        <input
+          id="runName"
+          type="text"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={`e.g. ${datasets.find((d) => d.seed === seed)?.label ?? 'holdout'}-judge-demo`}
+          value={customName}
+          onChange={(e) => setCustomName(e.target.value)}
+        />
+      </div>
 
       <div className={styles.actions}>
         <button
