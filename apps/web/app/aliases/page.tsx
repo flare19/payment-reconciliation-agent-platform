@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Disclosure } from '@/components/ui/Disclosure';
 import { Chip } from '@/components/ui/Chip';
 import { Paginate } from '@/components/ui/Paginate';
 import table from '@/components/ui/table.module.css';
@@ -47,10 +48,17 @@ export default async function AliasesPage(
       <header className={styles.header}>
         <h1 className={styles.title}>Aliases</h1>
         <p className={styles.lede}>
-          Mappings a human taught the system — <span translate="no">AMZN → AMAZON RETAIL</span> —
-          which Tier&nbsp;1.5 substitutes before re-running the exact-match test. Every one of them
-          is a human correction the engine turned into leverage across every later run.
+          Corrections a person taught the system —{' '}
+          <span translate="no">AMZN → AMAZON RETAIL</span>.
         </p>
+        <Disclosure summary="What the engine does with one">
+          <p>
+            Before deciding that two records cannot be matched exactly, the engine substitutes
+            every alias it has been taught and runs the exact-match test again. One correction
+            made once therefore keeps paying out on every later run — which is the whole argument
+            for asking a person rather than guessing.
+          </p>
+        </Disclosure>
       </header>
 
       {data.aliases.length === 0 ? (

@@ -174,7 +174,14 @@ export default async function DashboardPage(
           <Section
             id="tiers"
             title="How the Number Was Earned"
-            standfirst="Every confirmed pair, attributed to the tier that produced it. A bar dominated by fuzzy matching would be a bad sign, and this one is honest enough to show it."
+            standfirst="Which rule confirmed each pair the engine matched."
+            basis={{
+              summary: 'What a bad version of this bar would look like',
+              body:
+                'Every confirmed pair is attributed to the rule that produced it. A bar dominated '
+                + 'by fuzzy matching would be a bad sign — the engine would be reaching a number by '
+                + 'resemblance rather than by proof — so the split is shown rather than summarised.',
+            }}
           >
             <TierAttribution engine={metrics.engine} />
           </Section>
@@ -182,7 +189,15 @@ export default async function DashboardPage(
           <Section
             id="exceptions"
             title="The Exception List"
-            standfirst="The primary feature, not a fallback path. Every record the engine could not prove belongs somewhere, with a stated reason."
+            standfirst="Every record the engine could not place, with a reason."
+            basis={{
+              summary: 'Why this is the main feature and not a fallback',
+              body:
+                'A reconciliation engine is judged on what it refuses as much as on what it '
+                + 'matches. Refusing to guess produces this list, so it is built as the primary '
+                + 'screen: every record here carries a category, a severity and a stated reason, '
+                + 'and none of them is a silent failure.',
+            }}
             aside={
               <>
                 <span className="num">{count(metrics.engine.exceptions.total)}</span>{' '}
@@ -196,12 +211,15 @@ export default async function DashboardPage(
           <Section
             id="performance"
             title="Cost of Running It"
-            standfirst={
-              <>
-                Throughput measured two ways, and what the explain layer actually spent to write{' '}
-                {count(metrics.engine.exceptions.total)} explanations.
-              </>
-            }
+            standfirst="How fast it ran, and what the writing cost."
+            basis={{
+              summary: 'Two speeds and one bill',
+              body:
+                `Throughput is reported twice — the engine's own time, and the wall clock including `
+                + `everything around it — because only one of those is a claim about the matching `
+                + `code. The cost beside it is what the model was actually charged to write the `
+                + `${count(metrics.engine.exceptions.total)} explanations on this run.`,
+            }}
           >
             <EnginePerformance engine={metrics.engine} livePendingReview={livePendingReview} />
           </Section>
@@ -209,7 +227,15 @@ export default async function DashboardPage(
           <Section
             id="analyst"
             title="The Analyst"
-            standfirst="An agent that investigates one exception when a human asks, using read-only tools that call the engine’s own locked code. It proposes; it never writes."
+            standfirst="An agent that investigates one exception when a person asks."
+            basis={{
+              summary: 'What it is allowed to do',
+              body:
+                'The agent chooses which questions to ask; the engine’s own locked code computes '
+                + 'every number it uses, so no figure in its reasoning is one the engine did not '
+                + 'produce. Its tools can read everything and change nothing — it proposes, and a '
+                + 'person disposes through the same controls they would use themselves.',
+            }}
           >
             {investigations ? (
               <AnalystBlock data={investigations} />
@@ -242,7 +268,15 @@ export default async function DashboardPage(
       <Section
         id="runs"
         title="Runs"
-        standfirst="Cold and warm runs listed together and labelled, never as two unrelated rows."
+        standfirst="Every run, with and without learned rules, labelled."
+        basis={{
+          summary: 'Why both are always listed',
+          body:
+            'A run that reuses corrections a person taught earlier will always score at least as '
+            + 'well as one that does not. Listing only the better figure would credit the engine '
+            + 'with a person’s work, so both are kept side by side and labelled — never presented '
+            + 'as two unrelated rows.',
+        }}
         aside={<RunLauncher datasets={health?.datasets ?? []} />}
       >
         <RunPicker

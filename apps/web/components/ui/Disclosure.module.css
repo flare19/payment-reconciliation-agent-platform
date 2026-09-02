@@ -1,0 +1,19 @@
+.wrap {
+  font-size: var(--t-micro);
+}
+
+/* Matches `Figure`'s basis body deliberately — a reader who opens one of these
+   on a tile and another under a heading is looking at the same kind of thing,
+   and it should not need a second glance to know that. */
+.body {
+  max-width: 68ch;
+  margin-top: var(--s2);
+  padding-left: var(--s3);
+  border-left: 2px solid var(--rule);
+  color: var(--ink-3);
+  font-size: var(--t-micro);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.body p + p { margin-top: var(--s2); }

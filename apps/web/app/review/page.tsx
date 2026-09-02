@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Disclosure } from '@/components/ui/Disclosure';
 import { DecidedList } from '@/components/review/DecidedList';
 import { ReviewQueue } from '@/components/review/ReviewQueue';
 import { getReviewQueue, listMatches } from '@/lib/api-client';
@@ -81,15 +82,20 @@ export default async function ReviewPage(
       <header className={styles.header}>
         <h1 className={styles.title}>Review Queue</h1>
         <p className={styles.lede}>
-          Matches the engine found and declined to confirm on its own. They are excluded from the
-          headline match rate rather than counted toward it — which is why the honest number is
-          lower than what the engine actually located, and why this queue exists at all.
+          Matches the engine found but would not confirm on its own.
         </p>
-        <p className={styles.oneAtATime}>
-          One proposal at a time, deliberately. A table here would invite approving in bulk without
-          reading, and an alias taught from a match nobody looked at becomes a rule that
-          mis-resolves every future run.
-        </p>
+        <p className={styles.oneAtATime}>One proposal at a time, deliberately.</p>
+        <Disclosure summary="Why these are not in the match rate, and why there is no table">
+          <p>
+            A proposal is excluded from the headline match rate rather than counted toward it,
+            which is why the honest number is lower than what the engine actually located — and
+            why this queue exists at all.
+          </p>
+          <p>
+            A table here would invite approving in bulk without reading, and an alias taught from
+            a match nobody looked at becomes a rule that mis-resolves every future run.
+          </p>
+        </Disclosure>
       </header>
 
       <nav className={styles.viewNav} aria-label="Review views">

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Disclosure } from '@/components/ui/Disclosure';
 import { ExceptionTable } from '@/components/exceptions/ExceptionTable';
 import { FacetRail } from '@/components/exceptions/FacetRail';
 import { Paginate } from '@/components/ui/Paginate';
@@ -91,19 +92,26 @@ export default async function ExceptionsPage(
         <div className={styles.headingGroup}>
           <h1 className={styles.title}>Exceptions</h1>
           <p className={styles.lede}>
-            Every record the engine could not prove belongs somewhere, classified into one of
-            eight categories with a stated reason. Sorted by severity and then by money at risk,
-            because that is how a controller triages.
+            Every record the engine could not place, with a reason.
           </p>
           {closedCount > 0 && (
             <p className={styles.lede}>
               <span className="num">{count(closedCount)}</span>{' '}
-              {closedCount === 1 ? 'has' : 'have'} since been closed by a human and{' '}
-              {closedCount === 1 ? 'stays' : 'stay'} listed — this list is the run’s record of what
-              the engine could not prove, not a queue that empties. Closing one asserts no match
-              and moves no denominator.
+              {closedCount === 1 ? 'has' : 'have'} since been closed by a person and{' '}
+              {closedCount === 1 ? 'stays' : 'stay'} listed.
             </p>
           )}
+          <Disclosure summary="How this list is ordered, and why closing one leaves it here">
+            <p>
+              Each record is classified into one of eight categories with a stated reason, sorted
+              by severity and then by money at risk, because that is how a controller triages.
+            </p>
+            <p>
+              Closing one asserts that no match exists — it does not move the match rate, and the
+              record stays on the list. This is the run’s record of what the engine could not
+              prove, not a queue that empties.
+            </p>
+          </Disclosure>
         </div>
 
         <form className={styles.sortForm} method="get" action="/exceptions">

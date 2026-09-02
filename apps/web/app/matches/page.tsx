@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Disclosure } from '@/components/ui/Disclosure';
 import { Chip } from '@/components/ui/Chip';
 import { Paginate } from '@/components/ui/Paginate';
 import table from '@/components/ui/table.module.css';
@@ -83,11 +84,16 @@ export default async function MatchesPage(
       <header className={styles.header}>
         <h1 className={styles.title}>Matches</h1>
         <p className={styles.lede}>
-          The groups the engine assembled, each reported at its weakest constituent tier. A group
-          is a claim about a <em>set</em> of records being one economic event — not a pair — so a
-          three-way group holding one fuzzy leg is reported as fuzzy however exact its other two
-          legs were.
+          The record groups the engine matched, each reported at its weakest rule.
         </p>
+        <Disclosure summary="Why a group is reported at its weakest rule">
+          <p>
+            A group is a claim about a <em>set</em> of records being one real payment — not a
+            pair. A three-way group holding one fuzzy leg is therefore reported as fuzzy, however
+            exact its other two legs were, because the group is only as good as the weakest
+            reason for putting it together.
+          </p>
+        </Disclosure>
       </header>
 
       {/* STATUS FIRST, because "show me the ones I approved" is the question

@@ -1595,3 +1595,22 @@ The backlog filed both as "opaque", and the third label it named — "Cold Start
 - **"Identity Established"**, **"Search Proved Exhaustive"**, **"Stopped on a Bound"** — real candidates, but they are section sub-labels rather than headline tiles, and they belong to F14's copy pass rather than to a label rename.
 
 > **The rule this sets, because F14 will be tempted to go further.** The plain word goes on the label; the repo's term stays in the disclosure underneath it, where a reader has asked for the mechanism. The vocabulary is not being retired — it is being moved to where it is earned. **The provenance words are not in scope for that trade (ADR-098): `engine`, `measured` and `absent` are the one vocabulary the reader must learn, and diluting them to make a tile friendlier costs the reader the only thing the row is for.**
+
+---
+
+### ADR-136 · F14 — the standfirst answers *what am I looking at*; the argument moves one level down, not out
+
+**Sixteen standfirsts, median 21 words and worst 30, are now all ten or fewer.** Measured before and after:
+
+```
+before   median 21 · max 30 · six over 20 words
+after    median  8 · max 10 · none over 10
+```
+
+**Cutting alone would have deleted the argument, and the argument is the product.** Several of these sentences carried the claims this project is actually judged on — that the rule-level finding renders identically with the model switched off, that the chain is recomputed rather than asserted, that a group is reported at its weakest leg, that a proposal is excluded from the headline rather than counted toward it. None of that is marketing. So it moves down one level rather than out: `Section` gains a `basis` disclosure, and a new `components/ui/Disclosure` carries the same pattern under a page header. `Figure` already proved it for numbers; this is the same affordance for prose, extracted so a section and a page header cannot drift apart.
+
+**ADR-106's warning is the governing constraint, and one line was left long because of it.** `/set-aside`'s lede — *"N of M rows are set aside before the match rate is calculated. Every one is listed here with its reason. None of them were lost."* — is over ten words and stays exactly as it is. It is the sentence ADR-106 wrote to *remove* an ambiguity that a shorter line had created. **Shortening prose and removing ambiguity are different operations, and where they conflict the second wins.** The same reasoning drove `874 of 920 reconcilable records` on the dashboard into `X matched · Y records counted`: three terms with no preposition inviting the reader to supply *missed*.
+
+**Repo vocabulary off visible surfaces.** `reconcilable` → *counted*; `Anchor strength` → *Reference ID strength*, and the exception detail's `anchor strong` aside → *strong reference ID*; *The Decomposition Search* → *The Search for a Combination*; *Search Proved Exhaustive · Stopped on a Bound · Candidate Cap Hit* → *Proved Impossible · Ran Out of Room · Too Many Candidates*; *Pairs Attributed* → *Pairs Matched*; *Identity Established* → *Same ID, Different Details*; *points of headroom* → *points below it*.
+
+> **WHAT WAS DELIBERATELY NOT REWRITTEN, AND THE LINE IT DRAWS.** A sweep of every rendered page found `reconcilable`, `anchor strength` and `decomposition` still present — **all of them inside data, not copy**: audit-log reasons the engine wrote at run time (*"status 'authorized' is not reconcilable"*), the Analyst's stored prose, and the agent's own tool descriptions. Editing those would mean rewriting an append-only record and a model's actual output to make them read better. **The copy pass owns the interface's words. It does not own the words the system recorded itself saying.** ADR-098's provenance vocabulary is likewise untouched.

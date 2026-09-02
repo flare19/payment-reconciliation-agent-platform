@@ -57,10 +57,10 @@ export function HeadlineRow({
         value={pct(matchRate.matchRatePct)}
         note={
           <>
-            {count(matchRate.matchedRecords)} of {count(matchRate.reconcilableRecords)} reconcilable
-            records{' '}
+            {count(matchRate.matchedRecords)} matched · {count(matchRate.reconcilableRecords)}{' '}
+            records counted{' '}
             <span className={styles.subtle}>
-              · {count(matchRate.pendingReviewExcluded)} pending review, excluded
+              · {count(matchRate.pendingReviewExcluded)} awaiting review, excluded
             </span>
           </>
         }
@@ -195,7 +195,7 @@ export function HeadlineRow({
               {count(measured.resolvability.unresolvableDesigned)} events are unresolvable by
               construction
               {measured.ceiling.headroomPct !== null && (
-                <> · {measured.ceiling.headroomPct.toFixed(2)} points of headroom</>
+                <> · {measured.ceiling.headroomPct.toFixed(2)} points below it</>
               )}
             </>
           }

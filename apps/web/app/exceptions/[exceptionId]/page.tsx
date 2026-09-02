@@ -197,10 +197,17 @@ export default async function ExceptionDetailPage(
       <Section
         id="candidates"
         title="Why It Wasn’t Matched"
-        standfirst="The rule-level answer. This section renders identically when the model is disabled — the prose above is narration, this is the finding."
+        standfirst="What the rules decided, and what they compared."
+        basis={{
+          summary: 'This part does not need the model',
+          body:
+            'Everything in this section is produced by the matching rules, and it renders identically '
+            + 'when the model is switched off. The prose higher up the page is narration of this finding; '
+            + 'this is the finding itself.',
+        }}
         aside={
           evidence.anchorStrength
-            ? <>anchor <strong>{evidence.anchorStrength}</strong></>
+            ? <><strong>{evidence.anchorStrength === 'none' ? 'no' : evidence.anchorStrength}</strong> reference ID</>
             : undefined
         }
       >
@@ -210,8 +217,16 @@ export default async function ExceptionDetailPage(
       {(evidence.searchExhausted !== null || evidence.searchBoundExceeded) && (
         <Section
           id="search"
-          title="The Decomposition Search"
-          standfirst="Proving no answer exists and running out of room looking are different claims, and the interface says which one this is."
+          title="The Search for a Combination"
+          standfirst="Whether no answer exists, or the search stopped early."
+          basis={{
+            summary: 'Two different claims, never conflated',
+            body:
+              'When several payments are settled as one lump sum, the engine searches for the combination '
+              + 'of records that adds up to it. Proving no combination works and running out of room while '
+              + 'looking are different results, and only the first is evidence. The panel below says which '
+              + 'one happened, and the bounds it searched within.',
+          }}
         >
           <SearchClaim evidence={evidence} />
         </Section>
@@ -221,7 +236,14 @@ export default async function ExceptionDetailPage(
       <Section
         id="records"
         title="The Source Rows"
-        standfirst="The records themselves, with fields the sources disagree about marked. Check the engine’s reasoning against the data rather than against its summary of the data."
+        standfirst="The records themselves, with disagreeing fields marked."
+        basis={{
+          summary: 'Check the data, not the summary of it',
+          body:
+            'The rows are shown side by side so the engine’s reasoning can be checked against the '
+            + 'data rather than against its own account of the data. Fields the three sources disagree '
+            + 'about are marked.',
+        }}
         aside={
           <>
             <span className="num">{count(exception.relatedRecords.length + 1)}</span> records
@@ -250,9 +272,18 @@ export default async function ExceptionDetailPage(
         }
         standfirst={
           investigation?.status === 'concluded'
-            ? 'An agent chose which questions to ask; the engine’s own locked code computed every number it used. Read the runtime’s recorded result beside the model’s inference — they are separate fields on purpose.'
-            : 'An agent that investigates one exception when a human asks for it, and only then.'
+            ? 'An agent asked the questions; the engine computed the answers.'
+            : 'An agent that investigates this exception when you ask.'
         }
+        basis={{
+          summary: 'Which parts are the model’s and which are not',
+          body:
+            'The agent decides which questions to ask; every number in its reasoning is computed '
+            + 'by the engine’s own locked code, called as a tool. Below, what the tools actually '
+            + 'returned is shown beside what the model inferred from them — separate fields on '
+            + 'purpose, so a claim can be checked against the result it was drawn from. The tools '
+            + 'can read everything and change nothing.',
+        }}
       >
         {investigation
           ? <AnalystPanel investigation={investigation} runQ={runQ} citations={citations} />
@@ -263,7 +294,15 @@ export default async function ExceptionDetailPage(
       <Section
         id="actions"
         title="Close This Exception"
-        standfirst="A reason is required. Every closure is written into the append-only audit log beside the engine’s own decision."
+        standfirst="A reason is required, and it is recorded."
+        basis={{
+          summary: 'What closing one does',
+          body:
+            'The closure is written into the same append-only log as the engine’s own decision, '
+            + 'with the reason given, the person who gave it and the time. The exception stays on the '
+            + 'list afterwards, marked closed — this list is the run’s record of what the engine '
+            + 'could not prove, not a queue that empties.',
+        }}
       >
         <div className={styles.actionsLayout}>
           <ResolveActions
@@ -288,7 +327,14 @@ export default async function ExceptionDetailPage(
         <Section
           id="trail"
           title="Audit Trail"
-          standfirst="Every decision recorded about this record, in the same hash-chained timeline as everything else in the run."
+          standfirst="Every decision recorded about this record."
+          basis={{
+            summary: 'Where these entries live',
+            body:
+              'The same append-only log as the rest of the run, where every entry carries a hash of the '
+              + 'one before it. Nothing here can be edited or removed afterwards without breaking the '
+              + 'chain, and the chain can be recomputed on demand from the audit screen.',
+          }}
           aside={<><span className="num">{count(auditTrail.pagination.total)}</span> entries</>}
         >
           <details className={styles.trail}>

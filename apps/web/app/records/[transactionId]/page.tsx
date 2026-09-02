@@ -63,7 +63,7 @@ export default async function RecordPage(
     ['Status (raw)', record.statusRaw],
     ['Status (normalized)', record.statusNorm],
     ['Transaction type', record.txnType],
-    ['Anchor strength', record.anchorStrength],
+    ['Reference ID strength', record.anchorStrength],
     ['Source file', record.sourceFile],
     ['Source row', `#${record.sourceRowNumber}`],
   ];
@@ -113,7 +113,14 @@ export default async function RecordPage(
       <Section
         id="normalized"
         title="Normalized"
-        standfirst="What the engine understood this row to be, after parsing and normalization."
+        standfirst="What the engine understood this row to be."
+        basis={{
+          summary: 'Interpretation, not the file',
+          body:
+            'Dates, amounts and counterparty names are parsed into one shape here so that rows '
+            + 'from three different files can be compared at all. Every value below is the '
+            + 'engine’s reading of the row; the row itself is underneath, unchanged.',
+        }}
       >
         <dl className={styles.fields}>
           {normalized.map(([k, v]) => (
@@ -151,7 +158,14 @@ export default async function RecordPage(
       <Section
         id="raw"
         title="Raw Payload"
-        standfirst="The row as it appeared in the file, before the engine touched it. Everything above is interpretation; this is the evidence."
+        standfirst="The row exactly as it appeared in the file."
+        basis={{
+          summary: 'Why the raw row stays on the page',
+          body:
+            'Everything above is interpretation. This is the evidence it was derived from, stored '
+            + 'verbatim at ingestion, so a reader who doubts a parsed value can check it against the '
+            + 'source rather than against the engine’s summary of the source.',
+        }}
       >
         <pre className={styles.raw}>
           <code>{JSON.stringify(record.rawPayload, null, 2)}</code>
@@ -162,7 +176,14 @@ export default async function RecordPage(
         <Section
           id="trail"
           title="Audit Trail"
-          standfirst="Every decision recorded about this record, in the run’s hash-chained timeline."
+          standfirst="Every decision recorded about this record."
+          basis={{
+            summary: 'Where these entries live',
+            body:
+              'The same append-only log as the rest of the run, where every entry carries a hash of '
+              + 'the one before it. An entry cannot be edited or removed afterwards without breaking '
+              + 'the chain, and the chain can be recomputed on demand from the audit screen.',
+          }}
           aside={<><span className="num">{count(trail.pagination.total)}</span> entries</>}
         >
           <ol className={styles.trail}>

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Disclosure } from '@/components/ui/Disclosure';
 import { ActorChip, Chip } from '@/components/ui/Chip';
 import { SegmentBar, type Segment } from '@/components/ui/SegmentBar';
 import table from '@/components/ui/table.module.css';
@@ -99,10 +100,20 @@ export default async function AnalystPage(
       <header className={styles.header}>
         <h1 className={styles.title}>The Analyst</h1>
         <p className={styles.lede}>
-          An agent that investigates one exception when a person asks it to. It decides which
-          questions to ask; <strong>the engine&rsquo;s own code computes every answer.</strong> It
-          can read everything and change nothing.
+          An agent that investigates one exception when a person asks.
         </p>
+        <Disclosure summary="What it decides, and what it is not allowed to do">
+          <p>
+            It decides which questions to ask;{' '}
+            <strong>the engine&rsquo;s own code computes every answer.</strong> No number in its
+            reasoning is one the engine did not produce.
+          </p>
+          <p>
+            Its tools can read everything and change nothing — read-only is enforced by the
+            database, not merely declared. It proposes; a person disposes, through the same
+            controls they would use themselves.
+          </p>
+        </Disclosure>
       </header>
 
       {/* ── how it works, in four steps ──────────────────────────────────── */}

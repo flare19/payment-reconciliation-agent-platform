@@ -78,7 +78,7 @@ export function TierAttribution({ engine }: { engine: EngineMetrics }) {
 
       <aside className={styles.sidebar}>
         <div className={styles.stat}>
-          <span className="label">Pairs Attributed</span>
+          <span className="label">Pairs Matched</span>
           <span className={`${styles.statValue} num`}>{count(total)}</span>
           <p className={styles.statNote}>
             Every internal pair of every group the engine assembled.
@@ -86,11 +86,11 @@ export function TierAttribution({ engine }: { engine: EngineMetrics }) {
         </div>
 
         <div className={styles.stat}>
-          <span className="label">Identity Established</span>
+          <span className="label">Same ID, Different Details</span>
           <span className={`${styles.statValue} num`}>{count(identity)}</span>
           <p className={styles.statNote}>
-            Not a tier and not in the bar — the amount-or-timing verdicts Tier&nbsp;1 declined
-            and the identity stage settled.
+            Not a rule and not in the bar — pairs whose reference IDs agree exactly, but whose
+            amount or date does not.
           </p>
         </div>
       </aside>

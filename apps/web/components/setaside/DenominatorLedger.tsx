@@ -22,7 +22,7 @@ export function DenominatorLedger({ counts }: { counts: PopulationResponse['coun
   return (
     <table className={styles.ledger}>
       <caption className="sr-only">
-        How the reconcilable record count is derived from the rows attempted
+        How the counted-record total is derived from the rows attempted
       </caption>
       <tbody>
         <tr className={styles.total}>

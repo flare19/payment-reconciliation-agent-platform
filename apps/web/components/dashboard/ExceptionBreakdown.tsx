@@ -131,14 +131,15 @@ export function ExceptionBreakdown(
 
         <dl className={styles.facts}>
           <div className={styles.fact}>
-            <dt className="label">Search Proved Exhaustive</dt>
+            <dt className="label">Proved Impossible</dt>
             <dd className={`${styles.factValue} num`}>{count(exceptions.batchSearchExhausted)}</dd>
             <p className={styles.factNote}>
-              The engine proved no decomposition exists inside its declared bounds.
+              The engine proved no combination of records adds up, inside bounds it declared
+              before it started.
             </p>
           </div>
           <div className={styles.fact}>
-            <dt className="label">Stopped on a Bound</dt>
+            <dt className="label">Ran Out of Room</dt>
             <dd className={`${styles.factValue} num`}>
               {count(exceptions.batchSearchBoundExceeded)}
             </dd>
@@ -148,7 +149,7 @@ export function ExceptionBreakdown(
             </p>
           </div>
           <div className={styles.fact}>
-            <dt className="label">Candidate Cap Hit</dt>
+            <dt className="label">Too Many Candidates</dt>
             <dd className={`${styles.factValue} num`}>{count(exceptions.candidateCapHits)}</dd>
             <p className={styles.factNote}>
               Exceptions whose candidate list was truncated before scoring finished.

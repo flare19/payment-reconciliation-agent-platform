@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Disclosure } from '@/components/ui/Disclosure';
 import { VerifyChain } from '@/components/audit/VerifyChain';
 import { ActorChip } from '@/components/ui/Chip';
 import { Paginate } from '@/components/ui/Paginate';
@@ -58,16 +59,28 @@ export default async function AuditPage(
       <header className={styles.header}>
         <h1 className={styles.title}>Audit</h1>
         <p className={styles.lede}>
-          Every decision this run made, hash-chained and append-only. Each entry&rsquo;s hash
-          covers its own contents and its predecessor&rsquo;s hash, so an entry cannot be edited or
-          removed without breaking every entry after it.
+          Every decision this run made, in the order it made them.
         </p>
+        <Disclosure summary="Why an entry here cannot be changed afterwards">
+          <p>
+            The log is append-only, and each entry&rsquo;s hash covers both its own contents and
+            the hash of the entry before it. Editing or removing one therefore breaks every entry
+            after it, which the check below will find and name.
+          </p>
+        </Disclosure>
       </header>
 
       <Section
         id="verify"
         title="Verify the Chain"
-        standfirst="Recompute it now rather than take the claim on trust. This is a live call against the running database, not a cached result."
+        standfirst="Recompute the chain now instead of trusting the claim."
+        basis={{
+          summary: 'What the button actually does',
+          body:
+            'It is a live call against the running database, not a cached result. Every entry in the '
+            + 'log carries a hash of the one before it, so re-deriving them in order either reproduces '
+            + 'the recorded head or names the first entry where it stops agreeing.',
+        }}
       >
         <VerifyChain runId={run.runId} />
       </Section>
@@ -75,7 +88,14 @@ export default async function AuditPage(
       <Section
         id="entries"
         title="The Trail"
-        standfirst="Filter by actor to check the boundary: the model appears only where it writes prose, the agent only where it investigates, and neither ever appears on a match decision."
+        standfirst="Every decision in the run, and who made it."
+        basis={{
+          summary: 'The boundary you can check here',
+          body:
+            'Filter by actor. The model appears only where it writes prose, the agent only where it '
+            + 'investigates, and neither ever appears on a match decision — those are the rules’ own, '
+            + 'and a person’s where a person overruled them.',
+        }}
         aside={<><span className="num">{count(data.pagination.total)}</span> entries</>}
       >
         <nav className={styles.filters} aria-label="Filter by actor">
