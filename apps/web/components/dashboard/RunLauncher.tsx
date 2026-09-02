@@ -138,6 +138,20 @@ export function RunLauncher(
         Plain English from a model is available per exception, on request, from the Analyst.
       </p>
 
+      {/*
+        THE DATASET LIST COMES FROM `/api/health` (ADR-129). If that call failed
+        the array is empty, and an empty panel with a working Run button would
+        start a holdout run while appearing to offer no choice at all — the
+        reader would have no way to know which dataset they just reconciled.
+        Say so instead.
+      */}
+      {datasets.length === 0 && (
+        <p className={styles.body}>
+          The dataset list could not be loaded, so there is nothing to choose between. Running now
+          would reconcile the default dataset without saying which one — reload to try again.
+        </p>
+      )}
+
       {datasets.map((d) => (
         <label key={d.seed} className={styles.choice}>
           <input
@@ -166,7 +180,12 @@ export function RunLauncher(
       ))}
 
       <div className={styles.actions}>
-        <button type="button" className={styles.go} onClick={go} disabled={busy}>
+        <button
+          type="button"
+          className={styles.go}
+          onClick={go}
+          disabled={busy || datasets.length === 0}
+        >
           {busy ? `Running… ${stage ?? ''}` : 'Run for free'}
         </button>
         <button
