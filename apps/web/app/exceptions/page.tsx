@@ -64,6 +64,19 @@ export default async function ExceptionsPage(
     getInvestigationsIfAny(run.runId),
   ]);
   const { exceptions, facets, pagination } = data;
+
+  /**
+   * THE RUN'S TOTAL AND WHAT IS STILL OPEN ARE TWO FIGURES (ADR-123, and the
+   * same rule as ADR-120's review burden). A closed exception stays listed —
+   * removing it would make the primary screen a moving target and its count
+   * unreproducible — so the list's total keeps counting it, and the number a
+   * reader actually wants is stated rather than inferred.
+   *
+   * `facets` is computed run-wide and is NOT scoped to the active filter, so
+   * this is the whole run's closed count even while a category filter narrows
+   * the table below.
+   */
+  const closedCount = (facets.status['human_resolved'] ?? 0) + (facets.status['wont_fix'] ?? 0);
   const investigatedVerdict = new Map(
     (agent?.investigations ?? []).map((i) => [i.exceptionId, i.verdict]),
   );
@@ -82,6 +95,15 @@ export default async function ExceptionsPage(
             eight categories with a stated reason. Sorted by severity and then by money at risk,
             because that is how a controller triages.
           </p>
+          {closedCount > 0 && (
+            <p className={styles.lede}>
+              <span className="num">{count(closedCount)}</span>{' '}
+              {closedCount === 1 ? 'has' : 'have'} since been closed by a human and{' '}
+              {closedCount === 1 ? 'stays' : 'stay'} listed — this list is the run’s record of what
+              the engine could not prove, not a queue that empties. Closing one asserts no match
+              and moves no denominator.
+            </p>
+          )}
         </div>
 
         <form className={styles.sortForm} method="get" action="/exceptions">

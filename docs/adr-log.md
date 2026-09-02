@@ -1285,3 +1285,19 @@ On a product whose whole argument is that every decision carries its reason, the
 **A serializer that omits a field is invisible to `tsc`** — the return type is `Record<string, unknown>`, so nothing about dropping three fields is a type error. `tests/unit/serialize-exception-closure.test.ts` asserts the wire shape instead, and all five of its cases were watched failing against the pre-fix serializer.
 
 > **Two closures existed, not one.** CLAUDE.md and `what-broke.md` both record audit entry #728 as "the only human actor in the run". There are two resolved exceptions across the database — one in `verify`, one in `phase4-free` — and this screen displayed the reason for neither.
+
+---
+
+### ADR-123 · Closing an exception is terminal and changes nothing else
+
+**Three questions the Day 16 walkthrough raised and did not answer.** Each has a different answer for a different reason, so leaving them as "probably fine" was not good enough — the exception list is the primary feature and this is what a judge will click.
+
+**1 · Does a closed exception appear in `/matches`? No, ever.** ADR-043 already decided it — only endpoint 21 creates a match, at `tier: 'manual'`, and those are excluded from the engine's rate because *"a human fixing something is not the engine matching it."* Confirmed empirically rather than assumed: there are **zero `tier='manual'` matches** anywhere in the database.
+
+> **One result looks like a contradiction and is not, so it is recorded here.** The one resolved exception on `verify` is a `DUPLICATE_RECORD`, and one of its records *is* in an `auto_confirmed` fuzzy match. That record is the **related** one, not the exception's primary — the original of the duplicate pair, which matches normally while its duplicate is the finding. The match was created by the engine at `11:35:10`; the exception was closed at `21:07:04`, nearly ten hours later. Closing created nothing.
+
+**2 · Does it leave the exception list? No. It stays, and it is marked closed.** The list is the run's record of what the engine could not prove, not a work queue that empties. An exception that vanished when someone dealt with it would make the primary screen a moving target and its count unreproducible — two viewers would see different totals for the same finished run depending on who had clicked what. But leaving it *indistinguishable* is the defect that was actually shipping: the table had **no status at all**, so a reader counting open findings counted one already handled. Terminal statuses now carry a chip; `explained` does not, because it is the ordinary state and marking every row is noise.
+
+**3 · Does it move a denominator? No.** `runs.metrics` is frozen at completion (ADR-041), so `matchRatePct`, `reconcilable` and `exceptions.total` describe the run as the engine left it. Measured on `verify` with one exception resolved: **65.22 / 874 / 212**, every figure unchanged.
+
+**The consequence, and it is the third time this rule has been needed in one day:** the run's exception total and the number still open are two different figures, and neither may appear alone. Same rule as ADR-119 (engine-alone vs with-review) and ADR-120 (deferred vs still waiting). **A frozen figure and a live one may both appear, provided each says which it is** — that sentence is now load-bearing in three places, which is the argument for it being a rule rather than three separate fixes.

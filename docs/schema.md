@@ -592,6 +592,22 @@ CREATE INDEX ix_exc_run_category ON exceptions (run_id, category);
 CREATE INDEX ix_exc_run_severity ON exceptions (run_id, severity, amount_at_risk_paise DESC);
 ```
 
+#### What closing an exception does, and deliberately does not do (ADR-123)
+
+`human_resolved` and `wont_fix` are terminal, and reaching either changes **nothing else in the
+system**. Stated explicitly because all three were open questions on Day 17 and each has a different
+answer for a different reason:
+
+| Question | Answer | Why |
+|---|---|---|
+| Does it appear in `/matches`? | **No, ever.** | Resolving is not asserting a match. Only endpoint 21 creates a match, at `tier: 'manual'`, and ADR-043 already excludes those from the engine's rate — *"a human fixing something is not the engine matching it."* |
+| Does it leave the exception list? | **No.** | The list is the run's honest record of what the engine could not prove. An exception that vanished when someone dealt with it would make the primary screen a moving target and the count unreproducible. It stays, and it is **visibly marked closed**. |
+| Does it move a denominator? | **No.** | `runs.metrics` is frozen at completion (ADR-041), so `matchRatePct`, `reconcilable` and `exceptions.total` are the engine's account of the run as it ended. Measured on `verify` with one exception resolved: 65.22 / 874 / 212, all unchanged. |
+
+**The consequence the UI must carry**: the run's exception total and the number *still open* are two
+different figures, exactly as with review burden (ADR-120). Neither may be shown alone.
+
+
 **`evidence` is mandatory and is the heart of the honest exception list.** It records what the engine *tried*:
 
 ```json

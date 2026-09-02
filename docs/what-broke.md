@@ -1491,3 +1491,13 @@ The obvious test for #55 — *"at the engine's own bounds the tool reproduces th
   Re-scored after the API change: verify and demo both unchanged at engine-alone precision 1.0000 / recall 0.6075 and 0.6139, every honesty gate passed, exit 0.
 
   > **Two closures existed, not one.** CLAUDE.md and this file both call audit entry #728 "the only human actor in the run". There are two resolved exceptions — one in `verify`, one in `phase4-free` — and the screen showed the reason for neither. **F12's precondition needs re-checking against both**, not just #728.
+
+- **2026-09-02 — Day 17, unit F8: the exception table had no status column, so a resolved exception looked exactly like an unresolved one (ADR-123).** Filed as an open question — *"a closed exception does not appear in `/matches`, that is probably correct but has not been confirmed"* — and all three parts turned out to have different answers.
+
+  **`/matches`: correct as-is, and now confirmed rather than assumed.** Zero `tier='manual'` matches exist anywhere in the database. One result looks like a contradiction and is not: the resolved exception is a `DUPLICATE_RECORD` and one of its records is in an `auto_confirmed` fuzzy match — but that is the **related** record, the original of the duplicate pair, matched by the engine at 11:35:10, nearly ten hours before the closure at 21:07:04.
+
+  **Denominators: unmoved, measured.** `verify` with one exception resolved still reports 65.22 / 874 / 212. `runs.metrics` is frozen at completion, so it describes the run as the engine left it.
+
+  **The list: the real defect.** A closed exception stays listed — removing it would make the primary screen a moving target and its count unreproducible — but the table rendered **no status whatsoever**, so a reader counting open findings counted one already dealt with. Terminal statuses now carry a chip and the header states how many have been closed. `explained` stays unchipped; it is the ordinary state and marking every row is noise.
+
+  > **The same rule for the third time in one day.** ADR-119 (engine-alone vs with-review), ADR-120 (deferred vs still waiting), and now ADR-123 (total vs still open) are all one sentence: **a frozen figure and a live one may both appear, provided each says which it is.** Three independent fixes converging on one rule is the argument for writing it down as a rule — and for AUDIT-4 to look for the fourth instance rather than wait for it.

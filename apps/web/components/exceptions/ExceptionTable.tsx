@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { SeverityChip, Chip } from '@/components/ui/Chip';
 import { count, day, ratio4 } from '@/lib/format';
 import { hrefWith } from '@/lib/run-context';
-import { CATEGORY_LABEL, SOURCE_LABEL, VERDICT_LABEL, label } from '@/lib/taxonomy';
+import { CATEGORY_LABEL, SOURCE_LABEL, STATUS_LABEL, VERDICT_LABEL, label } from '@/lib/taxonomy';
 import type { ExceptionSummary } from '@/types/api';
 import styles from './ExceptionTable.module.css';
 
@@ -76,8 +76,29 @@ export function ExceptionTable(
                 <Link href={href} className={styles.catLink}>
                   {label(CATEGORY_LABEL, e.category)}
                 </Link>
-                {(e.secondaryFlags.length > 0 || investigatedVerdict?.has(e.exceptionId)) && (
+                {(e.secondaryFlags.length > 0 || investigatedVerdict?.has(e.exceptionId)
+                  || e.status === 'human_resolved' || e.status === 'wont_fix') && (
                   <span className={styles.flags}>
+                    {/*
+                      A CLOSED EXCEPTION STAYS IN THE LIST AND MUST LOOK CLOSED
+                      (ADR-123). It is part of the run's honest record, so
+                      removing it would make the primary screen a moving target
+                      and its count unreproducible --- but leaving it
+                      indistinguishable means a reader counting open findings
+                      counts one somebody has already dealt with. Only the two
+                      terminal states are chipped; `explained` is the ordinary
+                      state and marking every row would be noise.
+                    */}
+                    {(e.status === 'human_resolved' || e.status === 'wont_fix') && (
+                      <Chip
+                        tone="outline"
+                        title="Closed by a human. It stays listed because the exception list is the
+                          run's record of what the engine could not prove — resolving it does not
+                          assert a match, and moves no denominator (ADR-123)."
+                      >
+                        {label(STATUS_LABEL, e.status)}
+                      </Chip>
+                    )}
                     {e.secondaryFlags.map((f) => (
                       <Chip key={f} tone="outline">{label(CATEGORY_LABEL, f)}</Chip>
                     ))}
