@@ -115,3 +115,18 @@
   text-wrap: pretty;
 }
 .closed strong { color: var(--ink); font-weight: 600; }
+
+/* The human's reason, given the weight the engine's reasons get elsewhere on
+   this page — quoted verbatim, never paraphrased (ADR-122). */
+.closedReason {
+  margin: 0.75rem 0;
+  padding: 0.5rem 0 0.5rem 0.875rem;
+  border-left: 2px solid var(--rule);
+  color: var(--ink);
+  font-style: normal;
+}
+
+.closedNote {
+  color: var(--ink-muted);
+  font-size: 0.8125rem;
+}

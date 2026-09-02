@@ -261,8 +261,27 @@ export function exceptionDetail(
   sharedExplanationCount: number | null,
   auditEntryCount: number,
 ): Record<string, unknown> {
+  const closed = e.status === 'human_resolved' || e.status === 'wont_fix';
   return {
     ...exceptionSummary(e, primary, sharedExplanationCount),
+    /**
+     * WHO CLOSED THIS AND WHY, served as ONE object or not at all.
+     *
+     * `exc_resolution_complete` requires `resolved_by`, `resolved_at` AND
+     * `resolution_note` together whenever the status is closed, so three
+     * parallel nullable fields on the wire would model a state the database
+     * forbids and invite a half-read. Endpoint 20 has always required the note
+     * and recorded the actor; nothing ever served them back, so a closed
+     * exception could say only that it was closed (ADR-122).
+     */
+    closure: closed && e.resolvedBy !== null && e.resolvedAt !== null && e.resolutionNote !== null
+      ? {
+        resolution: e.status,
+        resolvedBy: e.resolvedBy,
+        resolvedAt: e.resolvedAt.toISOString(),
+        note: e.resolutionNote,
+      }
+      : null,
     evidence: {
       ...e.evidence,
       // `rejectedBecause` comes from the RULE ENGINE, not the LLM — it is the

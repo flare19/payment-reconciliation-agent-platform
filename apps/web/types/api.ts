@@ -370,7 +370,21 @@ export interface ExceptionEvidence {
   [k: string]: unknown;
 }
 
+/**
+ * Who closed an exception, when, and why — one object, never three parallel
+ * fields. `null` unless the exception is closed; complete whenever it is,
+ * because `exc_resolution_complete` requires all three columns together
+ * (ADR-122).
+ */
+export interface ExceptionClosure {
+  resolution: 'human_resolved' | 'wont_fix';
+  resolvedBy: string;
+  resolvedAt: string;
+  note: string;
+}
+
 export interface ExceptionDetail extends ExceptionSummary {
+  closure: ExceptionClosure | null;
   /**
    * The run this exception belongs to — ALWAYS use this rather than whatever
    * run the page happened to resolve from `?run=` or "most recent completed".

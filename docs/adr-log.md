@@ -1256,3 +1256,32 @@ That is why three separate probes said the page was fine: HTTP 200, no error-bou
 > **THIS IS DIRECTLY IN F19's PATH.** The backlog wants a prominent "run a fresh dataset" control that lands on the new run's metrics. That lands a viewer on the dashboard during precisely the window where the run list disappears. **F19 cannot be built safely until this is fixed**, and it was found by an audit rather than by the demo only because F6 ran first.
 
 **On the probe method.** HTTP status was the wrong instrument, the same shape of error as reading `tail`'s exit code instead of the scorer's. A server component that throws still returns 200. **The reliable probe is the render's own output — is the section present? — plus the server log.** Add both to AUDIT-4's click-through script.
+
+---
+
+### ADR-122 · A closed exception serves who closed it, when, and why — as one object
+
+**The engine's decisions carry their reasons everywhere in this API. The one decision a *human* makes did not.**
+
+Endpoint 20 has required a `note` and recorded `resolvedBy` since Day 8. `repositories/exceptions.ts` loads `resolvedBy`, `resolvedAt` and `resolutionNote` on every read. The audit log stores the reason verbatim. And `routes/serialize.ts` **dropped all three**, so the closed state on the exception detail screen could say only:
+
+> *"This exception is closed as human resolved. Reopening is not possible…"*
+
+On a product whose whole argument is that every decision carries its reason, the human's was the invisible one.
+
+**Decision.** `ExceptionDetail` gains `closure`: `null` when the exception is open, and a complete object when it is closed.
+
+```json
+"closure": { "resolution": "human_resolved", "resolvedBy": "…",
+             "resolvedAt": "…", "note": "…" }
+```
+
+**One object, not three parallel nullable fields, because the database already says they are one thing.** `exceptions` carries the check constraint `exc_resolution_complete`: `resolved_by`, `resolved_at` **and** `resolution_note` must all be non-null whenever `status` is `human_resolved` or `wont_fix`. Three nullable wire fields would model eight states where the database permits two, and invite a half-read — the shape F6 had just finished paying for (ADR-121). The serializer therefore emits the object only when all three are present, so a partial closure is impossible on the wire even if one ever reached the database.
+
+**The reason is rendered as a quotation, at the weight the engine's reasons get.** A note paraphrased or truncated would be a worse artifact than none — the point is that a reader can check what the human actually said.
+
+**The backlog proposed reading this from the audit trail instead, and that was the wrong instrument.** The trail on that page is fetched for the primary *transaction*, so a closure could be absent from it, ambiguous among several entries, or require parsing prose. The exception row **is** the canonical record of its own closure; the audit log is the immutable proof that it happened. Serving the row is direct, typed and exact.
+
+**A serializer that omits a field is invisible to `tsc`** — the return type is `Record<string, unknown>`, so nothing about dropping three fields is a type error. `tests/unit/serialize-exception-closure.test.ts` asserts the wire shape instead, and all five of its cases were watched failing against the pre-fix serializer.
+
+> **Two closures existed, not one.** CLAUDE.md and `what-broke.md` both record audit entry #728 as "the only human actor in the run". There are two resolved exceptions across the database — one in `verify`, one in `phase4-free` — and this screen displayed the reason for neither.

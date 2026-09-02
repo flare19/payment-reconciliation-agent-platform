@@ -1479,3 +1479,15 @@ The obvious test for #55 — *"at the engine's own bounds the tool reproduces th
   **This is directly in F19's path** — a prominent "run a fresh dataset" button lands a viewer on the dashboard in exactly the window where the run list vanishes. F19 could not have been built safely before this.
 
   **The audit itself was wrong twice before it was right, and both were the "test that cannot fail" pattern.** First pass: a regex that stopped at the first `;` truncated every object-literal type, producing four false positives and no findings. Second pass: field nullability aggregated across interfaces with `any()`, so a field declared `string | null` in one interface silently vouched for `string` in another — **the audit could not fail on exactly the case it exists to find.** Changed to `all()`, at which point five candidates appeared, all resolved by hand to correctly-modelled audit-entry fields. Only then did the real one surface. An audit is a guard, and a guard nobody has watched fail is indistinguishable from one that cannot.
+
+- **2026-09-02 — Day 17, unit F7: the only decision a human makes was the only one with no reason on screen (ADR-122).** Endpoint 20 has required a note and recorded the actor since Day 8; the repository loads all three columns; the audit log stores the reason verbatim. **`serialize.ts` dropped them**, so a closed exception rendered only *"This exception is closed as human resolved."*
+
+  Served now as a single `closure` object rather than three parallel nullable fields, because `exc_resolution_complete` already requires the three columns together — three wire fields would model eight states where the database permits two, which is the half-read shape F6 had just finished paying for.
+
+  **The backlog's proposed fix — read it out of the audit trail — was the wrong instrument.** That trail is fetched for the primary *transaction*, so the closure can be absent, ambiguous among entries, or need prose parsing. The exception row is the canonical record of its own closure; the audit log is the proof it happened.
+
+  **A serializer that omits a field is invisible to `tsc`**, because its return type is `Record<string, unknown>` — dropping three fields is not a type error. Five wire-shape assertions were added and all five were watched failing against the pre-fix serializer.
+
+  Re-scored after the API change: verify and demo both unchanged at engine-alone precision 1.0000 / recall 0.6075 and 0.6139, every honesty gate passed, exit 0.
+
+  > **Two closures existed, not one.** CLAUDE.md and this file both call audit entry #728 "the only human actor in the run". There are two resolved exceptions — one in `verify`, one in `phase4-free` — and the screen showed the reason for neither. **F12's precondition needs re-checking against both**, not just #728.

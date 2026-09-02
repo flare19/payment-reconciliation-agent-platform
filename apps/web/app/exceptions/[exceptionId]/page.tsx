@@ -266,7 +266,11 @@ export default async function ExceptionDetailPage(
         standfirst="A reason is required. Every closure is written into the append-only audit log beside the engine’s own decision."
       >
         <div className={styles.actionsLayout}>
-          <ResolveActions exceptionId={exception.exceptionId} status={exception.status} />
+          <ResolveActions
+            exceptionId={exception.exceptionId}
+            status={exception.status}
+            closure={exception.closure}
+          />
           <aside className={styles.deferred}>
             <h3 className="label">Not Built: Manual Match</h3>
             <p>

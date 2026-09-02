@@ -3,6 +3,8 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { ApiClientError, resolveException } from '@/lib/api-client';
+import { at } from '@/lib/format';
+import type { ExceptionClosure } from '@/types/api';
 import styles from './ResolveActions.module.css';
 
 /**
@@ -26,7 +28,8 @@ import styles from './ResolveActions.module.css';
  * is named rather than quietly absent.
  */
 export function ResolveActions(
-  { exceptionId, status }: { exceptionId: string; status: string },
+  { exceptionId, status, closure }:
+  { exceptionId: string; status: string; closure: ExceptionClosure | null },
 ) {
   const router = useRouter();
   const [resolution, setResolution] = useState<'human_resolved' | 'wont_fix'>('human_resolved');
@@ -38,12 +41,36 @@ export function ResolveActions(
   const alreadyClosed = status === 'human_resolved' || status === 'wont_fix';
 
   if (alreadyClosed) {
+    /**
+     * THE ONE DECISION A HUMAN MAKES WAS THE ONE WITH NO REASON ON SCREEN.
+     *
+     * Every engine decision on this page carries its rule, its evidence and its
+     * reason. This block used to say only that the exception was closed —
+     * although endpoint 20 requires a note and records the actor, and both were
+     * already in the database. On a product whose argument is that decisions
+     * carry their reasons, the human's was the invisible one (ADR-122).
+     */
     return (
-      <p className={styles.closed}>
-        This exception is closed as <strong>{status.replace('_', ' ')}</strong>. Reopening is not
-        possible — the audit log is append-only, and a new decision would be a new entry rather
-        than an edit to this one.
-      </p>
+      <div className={styles.closed}>
+        <p>
+          Closed as <strong>{status.replace('_', ' ')}</strong>
+          {closure !== null && (
+            <> by <strong translate="no">{closure.resolvedBy}</strong> on {at(closure.resolvedAt)}</>
+          )}.
+        </p>
+        {closure === null ? (
+          <p className={styles.closedNote}>
+            This closure predates the API serving its actor and reason, so neither is available
+            here. The audit trail below still holds both.
+          </p>
+        ) : (
+          <blockquote className={styles.closedReason}>{closure.note}</blockquote>
+        )}
+        <p className={styles.closedNote}>
+          Reopening is not possible — the audit log is append-only, and a new decision would be a
+          new entry rather than an edit to this one.
+        </p>
+      </div>
     );
   }
 
