@@ -1574,3 +1574,24 @@ DELETE FROM audit_log → "audit_log is append-only (attempted DELETE on sequenc
 > **Two runs must survive any future tidying, and they are the ones carrying every human action in the system.** `verify` holds 24 review decisions, a closed exception, 29 human audit entries and the three aliases in the ledger's supersession chain. `phase4-free` holds the only *rejection* — with its reason — and two closures. Everything else has zero human activity. If the demo database is ever rebuilt from scratch rather than tidied, those decisions have to be re-made deliberately, not assumed to carry over.
 
 **What would actually clean the list** is rebuilding the demo database and performing the handful of runs and human decisions you want, in order. That is a real option before the pitch video and it costs nothing but the re-doing; it is not the same as deleting, and it does not weaken anything.
+
+---
+
+### ADR-135 · F13 — a tile label is read by someone who has not read the repo
+
+**Two labels on the dashboard named their concept only for a reader who already knew it.**
+
+- **"Ceiling"** → **"Best Possible"**, unit `maximum` → `on this dataset`.
+- **"Grounding-Gate Rejections"** → **"Unsupported Claims Caught"**.
+
+The backlog filed both as "opaque", and the third label it named — "Cold Start" — had already become **"Without Learned Rules"** under F30/F9.5. Re-reading the row before rewriting it was the difference between a two-label change and a wrong one.
+
+**Why these two and not the others.** `Ceiling` is a field name (`measured.ceiling.theoreticalMaxMatchRatePct`) that reached the screen unchanged; "grounding gate" is this repo's name for A3 and means nothing outside `agent-design.md`. Neither reader-facing word survives the question *what does a panelist with fifty seconds conclude from this?* — and for the second one, the answer is worse than nothing: a rejection count is unreadable as either failure or success unless you already know a gate is a guard. "Caught" is the whole point of the tile and it was the one word missing.
+
+**What did NOT change, deliberately:**
+
+- **"Hallucinated Resolutions"** stays. It is ADR-053's locked metric name, the audience is an AI buildathon panel, and the tile is *absent* — renaming a metric that does not exist yet would put the screen and `validation-strategy.md` §7 into disagreement for no reader's benefit. Its neighbour is now plainly "caught", which is the distinction that tile's whole comment block exists to protect.
+- **"Match Rate"**, **"False Positives"**, **"Without Learned Rules"**, **"Investigations"**, **"Proposals"** — all already say what they are.
+- **"Identity Established"**, **"Search Proved Exhaustive"**, **"Stopped on a Bound"** — real candidates, but they are section sub-labels rather than headline tiles, and they belong to F14's copy pass rather than to a label rename.
+
+> **The rule this sets, because F14 will be tempted to go further.** The plain word goes on the label; the repo's term stays in the disclosure underneath it, where a reader has asked for the mechanism. The vocabulary is not being retired — it is being moved to where it is earned. **The provenance words are not in scope for that trade (ADR-098): `engine`, `measured` and `absent` are the one vocabulary the reader must learn, and diluting them to make a tile friendlier costs the reader the only thing the row is for.**

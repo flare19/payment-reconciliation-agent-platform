@@ -175,13 +175,21 @@ export function HeadlineRow({
         />
       )}
 
+      {/*
+        "CEILING" IS THE FIELD'S NAME, NOT A LABEL A READER CAN USE. It named
+        the concept for whoever already knew it, which on this screen is nobody:
+        a panelist has under a minute and no glossary. "Best Possible" says the
+        same thing in words that need no prior sentence, and the unit fixes it
+        to this dataset so it cannot be read as a claim about the engine.
+        The field, the ADRs and the disclosure keep the term (ADR-135).
+      */}
       {measured ? (
         <Figure
           size="hero"
-          label="Ceiling"
+          label="Best Possible"
           provenance="measured"
           value={pct(measured.ceiling.theoreticalMaxMatchRatePct)}
-          unit="maximum"
+          unit="on this dataset"
           note={
             <>
               {count(measured.resolvability.unresolvableDesigned)} events are unresolvable by
@@ -204,10 +212,10 @@ export function HeadlineRow({
       ) : (
         <Figure
           size="hero"
-          label="Ceiling"
+          label="Best Possible"
           provenance="absent"
           absentReason={noScoreReport}
-          note="The ceiling is computed from the answer key, so it arrives with the measurement."
+          note="The maximum is computed from the answer key, so it arrives with the measurement."
         />
       )}
     </div>

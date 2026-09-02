@@ -21,7 +21,7 @@ import styles from './AnalystBlock.module.css';
  * caught. That is an operational figure about the agent's own behaviour, and on
  * this run it is 3, not 0.
  *
- * Rendering it in a tile labelled "hallucinated resolutions" would put a
+ * Rendering it in the "Hallucinated Resolutions" tile would put a
  * self-reported number in a slot the whole architecture reserves for a
  * measurement — the exact substitution ADR-041 exists to prevent, made easier
  * here than anywhere else because both numbers are about the same subject. So
@@ -97,8 +97,17 @@ export function AnalystBlock({ data }: { data: InvestigationListResponse }) {
           note={`${count(m.concluded)} concluded · ${count(m.failed)} failed`}
         />
 
+        {/*
+          "GROUNDING GATE" IS THIS REPO'S NAME FOR A3, AND IT IS THE ONLY PLACE
+          THAT NAME MEANS ANYTHING. A reader who has not read `agent-design.md`
+          cannot tell whether a rejection is the system failing or the system
+          working, which is the one thing this tile exists to say. The plain
+          label says it: a claim went unsupported, and it was caught before
+          anyone saw it. The mechanism keeps its real name in the disclosure
+          below, where a reader who wants it has asked for it (ADR-135).
+        */}
         <Figure
-          label="Grounding-Gate Rejections"
+          label="Unsupported Claims Caught"
           provenance="engine"
           value={count(m.groundingFailures)}
           note={
@@ -131,9 +140,10 @@ export function AnalystBlock({ data }: { data: InvestigationListResponse }) {
           basis={{
             summary: 'Why this is empty and the tile stayed',
             body:
-              'The API does return a field by this name, and it holds the grounding-gate rejection '
-              + 'count shown to the left — the same integer under a second name. Putting that number '
-              + 'here would place a self-reported figure in a slot reserved for a measurement, which '
+              'The API does return a field by this name, and it holds the count shown to the left — '
+              + 'the rejections of the grounding gate, the same integer under a second name. Putting '
+              + 'that number here would place a self-reported figure in a slot reserved for a '
+              + 'measurement, which '
               + 'is precisely the substitution this project is built to prevent. The tile stays '
               + 'visible while empty because the absence is the finding: feature-complete and '
               + 'plumbing-verified is the honest claim about this layer, and nothing stronger.',
