@@ -1425,3 +1425,31 @@ The distinction decides the fix and they are opposite:
 **Nothing is changed in the app until that is answered**, because deleting the skeleton to fix a bug that does not exist is a real loss for nothing. The test takes thirty seconds in any ordinary browser: open the dashboard, click **Run It Again**, and see whether a confirmation panel appears.
 
 > **Either answer is worth having.** The second one still leaves the backlog's own words standing — *"AskAnalyst arm → confirm panel: never watched render"*, *"Run launcher open state: same"* — and Day 16's resolve was exercised **against the live local API**, not through a browser. No interactive control in this product has been confirmed by a human clicking it, and that is true regardless of which way this lands.
+
+---
+
+### ADR-128 · The `Alias` type described a response the API has never sent
+
+`/aliases` died with `RangeError: Invalid time value` the moment an alias existed. `types/api.ts` declared `createdAt`, `note` and `timesApplied`; endpoint 15 sends `approvedAt`, `appliedCount`, and no `note` at all — plus eight fields the type omitted entirely (`normalizedValue`, `confirmationCount`, `conflictCount`, `lastAppliedAt`, `eligibleForAliasTier`, `createdFromMatchId`, `scopeSource` as non-null, `status`). Reading `a.createdAt` yielded `undefined`; `at(undefined)` threw.
+
+**`tsc` cannot see this.** The field is declared `string`, so every use of it typechecks, and it is only missing at runtime. It survived because **the screen had never rendered a row** — zero aliases had ever been taught, which is what F9 was investigating when it crashed.
+
+**F6's audit should have caught it and could not, and that is the reusable lesson.** That audit compared fields the API sent as `null` against fields the type forbade null on. **A field that is entirely ABSENT from the response never appears in the observed-null set at all** — `absent` and `null` are different failures and the audit only modelled one of them. The audit needs a converse pass: for every field a type *declares*, assert the API actually sends it.
+
+Fixed by transcribing the type from a real response, per ADR-098's rule that types are transcribed from responses rather than from the contract's prose. `note` had no counterpart, so the cell now shows something the API does serve and a reader of an alias ledger actually needs: **whether the alias is eligible for Tier 1.5**, since §6.3 holds a conflicted alias out until a second human confirms it — an alias can be `active` and still resolve nothing.
+
+---
+
+### ADR-129 · The run launcher chooses the dataset, and can no longer spend anything
+
+**Two changes to the most prominent control in the product, for two different reasons.**
+
+**1 · It offers the dataset.** `datasetSeed` has worked at the API since ADR-118, but `startRun` did not accept one and `RunLauncher` never sent one — so every click reconciled the holdout. **Nine of the first ten runs reconciled byte-identical input** (`sha256:3e58a16…`) and reported the same match rate, which reads as a broken or faked button rather than as determinism. It is in fact determinism working: a run is a pure function of its inputs (CLAUDE.md rule 8, ADR-067), and a "Run It Again" that produced a different number every time would mean no measurement in this project could be trusted. **The honest fix is not to randomise anything — it is to let the reader choose which dataset to reconcile**, and to say why the holdout reproduces itself exactly.
+
+The list is **served from `/api/health`** rather than duplicated in the frontend, because the criterion for offering a seed — committed, with an answer key — is enforced on the API side (ADR-118), and a second copy of the list would eventually offer a seed `POST /api/runs` refuses.
+
+**The label now names the dataset it ran.** It read `demo-<timestamp>` on every run while reconciling the holdout; with a committed dataset now actually called `demo`, that label was a false statement about which bytes a run had read.
+
+**2 · The explain option is removed, not merely defaulted off (Tejas, Day 17).** It was an opt-in ~$0.03 pass, defaulted off, and its reasoning was sound — but the most prominent button on a public unauthenticated demo should have **no path** to spending real credit, not a path a stranger has to decline. Every run is now `llmExplainEnabled: false`.
+
+> **Nothing is lost from the argument.** Every exception still gets its deterministic template, and no match, number, or audit entry differs either way — that is ADR-017, and it is the point. Plain English from a model stays available **per exception, on request, behind the Analyst's own confirmation**, which is where a human has already decided to spend. The one thing this forfeits is the side-by-side demonstration of ADR-017 by running the same dataset with and without explanations; that can still be shown from two existing runs rather than by offering a spend button.

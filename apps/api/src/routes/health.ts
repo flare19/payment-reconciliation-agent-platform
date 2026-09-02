@@ -10,6 +10,7 @@
 
 import { Router } from 'express';
 import { llmConfigured, type Env } from '../config/env.js';
+import { SEED_DATASETS } from '../config/datasets.js';
 import { getPool } from '../db/pool.js';
 import { handler } from './helpers.js';
 
@@ -35,6 +36,16 @@ export function healthRouter(env: Env, version: string): Router {
       // reported `false` while its runs really were calling Anthropic --
       // deployment.md §5.4's pre-submission checklist tests this exact field.
       llmConfigured: llmConfigured(env),
+      /**
+       * WHICH DATASETS A RUN MAY BE STARTED AGAINST (ADR-129).
+       *
+       * Served rather than duplicated in the frontend, because the criterion —
+       * "committed, with an answer key" — is enforced on this side of the wall
+       * and a second copy of the list would eventually disagree with the one
+       * `POST /api/runs` actually validates against. The launcher offering a
+       * seed the API would refuse is the failure this prevents.
+       */
+      datasets: SEED_DATASETS.map((d) => ({ seed: d.seed, label: d.label })),
       version,
     });
   }));

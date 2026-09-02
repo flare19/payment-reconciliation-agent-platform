@@ -93,7 +93,20 @@ export default async function AliasesPage(
                         <span className={styles.arrow} aria-label="maps to">→</span>
                         <span className={styles.canonical}>{a.canonicalValue}</span>
                       </span>
-                      {a.note && <span className={styles.note}>{a.note}</span>}
+                      {/*
+                        `note` was never a field the API sends. Replaced with the
+                        conflict state, which IS served and is the thing a reader
+                        of this ledger actually needs: §6.3 holds a conflicted
+                        alias out of Tier 1.5 until a second human confirms it,
+                        so an alias can be `active` and still resolve nothing.
+                      */}
+                      {!a.eligibleForAliasTier && a.status === 'active' && (
+                        <span className={styles.note}>
+                          Held out of Tier 1.5 — {count(a.conflictCount)}{' '}
+                          {a.conflictCount === 1 ? 'conflict' : 'conflicts'}, needs a second
+                          confirmation before the engine will apply it.
+                        </span>
+                      )}
                       {a.revokedReason && (
                         <span className={styles.revoked}>Revoked: {a.revokedReason}</span>
                       )}
@@ -105,11 +118,10 @@ export default async function AliasesPage(
                       </Chip>
                     </td>
                     <td className={`${table.numCol} num`}>
-                      {a.timesApplied === null || a.timesApplied === undefined
-                        ? '—' : count(a.timesApplied)}
+                      {a.appliedCount === 0 ? '—' : count(a.appliedCount)}
                     </td>
                     <td className={table.muted} translate="no">{a.createdBy}</td>
-                    <td className={`${table.muted} ${table.nowrap}`}>{at(a.createdAt)}</td>
+                    <td className={`${table.muted} ${table.nowrap}`}>{at(a.approvedAt)}</td>
                   </tr>
                 ))}
               </tbody>

@@ -289,6 +289,13 @@ export const investigateException = (exceptionId: string) =>
  */
 export const startRun = (body: {
   label?: string;
+  /**
+   * WHICH COMMITTED DATASET TO RECONCILE (ADR-129). Omitting it reconciles the
+   * holdout, which is what every run did before this existed — nine of the
+   * first ten runs reconciled byte-identical input and reported the same
+   * number, because the launcher could not ask for anything else.
+   */
+  datasetSeed?: number;
   configOverrides?: { llmExplainEnabled?: boolean };
 }) => apiPost<{ runId: string; status: string; label: string; startedAt: string }>(
   '/runs', { useSeedDataset: true, ...body });

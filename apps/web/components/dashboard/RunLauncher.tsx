@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { ApiClientError, getRun, startRun } from '@/lib/api-client';
+import type { SeedDatasetOption } from '@/types/api';
 import styles from './RunLauncher.module.css';
 
 /**
@@ -19,23 +20,29 @@ import styles from './RunLauncher.module.css';
  * layer, which turns 212 exceptions into ~21 structural signatures and asks the
  * model once per signature — capped at `llmMaxCallsPerRun`, about $0.03.
  *
- * So the choice is exposed rather than assumed, and it defaults to OFF. A
- * stranger who clicks the most prominent button on the site should not be able
- * to spend money by doing it, and the run is still fully demonstrable without
- * explanations: every match, every exception, every audit entry and the whole
- * measured accuracy report are produced identically either way. That is ADR-017
- * — the model narrates decisions the rules already made — and this control is
- * where a viewer can prove it to themselves by running it both ways.
+ * THIS BUTTON CANNOT SPEND ANYTHING, AND THE CHOICE THAT COULD IS GONE
+ * (ADR-129). It previously offered an opt-in explain pass — defaulted off,
+ * about $0.03 — and the option is removed rather than merely defaulted,
+ * because the most prominent control on a public unauthenticated demo should
+ * not have a path to spending real credit at all. Every run is now
+ * `llmExplainEnabled: false`: every exception still gets its deterministic
+ * template, and no match, number or audit entry differs either way (ADR-017).
+ * Plain-English explanation stays available on demand, per exception, behind
+ * the Analyst's own confirmation — which is where a human has already decided
+ * to spend.
  *
- * THE SIGNATURE CACHE MAKES THE SECOND RUN NEARLY FREE, and that is worth
- * saying out loud rather than leaving as a surprise: signatures are bucketed
- * shapes with no record identity in them, so a rerun — and, later, a run over a
- * freshly generated dataset — mostly hits explanations that already exist.
+ * WHAT IT DOES OFFER INSTEAD IS THE DATASET. Nine of the first ten runs
+ * reconciled byte-identical input and reported the same match rate, because
+ * `datasetSeed` worked at the API (ADR-118) and the launcher could not ask for
+ * anything else — so "Run It Again" could only ever reproduce one number, which
+ * reads as broken rather than as deterministic.
  */
-export function RunLauncher({ explainAvailable }: { explainAvailable: boolean }) {
+export function RunLauncher(
+  { datasets }: { datasets: SeedDatasetOption[] },
+) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [explain, setExplain] = useState(false);
+  const [seed, setSeed] = useState<number | undefined>(datasets[0]?.seed);
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -49,9 +56,14 @@ export function RunLauncher({ explainAvailable }: { explainAvailable: boolean })
     setBusy(true);
     setError(null);
     try {
+      // The label NAMES THE DATASET IT RAN. It used to read `demo-<timestamp>`
+      // on every run while reconciling the holdout — and now that a committed
+      // dataset is actually called `demo`, that label was a false statement.
+      const name = datasets.find((d) => d.seed === seed)?.label ?? 'holdout';
       const run = await startRun({
-        label: `demo-${new Date().toISOString().slice(0, 16).replace('T', '-')}`,
-        configOverrides: { llmExplainEnabled: explain },
+        label: `${name}-${new Date().toISOString().slice(0, 16).replace('T', '-')}`,
+        ...(seed === undefined ? {} : { datasetSeed: seed }),
+        configOverrides: { llmExplainEnabled: false },
       });
       setStage('pending');
 
@@ -122,34 +134,40 @@ export function RunLauncher({ explainAvailable }: { explainAvailable: boolean })
       <p className={styles.body}>
         Reads the three committed source files and runs every stage from ingestion to the audit
         chain. Takes about two seconds and <strong>costs nothing</strong> — no model is involved in
-        matching, classifying, or auditing anything.
+        matching, classifying, or auditing anything, and explanations are deterministic templates.
+        Plain English from a model is available per exception, on request, from the Analyst.
       </p>
 
-      <label className={`${styles.choice} ${!explainAvailable ? styles.choiceOff : ''}`}>
-        <input
-          type="checkbox"
-          checked={explain}
-          disabled={busy || !explainAvailable}
-          onChange={(e) => setExplain(e.target.checked)}
-        />
-        <span>
-          <strong>Also write plain-English explanations</strong>
-          <span className={styles.choiceNote}>
-            {explainAvailable
-              ? <>Adds roughly <span className="num">$0.03</span> of Anthropic credit — the 212
-                exceptions collapse to about 21 structural shapes and the model is asked once per
-                shape. Explanations already generated are reused, so a second run is close to
-                free. Leave it off and every exception still gets a deterministic template; no
-                match, no number, and no audit entry changes either way.</>
-              : <>Unavailable — this deployment has no API key configured. The run still produces
-                every match, exception and audit entry, with template explanations.</>}
+      {datasets.map((d) => (
+        <label key={d.seed} className={styles.choice}>
+          <input
+            type="radio"
+            name="dataset"
+            value={d.seed}
+            checked={seed === d.seed}
+            disabled={busy}
+            onChange={() => setSeed(d.seed)}
+          />
+          <span>
+            <strong translate="no">{d.label}</strong>
+            <span className={styles.choiceNote}>
+              {d.label === 'holdout'
+                ? <>The dataset every reported number in this project is measured against
+                  (seed <span className="num">{d.seed}</span>). Running it again reproduces the
+                  same figures exactly — the engine is a pure function of its inputs, so a run
+                  that drifted would mean no measurement here could be trusted.</>
+                : <>A second committed dataset with its own answer key
+                  (seed <span className="num">{d.seed}</span>). Different payments, same
+                  generator and the same difficulty mix — so the numbers differ and are still
+                  comparable.</>}
+            </span>
           </span>
-        </span>
-      </label>
+        </label>
+      ))}
 
       <div className={styles.actions}>
         <button type="button" className={styles.go} onClick={go} disabled={busy}>
-          {busy ? `Running… ${stage ?? ''}` : explain ? 'Run and spend ~$0.03' : 'Run for free'}
+          {busy ? `Running… ${stage ?? ''}` : 'Run for free'}
         </button>
         <button
           type="button"

@@ -507,19 +507,40 @@ export interface ChainVerification {
 
 // ── endpoints 15–18 ──────────────────────────────────────────────────────────
 
+/**
+ * TRANSCRIBED FROM A REAL RESPONSE, NOT FROM MEMORY (ADR-128).
+ *
+ * The previous declaration invented three fields the API has never sent —
+ * `createdAt`, `note` and `timesApplied` — and omitted eight it does. Reading
+ * `a.createdAt` yielded `undefined`, `at(undefined)` threw
+ * `RangeError: Invalid time value`, and the whole screen died. **`tsc` cannot
+ * see this**: the field is declared `string`, so every use typechecks, and the
+ * value is only missing at runtime.
+ *
+ * It went unnoticed because the screen had never rendered a row — zero aliases
+ * had ever been taught, which is what F9 was investigating when it crashed.
+ */
 export interface Alias {
   aliasId: string;
   aliasType: string;
+  scopeSource: string;
   rawValue: string;
+  /** The §3.3-normalized lookup key Tier 1.5 matches on. */
+  normalizedValue: string;
   canonicalValue: string;
-  scopeSource: string | null;
   status: string;
+  confirmationCount: number;
+  conflictCount: number;
+  appliedCount: number;
+  /** `null` until the engine has actually resolved something with it. */
+  lastAppliedAt: string | null;
+  /** §6.3: a conflicted alias is held out of Tier 1.5 until re-confirmed. */
+  eligibleForAliasTier: boolean;
+  createdFromMatchId: string | null;
   createdBy: string;
-  createdAt: string;
-  note: string | null;
+  approvedAt: string;
   supersededBy: string | null;
   revokedReason: string | null;
-  timesApplied?: number | null;
 }
 
 export interface AliasListResponse { aliases: Alias[]; pagination: Pagination }
@@ -635,10 +656,15 @@ export interface TransactionDetail {
 
 // ── endpoint 1 ───────────────────────────────────────────────────────────────
 
+export interface SeedDatasetOption { seed: number; label: string }
+
 export interface Health {
   status: string;
   dbConnected: boolean;
   /** ONE boolean for both LLM surfaces (ADR-093). */
   llmConfigured: boolean;
+  /** The datasets a run may be started against, served so the UI cannot offer
+   *  a seed `POST /api/runs` would refuse (ADR-129). */
+  datasets: SeedDatasetOption[];
   version: string;
 }
