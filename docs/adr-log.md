@@ -1858,3 +1858,23 @@ Verified: option one (`Reproduce What You're Seeing`, `Recommended` badge) confi
 **Found live, chasing a different report** (why a retry countdown appeared to climb rather than count down — see the session's rate-limit investigation). Fixed by matching rate-limit language directly: `RATE_LIMITED|Rate limit` added to the classifier's alternation, case-insensitively. Verified against the exact string reported.
 
 **The countdown itself was not a bug.** `routes/rate-limit.ts` only records admitted requests — a refusal is never added to the window, by explicit design (comment: *"Counting refusals would let a client that ignores its 429s hold its own window open forever"*). What actually inflated the observed wait was three things sharing one IP-keyed bucket on localhost at once: a `score:watch` background loop polling every 5s, this session's own testing curls, and every dashboard reload firing 6-8 parallel GETs — a burst that partially refills the window on each attempt, so reloading while blocked adds load rather than relieving it. This is a local-dev-only artifact of one machine sharing one loopback address; on the live deployment a judge's browser and any of Tejas's own tooling sit on different IPs and do not share a bucket, unless he runs `score:watch` against Railway from the same laptop he is demoing from — flagged in `docs/deployment.md`'s checklist as worth a wider interval there.
+
+---
+
+### ADR-150 · The read tier was widened 120 -> 240, at Tejas's call
+
+**Direct request after hitting it twice in one session.** ADR-096's original 120/min was derived, not guessed - "the busiest legitimate screen issues ~12 requests, and the poll loop is 80/min against 120" - and that math held for one real visitor. What actually fired both times today was never one real visitor: it was `score:watch`'s own polling, this session's testing curls, and reload bursts all sharing ONE bucket on localhost, because everything hitting the API on one machine is one IP.
+
+**Doubled rather than removed, and the reasoning for the doubling is the same shape as the original derivation.** Reads cost no money - this tier exists to shield request *volume*, not the wallet, which is what `run` (10/hour, $0 changed) and `investigate` (12/hour, tied to ADR-095's $2/hour ceiling, $0 changed) already do. 240/min is still a small fraction of anything a scripted abuser would need to matter, and it buys real headroom for concurrent local tooling without changing what the tier is actually for.
+
+**Every place the old number was load-bearing, found and updated together, so nothing drifts:**
+- `RATE_LIMIT_TIERS.read.perIp` (the single source of truth) and its derivation comment
+- `tests/integration/http-rate-limit-routes.test.ts` - the one test with the number hardcoded (`X-RateLimit-Limit: '120'`)
+- `docs/api-contract.md` §0's rate-limit table and its poll-loop math, both current-state references that must match the code
+- `app/error.tsx`'s illustrative comment (not logic - the classifier fix from the same session matches on rate-limit LANGUAGE, not a number)
+
+**`tests/unit/http-rate-limit.test.ts` needed no change and all 8 cases still passed** - it derives its expected values from `RATE_LIMIT_TIERS` itself rather than a hardcoded literal, which is exactly the discipline that kept it from silently testing the wrong number.
+
+**Historical docs (`adr-log.md`'s own earlier entries, `what-broke.md`, `day17-backlog.md`) were left as they were written.** They are an account of what was true at the time, the same append-only discipline the audit log itself follows - a past entry describing a 120/min limit was accurate when written and stays that way; only current-state references (the code, the contract, the running config) move.
+
+Verified live: hot-reload (`tsx watch`) picked up the change without a restart, `X-RateLimit-Limit: 240` confirmed on a real response, and the reload cleared the in-memory bucket along with it - 138/240 remaining immediately after. Unit and integration rate-limit suites both green.

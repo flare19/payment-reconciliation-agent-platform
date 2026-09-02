@@ -29,7 +29,7 @@ export default function DashboardError(
   //
   // A REAL 429 WAS MISDIAGNOSED AS "NOTHING IS WRONG WITH THE API" (found
   // live, 2026-09-03). `ApiClientError`'s `message` is built from the API's
-  // JSON body alone -- `"Rate limit reached for read requests (120 per
+  // JSON body alone -- `"Rate limit reached for read requests (240 per
   // 60s). Retry in 7s."` -- and that string contains no three-digit code for
   // `\b[45]\d{2}\b` to catch, because `status` and `code` are separate
   // properties that this boundary's own comment already says do not survive

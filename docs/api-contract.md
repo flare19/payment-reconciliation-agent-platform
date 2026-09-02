@@ -54,7 +54,7 @@ Every endpoint is metered per client IP. A refused request returns `429` with co
 
 | Tier | Applies to | Per IP | Global |
 |---|---|---|---|
-| `read` | every `GET` | 120 / min | — |
+| `read` | every `GET` | 240 / min | — |
 | `write` | `POST`/`PATCH` on matches, aliases, exceptions, score reports | 60 / hour | — |
 | `run` | `POST /api/runs` | 10 / hour | 40 / hour |
 | `investigate` | `POST /api/exceptions/:id/investigate` | 12 / hour | ADR-095's $2/hour spend ceiling |
@@ -63,7 +63,7 @@ Every response carries `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateL
 for its tier, so a client can pace itself rather than discover the limit by hitting it.
 
 **The poll loop in §5 is inside the `read` tier's budget**: 750 ms polling is 80 requests/minute
-against a 120/minute allowance, and a run completes in ~3 s (≈4 polls).
+against a 240/minute allowance, and a run completes in ~3 s (≈4 polls).
 
 ---
 

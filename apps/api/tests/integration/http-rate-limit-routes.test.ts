@@ -62,7 +62,7 @@ describe('rate limiting (over HTTP)', () => {
 
   test('every response advertises the budget, so a client can pace itself', async () => {
     const res = await get('/api/nope', asClient());
-    assert.equal(res.headers.get('X-RateLimit-Limit'), '120');
+    assert.equal(res.headers.get('X-RateLimit-Limit'), '240');
     assert.ok(Number(res.headers.get('X-RateLimit-Remaining')) >= 0);
     assert.ok(res.headers.get('X-RateLimit-Reset') !== null);
   });

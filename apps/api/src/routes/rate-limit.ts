@@ -76,8 +76,20 @@ const HOUR = 3_600_000;
  * (ADR-086's rule: measure a bound before adopting it).
  *
  *  read        the busiest legitimate screen issues ~12 requests, and §5's
- *              750 ms poll loop is 80/min against this 120 — so a run that
+ *              750 ms poll loop is 80/min against this 240 — so a run that
  *              takes ~3 s costs ~4 polls and never approaches the limit.
+ *              WIDENED 120 -> 240 (Tejas, 2026-09-03): a single real judge
+ *              never approached 120 either, by this same math -- the 120
+ *              instances that actually fired that day were `score:watch`'s
+ *              own polling, this session's testing traffic, and a handful
+ *              of impatient reloads, all sharing ONE bucket on localhost
+ *              (one IP for everything hitting the API on one machine). 240
+ *              is still a small fraction of what a scripted abuser would
+ *              need to matter -- reads cost no money and this tier's job is
+ *              shielding request VOLUME, not the wallet (that is `run` and
+ *              `investigate`, both untouched) -- and it buys real headroom
+ *              for concurrent local tooling without changing what this tier
+ *              is actually for.
  *  write       one human click each.
  *  run         measured on Railway today: 2.4 s and ~1,700 rows per run. 10/h
  *              per IP is ~24 s of engine time; the 40/h global bounds Postgres
@@ -89,7 +101,7 @@ const HOUR = 3_600_000;
  *              between visitors. The gap is the demo's headroom.
  */
 export const RATE_LIMIT_TIERS: Readonly<Record<RateLimitTier, TierRule>> = {
-  read: { perIp: 120, global: null, windowMs: MINUTE },
+  read: { perIp: 240, global: null, windowMs: MINUTE },
   write: { perIp: 60, global: null, windowMs: HOUR },
   run: { perIp: 10, global: 40, windowMs: HOUR },
   investigate: { perIp: 12, global: null, windowMs: HOUR },
