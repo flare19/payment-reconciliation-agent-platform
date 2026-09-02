@@ -95,7 +95,12 @@
 }
 .body strong { color: var(--ink); font-weight: 600; }
 
-/* The spend choice. Label and control share one hit target. */
+/* The dataset choice. Label and control share one hit target.
+   NOT --sev-medium: picking a dataset carries no severity, and this is the
+   same token-misuse this session already fixed twice (AskAnalyst F17,
+   RunLauncher's own open button F19) -- --ink is the site's one primary-
+   action colour and this checked-state border was still wearing the old
+   one when the rest of the file had already moved on. */
 .choice {
   display: flex;
   align-items: flex-start;
@@ -106,11 +111,43 @@
   background: var(--surface-sunk);
   cursor: pointer;
 }
-.choice:has(input:checked) { border-color: var(--sev-medium); background: var(--sev-medium-bg); }
+.choice:has(input:checked) { border-color: var(--ink); background: var(--surface); }
 .choiceOff { opacity: 0.65; cursor: not-allowed; }
 
-.choice input { margin-top: 0.2rem; flex: none; accent-color: var(--sev-medium); }
-.choice > span { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+.choice input { margin-top: 0.2rem; flex: none; accent-color: var(--ink); }
+.choice > span { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+
+/* Plain-English headline + the "Recommended" marker sit on one line, above
+   everything else in the block -- the first thing read, per Tejas's own
+   first-cold-read report. */
+.choiceHead {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+.choiceHead strong { font-size: var(--t-body); font-weight: 600; color: var(--ink); }
+
+.recommended {
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  background: var(--surface);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+}
+
+/* The real dataset name and seed -- still here, still translate="no", just
+   demoted below the headline rather than removed. The Runs table two
+   sections down uses the exact same word, so a reader who compares them
+   needs to find it in both places. */
+.choiceIdent {
+  font-size: var(--t-micro);
+  color: var(--ink-4);
+}
+
 .choice strong { font-size: var(--t-meta); font-weight: 600; }
 
 .choiceNote {

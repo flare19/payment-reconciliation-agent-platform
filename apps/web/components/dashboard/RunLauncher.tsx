@@ -47,6 +47,16 @@ import styles from './RunLauncher.module.css';
  * run's OWN metrics rather than the previous run's, which is the one part of
  * backlog item 12 that was never a placement question.
  */
+/**
+ * PLAIN-ENGLISH HEADLINE PER DATASET LABEL. Falls back to the raw label for
+ * any dataset this map does not know about, so a third committed dataset
+ * degrades to the old (jargon) behaviour rather than rendering nothing.
+ */
+const DATASET_ROLE: Record<string, string> = {
+  holdout: 'Reproduce What You\u2019re Seeing',
+  demo: 'Try a Second Dataset',
+};
+
 export function RunLauncher(
   { datasets, variant = 'compact' }: { datasets: SeedDatasetOption[]; variant?: 'compact' | 'hero' },
 ) {
@@ -167,7 +177,24 @@ export function RunLauncher(
         </p>
       )}
 
-      {datasets.map((d) => (
+      {/*
+        THE CHOICE ITSELF WAS THE FRICTION, NOT THE COPY UNDER IT (Tejas,
+        first cold read). "holdout" and "demo" were the FIRST thing a reader
+        met — bolded, unglossed, two unexplained proper nouns at the exact
+        moment the site had just earned the most attention it will ever get
+        (F19 put this button in the hero). Two jargon options with no default
+        marked is a textbook Hick's Law tax: decision time rises with the
+        number and the ambiguity of the choices, and there was nothing to
+        tell a five-second reader that one was already picked for them.
+        `datasets[0]` was ALREADY the pre-selected radio — that was true
+        before this change — it just was not visible.
+        A plain-English role headline now leads; the real dataset name and
+        seed move to a small caption underneath, unchanged and still
+        `translate="no"`, because the Runs table two sections down (and the
+        run label this button generates) still says "holdout" / "demo" and
+        a reader who compares them needs the same word in both places.
+      */}
+      {datasets.map((d, i) => (
         <label key={d.seed} className={styles.choice}>
           <input
             type="radio"
@@ -178,17 +205,20 @@ export function RunLauncher(
             onChange={() => setSeed(d.seed)}
           />
           <span>
-            <strong translate="no">{d.label}</strong>
+            <span className={styles.choiceHead}>
+              <strong>{DATASET_ROLE[d.label] ?? d.label}</strong>
+              {i === 0 && <span className={styles.recommended}>Recommended</span>}
+            </span>
+            <span className={styles.choiceIdent} translate="no">
+              {d.label} · seed <span className="num">{d.seed}</span>
+            </span>
             <span className={styles.choiceNote}>
               {d.label === 'holdout'
-                ? <>The dataset every reported number in this project is measured against
-                  (seed <span className="num">{d.seed}</span>). Running it again reproduces the
-                  same figures exactly — the engine is a pure function of its inputs, so a run
-                  that drifted would mean no measurement here could be trusted.</>
-                : <>A second committed dataset with its own answer key
-                  (seed <span className="num">{d.seed}</span>). Different payments, same
-                  generator and the same difficulty mix — so the numbers differ and are still
-                  comparable.</>}
+                ? <>What every number on this dashboard is measured against. Running it again
+                  reproduces the exact same figures — proof the engine is a pure function of its
+                  inputs, not a cherry-picked result.</>
+                : <>A second, independent dataset — different payments, same generator, same
+                  difficulty mix. Confirms the engine wasn&rsquo;t tuned to one file.</>}
             </span>
           </span>
         </label>

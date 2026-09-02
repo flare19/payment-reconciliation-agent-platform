@@ -1811,3 +1811,30 @@ A write happened against the live production deployment to get that number, and 
 **F23 (backlog item 17) - cut, not built.** The backlog named its own bar: "a generic hero image is worse than none." ADR-100 already committed this design to no decoration, numbers as the product. Cut from the bottom, named rather than silently dropped.
 
 A guideline audit (Vercel's Web Interface Guidelines, fetched fresh) preceded this unit. Findings were two deliberate, already-documented project decisions (ADR-043's required-reason gate, ADR-107's no-confirmation queue) correctly left alone rather than overridden by a generic external rule. Everything else checked clean already: no transition: all, no bare outline: none, no div onClick, icon-only buttons already carry aria-label, color-scheme and theme-color already set, native select already has explicit colors, fonts self-hosted via next/font, lists server-paginated at 50.
+
+---
+
+### ADR-147 · The choice on the highest-attention button on the site was two unglossed proper nouns
+
+**Tejas's own first cold read, on the exact control F19 just made the most visible thing on the page:** "holdout" and "demo" as bold, unexplained headline words on the run launcher's dataset choice. Two research-backed problems, both real:
+
+1. **Hick's Law** — decision time rises with the number of options and, more sharply, with how ambiguous each one is. Two unglossed proper nouns at a five-second glance is close to worst case for a control that exists specifically to be clicked fast.
+2. **No visible default.** `datasets[0]` was already pre-selected as the radio default — true before this change — but nothing on screen said so, so a rushed reader had to read and compare both blocks to find out there was nothing to compare.
+
+**Fixed with a role headline leading, the real name demoted to a caption, and the default marked:**
+
+```
+before   holdout                          demo
+         [seed 90210, buried in prose]    [seed 20260905, buried in prose]
+
+after    Reproduce What You're Seeing     Try a Second Dataset
+         [Recommended]
+         holdout · seed 90210             demo · seed 20260905
+         [shorter note below]             [shorter note below]
+```
+
+**The real dataset name was kept, not dropped** — `holdout` / `demo` as a small caption, still `translate="no"`. The Runs table further down the same page, and the run label this button generates (`holdout-2026-…`, `demo-2026-…`), use the identical word, so a reader who later cross-references what they clicked against what ran needs to find the same term in both places. Deleting it in favour of only the friendly headline would have traded one confusion for another, later one.
+
+**One token fix landed in the same pass, because it was the adjacent property of the element already being edited.** The radio's checked-state border and accent colour were `--sev-medium` — severity amber — the same misuse already corrected twice this session (ADR-141, ADR-145). Picking a dataset carries no severity; now `--ink`, the site's one primary-action colour.
+
+Verified: option one (`Reproduce What You're Seeing`, `Recommended` badge) confirmed visually; option two (`Try a Second Dataset`) confirmed present in the rendered DOM. Typecheck and production build clean.
