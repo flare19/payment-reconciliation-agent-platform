@@ -35,16 +35,19 @@
 .arm:hover:not(:disabled) { background: var(--ink-2); border-color: var(--ink-2); }
 .arm:disabled { opacity: 0.6; cursor: not-allowed; }
 
-/* The armed state is visually distinct from the resting one — a spend should
-   not look like the button that was just clicked. */
+/* The armed state stays visually distinct from the resting one — a spend should
+   not look like the button that was just clicked — but it is no longer amber.
+   `--sev-medium` is the ramp for how bad an exception is, and a deliberate nine
+   cents is not a hazard; the caution palette turned a demo into a warning
+   (ADR-141). Distinct now by weight and containment rather than by alarm. */
 .confirm {
   display: flex;
   flex-direction: column;
   gap: var(--s3);
   width: 100%;
   padding: var(--s4);
-  background: var(--sev-medium-bg);
-  border-left: 2px solid var(--sev-medium);
+  background: var(--surface-sunk);
+  border-left: 2px solid var(--ink);
   border-radius: 0 4px 4px 0;
 }
 
@@ -55,15 +58,29 @@
   color: var(--ink-2);
   text-wrap: pretty;
 }
-.cost strong { color: var(--sev-medium); font-weight: 600; }
+/* The price is NOT severity, and it was wearing severity's amber. globals.css
+   says that ramp is "used ONLY where severity is the meaning" — spending nine
+   cents deliberately is not a hazard, and dressing it as one is the visual half
+   of handing a guest an invoice (ADR-141). Plain ink, weight for emphasis. */
+.cost strong { color: var(--ink); font-weight: 600; }
+
+/* The consequence, set apart from the price so the paragraph does not read as
+   one long caveat. */
+.costThen {
+  display: block;
+  margin-top: var(--s2);
+  color: var(--ink-3);
+}
 
 .buttons { display: flex; gap: var(--s3); flex-wrap: wrap; }
 
 .go {
   padding: var(--s2) var(--s4);
-  border: 1px solid var(--sev-medium);
+  /* The same ink as every other primary action on the site (`ResolveActions`
+     .submit). This one is guarded by an arming step, not by looking alarming. */
+  border: 1px solid var(--ink);
   border-radius: 4px;
-  background: var(--sev-medium);
+  background: var(--ink);
   color: var(--paper);
   font-size: var(--t-meta);
   font-weight: 500;

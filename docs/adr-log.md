@@ -1705,3 +1705,26 @@ Every tag is accurate about the paragraph it sits on. **The reading that made th
 > **The pattern, and it is a new one for this repo's list.** Every previous instance was a *field* that was parsed, documented and enforced nowhere. This is a *sentence* that was true where it was written and false where it was moved — correct in the diff that wrote it, correct in the diff that moved it, wrong only in the composition of the two. **Nothing that reads one commit can catch that.** It needed a person reading the finished page.
 
 **Follow-up, same day, at Tejas's call: the tag names its surface outright.** *Written by the model* → **Explanation written by the model** (and *…, reused* / *…by a template*). The word "explanation" appears twice in that header row, next to the block's own title, and the redundancy is the point — a tag is read in isolation, glanced at before the header beside it, and this one had already been read as a statement about the Analyst twice. It wraps onto its own line at 430px and fits inline on desktop; both checked in a browser.
+
+---
+
+### ADR-141 · F17 — the confirmation states a price without handing a guest an invoice
+
+**It still says, plainly, that this spends live credit.** Removing that would be dishonest, the arming step stays (a stranger must not be able to spend the budget with one click), and the figure stays measured. What changed is who the sentence is addressed to.
+
+| | before | after |
+|---|---|---|
+| price | *"This spends roughly **$0.05–0.12** of real Anthropic credit"* | *"One investigation costs about **$0.09** of live model credit — a measured figure, not an estimate"* |
+| button | **Yes, spend it** | **Run it** |
+| cancel | Cancel | Not now |
+| armed panel | severity amber (`--sev-medium-bg`, amber rule) | neutral sunk panel, ink rule |
+| price colour | `--sev-medium` | `--ink` |
+| confirm button | amber fill | the same ink fill as every other primary action |
+
+**The old range was accurate, and the new figure is measured too.** Across the 13 investigations this build has run: **min $0.0474 · median $0.0944 · max $0.1259 · mean $0.0907**. `$0.05–0.12` was the true spread; a single central figure is what a person being shown a demo can actually use. **No sample count is written into the copy**, because a hardcoded count is a claim that goes stale the next time somebody clicks the button.
+
+> **THE COLOUR WAS THE OTHER HALF OF THE PROBLEM, AND IT WAS A TOKEN MISUSE.** The price and the confirm button were painted in `--sev-medium`, and `globals.css` says of that ramp: *"severity — used ONLY where severity is the meaning."* Deliberately spending nine cents is not a hazard. Dressing it as one is the visual equivalent of the sentence F17 was asked to soften, and it also spends the severity vocabulary — a reader who meets amber on a button learns that amber means *careful* rather than *this exception is worth money*. The armed state stays visually distinct, by containment and weight instead of alarm.
+
+**What the copy adds rather than removes:** the price is now followed by the reason the system is shaped this way — *"It is saved when it lands, so this exception is free to open from then on, for you and for anyone after you. That is the reason the Analyst works one exception at a time rather than sweeping the list."* The cost stops being a warning and becomes the argument for the on-demand design, which is what it actually is.
+
+**The armed panel's appearance is UNVERIFIED and cannot be seen without a click** — the same limit as F11. It costs nothing to check: arming is a local state change, and only the second button spends. Click *Ask the Analyst*, look, then *Not now*.

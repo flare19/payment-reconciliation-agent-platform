@@ -9,9 +9,9 @@ import styles from './AskAnalyst.module.css';
  * THE ONLY CONTROL IN THE FRONTEND THAT SPENDS MONEY.
  *
  * Everything else the interface can do — approve, reject, resolve, verify the
- * chain, read a persisted investigation — costs nothing. This one call is
- * roughly $0.10–0.12 of Anthropic credit against a hard-capped prepaid key, so
- * it is built to be impossible to trigger by accident:
+ * chain, read a persisted investigation — costs nothing. This one call runs a
+ * live model against a hard-capped prepaid key, so it is built to be impossible
+ * to trigger by accident:
  *
  *   · it never runs on render, only on a click
  *   · the first click ARMS it and states the cost; a second click spends
@@ -21,6 +21,18 @@ import styles from './AskAnalyst.module.css';
  * The confirm step is not ceremony. A judge clicking around a demo will click
  * every button once, and the difference between "one button" and "two buttons"
  * is the difference between a stranger being able to spend the budget and not.
+ *
+ * ITS TONE IS THE OTHER HALF OF THAT (ADR-141). The step has to state plainly
+ * that this spends live credit — removing that would be dishonest, and a person
+ * is entitled to know before they press. What it must NOT do is hand a guest an
+ * invoice. So the price is stated as a fact about the system and the reason it
+ * is built this way, not as a warning aimed at the person about to click, and
+ * the button says what happens rather than what it costs.
+ *
+ * The figure is MEASURED, not estimated. Across the 13 investigations this
+ * build has run: min $0.0474, median $0.0944, max $0.1259, mean $0.0907. The
+ * copy says "about $0.09" and carries no sample count, because a hardcoded
+ * count is a claim that goes stale the next time somebody clicks this button.
  *
  * IDEMPOTENCE IS THE SERVER'S JOB, NOT THIS COMPONENT'S. `ux_inv_exc_active`
  * permits one non-failed investigation per exception, and endpoint 25 returns a
@@ -82,10 +94,9 @@ export function AskAnalyst({ exceptionId }: { exceptionId: string }) {
       <div className={styles.copy}>
         <h3 className={styles.title}>No one has investigated this exception</h3>
         <p className={styles.body}>
-          The Analyst reads this exception, decides which questions to ask, and answers them by
-          calling the engine&rsquo;s own locked code — it does no arithmetic of its own. It runs
-          only when someone asks, never over the queue, because 212 exceptions at this price is a
-          pass nobody can afford to repeat.
+          The Analyst decides which questions to ask about this record and answers them with the
+          engine&rsquo;s own code, so every number it uses is one the engine computed. It goes
+          where somebody points it, and never across the whole list.
         </p>
       </div>
 
@@ -101,14 +112,17 @@ export function AskAnalyst({ exceptionId }: { exceptionId: string }) {
       ) : (
         <div className={styles.confirm}>
           <p className={styles.cost}>
-            This spends roughly <strong className="num">$0.05–0.12</strong> of real Anthropic
-            credit — measured, not estimated — and takes up to a minute. The result is stored, so
-            opening this exception again, by you or anyone else, is free and shows the same
-            verdict.
+            One investigation costs about <strong className="num">$0.09</strong> of live model
+            credit — a measured figure, not an estimate — and takes up to a minute.
+            <span className={styles.costThen}>
+              It is saved when it lands, so this exception is free to open from then on, for you
+              and for anyone after you. That is the reason the Analyst works one exception at a
+              time rather than sweeping the list.
+            </span>
           </p>
           <div className={styles.buttons}>
             <button type="button" className={styles.go} onClick={ask} disabled={busy}>
-              {busy ? 'Starting…' : 'Yes, spend it'}
+              {busy ? 'Starting…' : 'Run it'}
             </button>
             <button
               type="button"
@@ -116,7 +130,7 @@ export function AskAnalyst({ exceptionId }: { exceptionId: string }) {
               onClick={() => setArmed(false)}
               disabled={busy}
             >
-              Cancel
+              Not now
             </button>
           </div>
         </div>
