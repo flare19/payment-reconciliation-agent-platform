@@ -198,6 +198,28 @@ export function matchSummary(
     // exists to state honestly (ADR-040, ADR-043, ADR-088).
     countsTowardEngineMatchRate:
       m.tier !== 'manual' && (m.status === 'auto_confirmed' || m.status === 'human_confirmed'),
+    /**
+     * WHO DECIDED THIS PROPOSAL, WHEN, AND WHAT THEY SAID (ADR-124).
+     *
+     * Same defect as ADR-122: the repository loads `reviewed_by`,
+     * `reviewed_at` and `review_note`, endpoints 10 and 11 write them, and this
+     * serializer dropped all three — so an approved or rejected proposal
+     * vanished from `/review` and existed nowhere but the audit chain.
+     *
+     * `note` is nullable and the other two are not, because that is what the
+     * API requires: `match_review_fields_paired` ties `reviewed_by` to
+     * `reviewed_at`, endpoint 11 REQUIRES a `reason`, and endpoint 10 takes an
+     * OPTIONAL `note`. An approval genuinely may carry no words.
+     */
+    review: (m.status === 'human_confirmed' || m.status === 'human_rejected')
+      && m.reviewedBy !== null && m.reviewedAt !== null
+      ? {
+        decision: m.status,
+        reviewedBy: m.reviewedBy,
+        reviewedAt: m.reviewedAt.toISOString(),
+        note: m.reviewNote,
+      }
+      : null,
     headlineAmountPaise: headline?.paise ?? null,
     headlineAmountDisplay: headline === null ? null : formatPaise(headline.paise),
     headlineAmountSource: headline?.source ?? null,

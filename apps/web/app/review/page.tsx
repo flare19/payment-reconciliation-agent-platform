@@ -1,6 +1,7 @@
 import Link from 'next/link';
+import { DecidedList } from '@/components/review/DecidedList';
 import { ReviewQueue } from '@/components/review/ReviewQueue';
-import { getReviewQueue } from '@/lib/api-client';
+import { getReviewQueue, listMatches } from '@/lib/api-client';
 import { count } from '@/lib/format';
 import { hrefWith, one, resolveRun, runParam } from '@/lib/run-context';
 import styles from './review.module.css';
@@ -41,9 +42,39 @@ export default async function ReviewPage(
   const isDefaultRun = run.runId === (runs.find((r) => r.status === 'completed') ?? runs[0])?.runId;
   const runQ = isDefaultRun ? undefined : run.runId;
   const page = Number(one(params, 'page') ?? '1') || 1;
+  const view = one(params, 'view') === 'decided' ? 'decided' : 'queue';
 
   const data = await getReviewQueue(run.runId, page);
   const item = data.items[0];
+
+  /**
+   * DECIDED PROPOSALS USED TO EXIST NOWHERE BUT THE AUDIT CHAIN (ADR-124).
+   *
+   * Two requests, and only on the decided view — endpoint 8 filters one status
+   * at a time, and approvals and rejections are both halves of the same story.
+   * A screen that showed only approvals would make the reviewer look like a
+   * rubber stamp.
+   */
+  const decided = view === 'decided'
+    ? (await Promise.all([
+      listMatches(run.runId, { status: 'human_confirmed' }).catch(() => null),
+      listMatches(run.runId, { status: 'human_rejected' }).catch(() => null),
+    ]))
+      .flatMap((r) => r?.matches ?? [])
+      .sort((a, b) => (b.review?.reviewedAt ?? '').localeCompare(a.review?.reviewedAt ?? ''))
+    : [];
+
+  /**
+   * `frozen − live`, the same exact arithmetic as the dashboard's review burden
+   * (ADR-120): approve refuses anything that is not `pending_review`, so review
+   * only moves proposals OUT of the deferred pile. Costs no extra request on
+   * the queue view, which is the view a reviewer actually sits on.
+   */
+  const decidedCount = run.headline === null
+    ? null
+    : run.headline.pendingReviewCount === null
+      ? null
+      : run.headline.pendingReviewCount - data.pagination.total;
 
   return (
     <main id="main" className={styles.page}>
@@ -61,7 +92,29 @@ export default async function ReviewPage(
         </p>
       </header>
 
-      {!item ? (
+      <nav className={styles.viewNav} aria-label="Review views">
+        <Link
+          href={hrefWith('/review', { run: runQ })}
+          className={view === 'queue' ? styles.viewActive : styles.viewLink}
+          aria-current={view === 'queue' ? 'page' : undefined}
+        >
+          Awaiting decision <span className="num">{count(data.pagination.total)}</span>
+        </Link>
+        <Link
+          href={hrefWith('/review', { run: runQ, view: 'decided' })}
+          className={view === 'decided' ? styles.viewActive : styles.viewLink}
+          aria-current={view === 'decided' ? 'page' : undefined}
+        >
+          Decided{' '}
+          {decidedCount === null
+            ? <span className={styles.unknown}>—</span>
+            : <span className="num">{count(decidedCount)}</span>}
+        </Link>
+      </nav>
+
+      {view === 'decided' ? (
+        <DecidedList decided={decided} runQ={runQ} />
+      ) : !item ? (
         <div className={styles.empty}>
           <p className={styles.emptyTitle}>
             {data.pagination.total === 0

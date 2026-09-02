@@ -451,9 +451,25 @@ The engine's decisions carry their reasons everywhere in this API; **the one dec
       "amountPaise": 119812, "amountDisplay": "₹1,198.12", "txnDate": "2026-08-16",
       "counterpartyRaw": "AMAZON RETAIL IN" }
   ],
-  "matchedAt": "2026-08-24T09:00:03.118Z"
+  "matchedAt": "2026-08-24T09:00:03.118Z",
+  "review": {
+    "decision": "human_rejected",
+    "reviewedBy": "Tejas Lokhande",
+    "reviewedAt": "2026-09-02T06:01:28.023Z",
+    "note": "Not same payment"
+  }
 }
 ```
+
+**`review` is `null` unless a human has decided the proposal.** `reviewedBy` and `reviewedAt` are
+always present together when it exists — `match_review_fields_paired` ties them — but **`note` is
+genuinely nullable, and that is a decision rather than an oversight**: endpoint 11 (reject)
+*requires* a `reason`, while endpoint 10 (approve) takes an *optional* `note`. Overruling the engine
+has to be justified; agreeing with it does not.
+
+> **The consequence is visible in the data and the UI must not hide it.** Of the 22 approvals
+> recorded so far, **none carries a note**, because none was ever required. Rendering that as an
+> absence is honest; inventing "Approved" as though it were a stated reason would not be (ADR-124).
 
 `tier` has **five** values, not four: `exact | alias | fuzzy | batch | manual`. `manual` is the one that carries weight — a human asserting two records are the same (ADR-043) is not the engine matching them.
 

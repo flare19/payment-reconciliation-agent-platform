@@ -1301,3 +1301,23 @@ On a product whose whole argument is that every decision carries its reason, the
 **3 · Does it move a denominator? No.** `runs.metrics` is frozen at completion (ADR-041), so `matchRatePct`, `reconcilable` and `exceptions.total` describe the run as the engine left it. Measured on `verify` with one exception resolved: **65.22 / 874 / 212**, every figure unchanged.
 
 **The consequence, and it is the third time this rule has been needed in one day:** the run's exception total and the number still open are two different figures, and neither may appear alone. Same rule as ADR-119 (engine-alone vs with-review) and ADR-120 (deferred vs still waiting). **A frozen figure and a live one may both appear, provided each says which it is** — that sentence is now load-bearing in three places, which is the argument for it being a rule rather than three separate fixes.
+
+---
+
+### ADR-124 · Decided proposals get a view, and an approval with no reason is shown as having none
+
+**Found by Tejas walking the built UI, and it is ADR-122 a second time.** Approving or rejecting a proposal removed it from `/review`, after which it existed **nowhere but the audit chain**. On a product whose argument is that every decision carries its reason, both human decisions — closing an exception and deciding a proposal — were the ones that disappeared.
+
+**It needed no new endpoint.** `matches` already stored `reviewed_by`, `reviewed_at` and `review_note`; endpoints 10 and 11 already wrote them; endpoint 8 already took `?status=`. **Only `matchSummary` was dropping them**, exactly as `exceptionDetail` had been dropping closures. Two instances of one shape in one day, in the same file.
+
+**`/review` gains a second view rather than a second screen**, at `?view=decided` (ADR-101: every selection is a query param, so both are shareable links). The tab counts read `Awaiting decision 49` and `Decided 22`, and `49 + 22 = 71` — the frozen figure ADR-120 exposed, so the two screens now visibly reconcile. The decided count costs no extra request on the queue view: it is `frozen − live`, exact because approve refuses anything that is not `pending_review`.
+
+**Rejections are shown beside approvals, deliberately.** Endpoint 11 returns a rejected match's *members* to the exception pool; it does not delete the match, so its row survives with the reason attached. A screen that listed only approvals would make the reviewer look like a rubber stamp — the interesting half of a review queue is the half where a human overruled the engine.
+
+#### The asymmetry this exposed, which is a decision and not a bug
+
+`review.note` is nullable while `reviewedBy` and `reviewedAt` are not, because **endpoint 11 requires a `reason` and endpoint 10 takes an optional `note`**. Overruling the engine must be justified; agreeing with it need not be.
+
+> **All 22 approvals recorded so far carry no note.** The view renders that as *"none given — approving does not require one"* rather than printing the word "Approved" in the reason column. A substituted word would manufacture a justification nobody gave, which is the same failure as drawing an absent figure as a zero (ADR-098).
+
+Whether approval *should* require a reason is a real question and is left open rather than decided here — it is a contract change to endpoint 10, it would invalidate 22 existing records, and `exc_resolution_complete` already takes the opposite position for exceptions (both terminal states require a note). **The two surfaces genuinely disagree, and that disagreement is now visible instead of hidden.**

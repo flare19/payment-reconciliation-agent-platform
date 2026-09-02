@@ -1,0 +1,74 @@
+.empty {
+  padding: 2rem 0;
+  max-width: 46rem;
+}
+
+.emptyTitle {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+
+.emptyBody {
+  color: var(--ink-muted);
+  margin: 0;
+  line-height: 1.6;
+}
+
+.numCol { text-align: right; }
+
+.matchCell { min-width: 16rem; }
+
+.members {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.member {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.extId {
+  color: var(--ink-muted);
+  font-size: 0.8125rem;
+}
+
+.meta {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+}
+
+.whoCell { white-space: nowrap; }
+
+.when {
+  display: block;
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+}
+
+.noteCell { max-width: 22rem; }
+
+.note {
+  color: var(--ink);
+  quotes: '“' '”';
+}
+
+/* An absent reason is drawn as an absence, never as a substitute word
+   (ADR-098, ADR-124). */
+.noNote {
+  color: var(--ink-muted);
+  font-style: italic;
+  font-size: 0.8125rem;
+}
+
+.footnote {
+  margin: 1rem 0 0;
+  color: var(--ink-muted);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}

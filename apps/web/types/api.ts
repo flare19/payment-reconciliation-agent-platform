@@ -416,6 +416,22 @@ export interface MatchSummary {
   headlineAmountSource: string;
   members: RecordPreview[];
   matchedAt: string;
+  /**
+   * Who decided this proposal, when, and what they said. `null` unless a human
+   * has decided it.
+   *
+   * `note` is nullable while the other two are not, and that is the API's own
+   * asymmetry rather than a modelling shortcut: rejecting REQUIRES a reason
+   * (endpoint 11), approving takes an OPTIONAL note (endpoint 10). Render the
+   * absence; never substitute the word "Approved" for a reason nobody gave
+   * (ADR-124).
+   */
+  review: {
+    decision: 'human_confirmed' | 'human_rejected';
+    reviewedBy: string;
+    reviewedAt: string;
+    note: string | null;
+  } | null;
 }
 
 export interface MatchListResponse { matches: MatchSummary[]; pagination: Pagination }
