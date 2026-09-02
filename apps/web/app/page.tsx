@@ -4,6 +4,7 @@ import { EnginePerformance } from '@/components/dashboard/EnginePerformance';
 import { ExceptionBreakdown } from '@/components/dashboard/ExceptionBreakdown';
 import { HeadlineRow } from '@/components/dashboard/HeadlineRow';
 import { RunLauncher } from '@/components/dashboard/RunLauncher';
+import { ScoreReportPoller } from '@/components/dashboard/ScoreReportPoller';
 import { RunPicker } from '@/components/dashboard/RunPicker';
 import { TierAttribution } from '@/components/dashboard/TierAttribution';
 import { Section } from '@/components/ui/Section';
@@ -188,6 +189,17 @@ export default async function DashboardPage(
                 </>
               )}
             </p>
+            {/*
+              A JUDGE WHO CLICKED "RUN IT AGAIN" LANDS HERE INSTANTLY, AND THE
+              SCORE ARRIVES A FEW SECONDS LATER (Tejas, 2026-09-03). Without
+              this, the only way to see False Positives and Best Possible turn
+              measured was a manual reload — which a judge who does not know to
+              do, or runs out of patience first, never sees. Mounted only while
+              `measured` is null, so it is not rendered at all once a score
+              report exists; the page's own re-render on `router.refresh()` is
+              what unmounts it (ADR-116's pattern, same as InvestigationPoller).
+            */}
+            {!metrics.measured && <ScoreReportPoller runId={run.runId} runQ={runQ} />}
           </section>
 
           {/*

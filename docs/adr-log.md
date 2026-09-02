@@ -1914,3 +1914,19 @@ Verified functionally in the live page, not just by reading the source: checked 
 **Gated on `totalPages > 5`** — below that, Previous/Next is already faster than typing a number, and the box would be clutter on every short list on the site for the sake of the one long one.
 
 **Verified in both boundary contexts, not just one:** present in the rendered HTML on `/audit` (a plain server page, no client component anywhere in that chain) and on `/review` (rendered inside the client-wrapped `ReviewQueue`). Production build succeeded, which is itself a check this class of bug fails — the historical instance threw at runtime despite `tsc` passing. Submitted the form via its own `FormData` and confirmed the assembled target — `/review?run=<verify>&page=18` — is the exact URL already verified to load BIGBASKET correctly.
+
+---
+
+### ADR-154 · The dashboard's absent tiles now watch for their own measurement, instead of waiting for a reload
+
+**Tejas's report: a judge who clicks "Run It Again" lands on the new run instantly, and the two measured tiles stay "Not measured yet" until someone manually reloads — and an impatient or unaware judge never sees them turn real.** The dashboard only ever fetched metrics once, server-side, at request time; nothing on the page ever checked again after `npm run score:watch` posted a report a few seconds later.
+
+**Built as `ScoreReportPoller`, mirroring `InvestigationPoller` deliberately rather than inventing a second idiom (ADR-116).** Three rules carried over directly, each one already paid for once on this exact failure shape:
+
+1. **Mounted by the absent state, not by the action that caused it.** The page renders this component only while `metrics.measured === null`; the moment a `router.refresh()` brings a real report, the component's own mount condition goes false and it disappears — nothing here has to notice its own success.
+2. **Polls one cheap endpoint per tick, spends a full refresh only once.** Every 5 s it calls `getMetricsIfComplete` — a single read; `router.refresh()`, which re-fetches everything the dashboard needs, fires exactly once, at the moment `measured` actually stops being `null`.
+3. **Gives up out loud, longer than an investigation's bound.** 120 s, not 90 — a score report depends on `score:watch` being the process actually running somewhere, and this project's own `what-broke.md` already records it silently not running, twice, this session. A manual "check now" plus a plain `<a>` (works with no client JS) follow the same pattern `InvestigationPoller` established.
+
+**One token fix carried along rather than copied forward:** the reference component's own give-up banner uses `--sev-medium`, the same severity-token misuse already corrected three times this session. The new component's give-up state uses neutral ink instead — waiting for a score report is not a hazard.
+
+**Verified end to end against real state, not a mock.** Deleted a run's `score_reports` row (backed up first), confirmed the tiles read "Not measured yet" and the poller rendered "Watching for a score report…" — server-side via `curl` and live in the browser pane. `score:watch`, running throughout, re-scored the run on its own 15 s cycle before a manual restore was even needed. The pane's own `javascript_exec` caught the poller firing `router.refresh()` unprompted (the "Loading the run…" fallback appearing with no click from anyone), and a direct `curl` immediately after confirmed the resulting page correctly shows the measured tiles. The pane could not finish rendering that particular response (ADR-127's documented limitation, pre-existing and unrelated to this change); the server-side confirmation is authoritative.
