@@ -50,6 +50,7 @@ every unit that re-opens an earlier unit's ground, so a re-test can be targeted 
 | **Added Day 17 — found by Tejas walking the built UI** ||||||
 | **F28** | A "Reviewed" view: decided proposals, who decided, and the note | walkthrough | no | Sonnet/med | 45 m |
 | **F29** | Match detail — inspect why the engine believes a group is one event | walkthrough | **yes** | Opus/med | 90 m |
+| **F30** | Split measured recall: engine-alone vs engine+human | F4 | **yes** | Opus/high | 2 h |
 
 Phase 0+1 ≈ 6 h · Phase 2 ≈ 6 h · Phase 3 ≈ 2 h · Phase 4 ≈ 5 h.
 
@@ -88,6 +89,46 @@ group rule and score breakdown — reusing `/records/[transactionId]` for the pe
 than duplicating it. That closes the argumentative gap with no contract change. Promote to a full
 screen only if time survives Phase 2.
 
+### F30 — measured recall silently includes human work, and drifts as you click
+
+**Found while doing F4, and it is the most consequential thing on this list.**
+
+`verify`'s stored report says recall **0.6075**. A fresh score of the same run, with a byte-identical
+`tools/score`, says **0.6941**. Nothing in the code changed. The *run* changed:
+
+```
+report scored_at    2026-09-01 19:54
+22 matches approved 2026-09-01 21:34 -> 2026-09-02 00:32   (65 members, ~62 pairs)
+pending_review      71 -> 49
+```
+
+**8.7 points of "measured recall" were contributed by a human clicking Approve after the
+measurement was taken.**
+
+**This is not a bug.** `validation-strategy.md` §5 line 231 says *"matched = records in >=1 match
+with status auto_confirmed OR human_confirmed"*, §5.1.1 repeats it, and `scoring.ts:270` implements
+exactly that. For a controller that closes a finance-ops loop *with* human approval, counting review
+is defensible. Two things the docs did not anticipate:
+
+1. **Stored reports freeze at incomparable moments.** `verify` was scored before 22 approvals;
+   `demo-20260905` and `f3-holdout-regression` have none; `phase4-free` has one rejection. Four
+   numbers on one dashboard, each taken at a different point in its run's review lifecycle.
+2. **Nothing says how much of the number is human.** A judge reads *recall 0.6941, measured* and
+   cannot tell a person supplied 8.7 points of it. **ADR-020 built the cold/warm discipline for
+   exactly this shape of claim** and it is not applied here.
+
+**The decision (Tejas, Day 17): split the figure.** Report engine-alone and engine+human side by
+side, labelled, the way cold/warm is reported — `engine 0.6075 · with 22 human approvals 0.6941`.
+Never one without the other.
+
+**Scope.** `tools/score` gains a second matching block computed over `auto_confirmed` only, plus the
+count of human decisions included in the combined figure. `validation-strategy.md` §5.1.1 is amended
+in the same pass (docs first, CLAUDE.md §3). An ADR records why. The dashboard renders both. Then
+**every report is re-posted**, which is what finally makes the four runs comparable.
+
+**Why Opus/high:** it changes what a measured number is computed over, which is the exact criterion
+CLAUDE.md §8 reserves Opus for.
+
 ### On seeding an alias case — DON'T. The dataset already has 24.
 
 The holdout answer key contains **24 `MERCHANT_NAME_VARIANT` events**, every one
@@ -111,7 +152,8 @@ will say so before writing code, and you re-test the earlier unit's behaviour by
 | **F1** run isolation | **F12, F15, F18, F19, F21, F22, F23** | F1 establishes *every `<Link>` carries `?run=`*. Any unit that adds a link can silently drop it, and the failure is invisible — the page renders, it just shows the wrong run. **Re-test: pick the non-default run, click every new control, confirm the URL keeps `?run=` and the masthead run label never changes.** |
 | **F1** run isolation | **F3** | F3 makes runs differ. Until then, a dropped `?run=` shows identical numbers and looks fine. After F3, F1's bug becomes visible — which is good, but it means **F1 is not truly proven until F3 lands.** |
 | **F3** `datasetSeed` | **F4, F10, F19, F24** | F3 changes what bytes a run reconciles. Every score report predating it is stale. F24 touches the same `routes/runs.ts` run-lifecycle path. **Re-test: `npm run score` on a run of each seed; both must reproduce their own answer key.** |
-| **F4** score reports | **F3, F25** | F4's reports are only valid for the code that produced them. F25 changes the scorer itself. **If either lands after F4, re-run F4.** |
+| **F4** score reports | **F3, F25, F30, and EVERY HUMAN APPROVAL** | F4's reports are only valid for the code that produced them *and for the review state at the moment they were taken*. F25 and F30 both change the scorer. **Worse: clicking Approve in `/review` changes a run's measured recall without touching any code** — see F30. Re-post after F30, and after any review session. |
+| **F30** engine/human split | **F4, F13, F18, and the submission** | F30 changes what the headline measured number MEANS. Every stored report predates it, `validation-strategy.md` §5.1.1 has to be amended in the same pass, and the dashboard tile that renders it is the one F13 relabels and F18 recomposes. **Do F30 before F13.** |
 | **F5** pending review | **F13, F18** | F5 decides whether the headline shows the run's frozen figure or a live recount, and labels it. F13 rewrites tile labels; F18 recomposes the block those tiles live in. **Both can restore the ambiguity F5 removed.** Re-test: dashboard pending count vs `/review` count, same run, same moment. |
 | **F6** nullability | **F3, F15, F20** | F6 aligns `types/api.ts` with `information_schema`. Any unit adding a field re-opens it. Four crashes have already come from a `null` typed as non-null and `tsc` cannot see it. **Re-test: the screen that reads the new field, on a row where it is NULL.** |
 | **F7** closure display | **F8** | If F8 concludes a closed exception must surface somewhere else, F7's presentation is the thing that changes. **Sequence F7 → F8 and expect F8 to amend F7, not replace it.** |
