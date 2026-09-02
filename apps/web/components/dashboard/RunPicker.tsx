@@ -17,8 +17,40 @@ import styles from './RunPicker.module.css';
  * server renders the selected run rather than the browser resolving it after
  * paint.
  */
-export function RunPicker({ runs, selectedRunId }: { runs: RunSummary[]; selectedRunId: string }) {
+/**
+ * RUNS ARE NEVER DELETED, SO THIS LIST ONLY EVER GROWS (ADR-134).
+ *
+ * `audit_log` is append-only by trigger and `audit_chain_heads.run_id` is
+ * `ON DELETE RESTRICT`, so the database refuses to erase a run's history —
+ * measured, not assumed: deleting a run raises the FK violation, and deleting
+ * its audit rows raises *"audit_log is append-only"*. That is ADR-015 working,
+ * and tidying the list by dismantling it would trade the audit guarantee for
+ * cosmetics.
+ *
+ * So the fix is presentational and hides nothing: the most recent few, the
+ * selected one always included wherever it sits, the true total stated, and
+ * every row one click away. The audit screen still shows all of them.
+ */
+const DEFAULT_VISIBLE = 5;
+
+export function RunPicker(
+  { runs, selectedRunId, showAll, runQ }: {
+    runs: RunSummary[];
+    selectedRunId: string;
+    showAll: boolean;
+    runQ: string | undefined;
+  },
+) {
+  const selected = runs.find((r) => r.runId === selectedRunId);
+  const head = runs.slice(0, DEFAULT_VISIBLE);
+  // The selected run is never hidden by the cut, however far down it sits.
+  const visible = showAll || (selected !== undefined && head.includes(selected))
+    ? (showAll ? runs : head)
+    : [...head, ...(selected === undefined ? [] : [selected])];
+  const hidden = runs.length - visible.length;
+
   return (
+    <>
     <table className={styles.table}>
       <caption className="sr-only">Reconciliation runs, most recent first</caption>
       <thead>
@@ -32,7 +64,7 @@ export function RunPicker({ runs, selectedRunId }: { runs: RunSummary[]; selecte
         </tr>
       </thead>
       <tbody>
-        {runs.map((run) => {
+        {visible.map((run) => {
           const isSelected = run.runId === selectedRunId;
           /**
            * A RUN IN FLIGHT HAS NO METRICS AND NO REFERENCE DATE, and this row
@@ -88,5 +120,20 @@ export function RunPicker({ runs, selectedRunId }: { runs: RunSummary[]; selecte
         })}
       </tbody>
     </table>
+      {hidden > 0 && (
+        <p className={styles.more}>
+          Showing <span className="num">{visible.length}</span> of{' '}
+          <span className="num">{runs.length}</span> runs.{' '}
+          <Link href={hrefWith('/', { run: runQ, runs: 'all' })}>Show all</Link> — every run ever
+          started is kept, because the audit log is append-only and its history cannot be deleted.
+        </p>
+      )}
+      {showAll && (
+        <p className={styles.more}>
+          All <span className="num">{runs.length}</span> runs.{' '}
+          <Link href={hrefWith('/', { run: runQ })}>Show recent only</Link>.
+        </p>
+      )}
+    </>
   );
 }

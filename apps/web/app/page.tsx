@@ -245,7 +245,12 @@ export default async function DashboardPage(
         standfirst="Cold and warm runs listed together and labelled, never as two unrelated rows."
         aside={<RunLauncher datasets={health?.datasets ?? []} />}
       >
-        <RunPicker runs={runs} selectedRunId={run.runId} />
+        <RunPicker
+          runs={runs}
+          selectedRunId={run.runId}
+          showAll={params['runs'] === 'all'}
+          runQ={runQ}
+        />
         <p className={styles.runsNote}>
           <span className="num">{count(runs.length)}</span>{' '}
           {plural(runs.length, 'run', 'runs')} recorded.

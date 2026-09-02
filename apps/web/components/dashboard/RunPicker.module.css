@@ -85,3 +85,12 @@
 .pending {
   color: var(--ink-muted);
 }
+
+/* The list only grows — runs cannot be deleted (ADR-134). This line states the
+   true total rather than letting a truncated list imply it. */
+.more {
+  margin: 0.75rem 0 0;
+  color: var(--ink-muted);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}

@@ -1553,3 +1553,24 @@ The key is found by filename — the generator writes `<label>_seed_<seed>.json`
 > *The engine is never given the answer key, so it cannot mark its own work. Accuracy is measured by a separate offline pass and posted back, which is why this is absent rather than estimated.*
 
 That sentence is worth more to a judge than the number would have been: it says the engine **cannot** mark its own homework, which is the property the whole measurement rests on.
+
+---
+
+### ADR-134 · F12 — a run cannot be retired, and that is the system working
+
+**The task was "retire the test runs". The database refuses, twice over, and it is right to.**
+
+Measured rather than inferred:
+
+```
+DELETE FROM runs      → violates FK "audit_chain_heads_run_id_fkey"  (ON DELETE RESTRICT)
+DELETE FROM audit_log → "audit_log is append-only (attempted DELETE on sequence_no 4448)"
+```
+
+`audit_log.run_id` and `audit_chain_heads.run_id` are **RESTRICT**, and `trg_audit_log_immutable` fires `BEFORE DELETE OR UPDATE`. So a run's history cannot be erased and the run cannot be removed while it has one — which is every run. **That is ADR-015 doing exactly what it was built for**, and tidying a list by dismantling it would trade the project's audit guarantee for cosmetics. Not a trade worth making, and the refusal is a better demo than the tidy list would have been.
+
+**The clutter is real, though.** Twenty runs, of which eighteen are Day 17 probes with names like `f6-crash-proof-2`, on a screen a judge scrolls past. So the fix is presentational and hides nothing: the picker shows the **five most recent**, always includes the selected run wherever it sits, states the true total, and links to all of them. The audit screen still lists every one.
+
+> **Two runs must survive any future tidying, and they are the ones carrying every human action in the system.** `verify` holds 24 review decisions, a closed exception, 29 human audit entries and the three aliases in the ledger's supersession chain. `phase4-free` holds the only *rejection* — with its reason — and two closures. Everything else has zero human activity. If the demo database is ever rebuilt from scratch rather than tidied, those decisions have to be re-made deliberately, not assumed to carry over.
+
+**What would actually clean the list** is rebuilding the demo database and performing the handful of runs and human decisions you want, in order. That is a real option before the pitch video and it costs nothing but the re-doing; it is not the same as deleting, and it does not weaken anything.
