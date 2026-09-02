@@ -175,6 +175,24 @@ export type AliasUpsert =
  * The id is therefore generated here rather than by the column default: step 1
  * has to know it before step 2 creates the row.
  */
+/**
+ * The active mapping for one key, or null. Serves the ADR-131 interlock, which
+ * must know what it would be replacing BEFORE replacing it — `upsertAlias`
+ * finds the same row but has already committed to superseding by the time it
+ * does.
+ */
+export async function findActiveAlias(
+  aliasType: string, normalizedValue: string, scopeSource: string, client?: TxClient,
+): Promise<Alias | null> {
+  const { rows } = await (client ?? getPool()).query<AliasRow>(
+    `SELECT ${COLUMNS} FROM learned_aliases
+      WHERE alias_type = $1 AND normalized_value = $2 AND scope_source = $3
+        AND status = 'active'`,
+    [aliasType, normalizedValue, scopeSource],
+  );
+  return rows.length === 0 ? null : toAlias(rows[0]!);
+}
+
 export async function upsertAlias(
   input: CreateAliasInput, client?: TxClient,
 ): Promise<AliasUpsert> {

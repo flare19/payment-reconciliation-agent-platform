@@ -1475,3 +1475,25 @@ A cold run's own rate *is* the cold rate and is still reported. On a warm run th
 **3 · The run picker decided coldness by comparing the two rates**, which defect 2 made identical on every run — so **every run in the list was labelled "Cold"**, including the one with a learned alias active. Coldness is `aliasCountAtStart === 0` and only the API knows it, so `isCold` is now served on the headline and read rather than re-derived. That is ADR-088's rule — *the frontend must not re-derive a rule the API already answers* — and this is its second instance.
 
 **Verified end to end on a fresh warm run:** `coldStart.matchRatePct: null`, `isCold: false`, `aliasesActiveAtStart: 1`, `recordsAutoResolvedByAliases: 6`, `leverageRatio: 6`, `applied_count: 1`, `last_applied_at` set, one `ALIAS_APPLIED` entry. The picker now shows Warm for every run after the alias was taught and Cold for every run before it. Re-scored: precision 1.0000 on both datasets, every honesty gate passed.
+
+---
+
+### ADR-131 · F9.3 — the alias conflict interlock, and the retry it had no way to complete
+
+**`ALIAS_CONFLICT_UNCONFIRMED` was declared in `ERROR_CODES`, promised by `api-contract.md`, fully handled by `ReviewCard` — and thrown nowhere.** Proposing a different canonical for an already-active key returned **200** and silently superseded the correct rule. Measured live: it replaced a correct alias with a deliberately wrong one and reported success.
+
+Sixth instance of declared-and-never-reached, after `datasetSeed`, `AGENT_MAX_COST_USD_PER_RUN`, `STALE_RUN_TIMEOUT_MINUTES`, `aliasSuggestions` and `counterpartyResolutions`.
+
+**What is refused, and what is not.** Only a genuine disagreement — an active rule for the same key pointing somewhere else. Re-asserting the same mapping is a *confirmation*, and §6.3 counts it as one. The refusal carries the existing rule, who taught it, both canonical values and `confirmWith: { confirmConflict: true }`, so the reviewer decides against the thing they are replacing rather than against a constraint name.
+
+**§6.3's supersede-with-penalty underneath is unchanged and was always right** — one misclick costs one extra review rather than poisoning auto-resolution. What was missing is that a reviewer has to be *told* they are about to spend it.
+
+#### Two structural fixes the interlock could not work without
+
+**1 · The approval commits in its own transaction.** `ReviewCard` promises *"The match was approved. Only the alias was held back — a judgement about this match is never discarded over a disagreement about a general rule."* Throwing inside the approval transaction rolled the approval back, and the first implementation did exactly that — **measured: the match returned to `pending_review`**, making the interface's sentence false. Aliases are now taught in a second transaction, after the approval is durable.
+
+**2 · Idempotent no longer means inert.** `approve` short-circuits on an already-`human_confirmed` match and returned `aliasesCreated: []`. That made the interlock a **dead end**: it approves the match, refuses the alias, and the reviewer's "Replace the Existing Rule" retry arrives at an already-approved match, short-circuits, and reports success having written nothing. **The retry is the only attempt that was ever going to teach that alias.** The idempotent path now still processes `aliasProposals`.
+
+**Verified live, in the order a reviewer meets it:** a conflicting proposal on a pending match returns **409**, leaves the alias untouched, and leaves the match **`human_confirmed`**; the retry with `confirmConflict: true` on that same already-approved match supersedes with a penalty and returns the new alias. Restoring the correct mapping through two confirmations then lifted the penalty exactly as §6.3 rule 3 says it should — `confirmation_count 2`, eligible for Tier 1.5 again.
+
+**The guard is structural, because the defect was.** `tests/unit/alias-conflict-interlock.test.ts` asserts the code is referenced outside the enum that declares it — the precise property that was missing when it lived in `types/dto.ts` and nowhere else — plus that `confirmConflict` survives validation and that only an exact `true` counts, so silence is never consent. All three watched failing against the pre-fix source.

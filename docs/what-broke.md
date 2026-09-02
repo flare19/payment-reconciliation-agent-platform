@@ -1547,3 +1547,14 @@ The obvious test for #55 — *"at the engine's own bounds the tool reproduces th
   **The picker inferred coldness by comparing the two rates**, which the above made identical on every run — so every run was labelled Cold, including the warm one. `isCold` is now served and read, not re-derived. Second instance of ADR-088's rule.
 
   > **The pattern across all three: the feature worked and the instrumentation was fiction.** Three separate figures — an audit event, a leverage ratio and a headline rate — each independently reported zero or a copy, and together they made a working learning loop look like a dead one. It survived because no alias had ever been taught, so no number describing one had ever been read.
+
+- **2026-09-02 — Day 17, F9.3: the conflict interlock existed everywhere except in the code (ADR-131).** `ALIAS_CONFLICT_UNCONFIRMED` was in `ERROR_CODES`, in `api-contract.md`, and fully handled by `ReviewCard` — and thrown nowhere. A conflicting proposal returned 200 and silently superseded a correct rule; I hit it live earlier in F9 and it replaced my own good alias. Sixth declared-and-never-reached defect.
+
+  **Two structural problems had to be fixed before the interlock could work at all**, and both were found by implementing it rather than by reading:
+
+  1. **The approval rolled back with the refusal.** Throwing inside the approval transaction returned the match to `pending_review` — measured — which makes `ReviewCard`'s promise (*"The match was approved. Only the alias was held back"*) false. Aliases are now taught in a second transaction, after the approval is durable.
+  2. **The retry was a dead end.** `approve` short-circuits on an already-`human_confirmed` match with `aliasesCreated: []`, so the reviewer's "Replace the Existing Rule" retry — **the only attempt that was ever going to teach that alias** — arrived at an approved match, short-circuited, and reported success having written nothing.
+
+  Verified in the order a reviewer meets it: 409 with the existing rule named, alias untouched, match still `human_confirmed`; then the confirmed retry supersedes with a §6.3 penalty; then two confirmations of the correct mapping lift the penalty and restore Tier 1.5 eligibility.
+
+  > **The guard is structural because the defect was.** It asserts the code is referenced outside the enum declaring it — exactly the property missing when it lived in `types/dto.ts` alone — and that `confirmConflict` survives validation with only an exact `true` counting, so silence is never consent. Watched failing against the pre-fix source. **A broader version of this guard is worth having: nine other declared error codes could not be proven reachable by a naive search**, and while most are raised through the `found()` helper, that list is where the seventh instance will come from.

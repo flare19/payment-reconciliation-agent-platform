@@ -13,6 +13,7 @@
 
 import { Router } from 'express';
 import { ApiError } from '../app.js';
+import type { TxClient } from '../db/pool.js';
 import { withTransaction } from '../db/pool.js';
 import * as matchRepo from '../repositories/matches.js';
 import * as aliasRepo from '../repositories/aliases.js';
@@ -29,6 +30,88 @@ const blank = {
   transactionId: null, tier: null, ruleId: null, ruleVersion: null,
   decision: null, confidence: null, beforeState: null, afterState: null,
 } as const;
+
+
+/**
+ * Teach the aliases a reviewer attached to an approval, refusing any that would
+ * silently replace an active rule (ADR-131).
+ *
+ * -------------------------------------------------------------------------
+ * `ALIAS_CONFLICT_UNCONFIRMED` WAS DECLARED IN `ERROR_CODES`, PROMISED BY
+ * `api-contract.md`, HANDLED BY `ReviewCard`, AND THROWN NOWHERE. Proposing a
+ * different canonical for an already-active key returned 200 and superseded the
+ * correct rule without a word. §6.3's supersede-with-penalty underneath is
+ * right and unchanged — one misclick costs one extra review rather than
+ * poisoning auto-resolution — but a reviewer has to be told they are about to
+ * spend it.
+ * -------------------------------------------------------------------------
+ *
+ * THIS RUNS AFTER THE APPROVAL HAS COMMITTED, deliberately. The interface
+ * promises *"The match was approved. Only the alias was held back — a judgement
+ * about this match is never discarded over a disagreement about a general
+ * rule."* Throwing inside the approval transaction would roll the approval back
+ * and make that sentence false.
+ */
+async function teachAliases(
+  raw: unknown, match: matchRepo.Match, reviewedBy: string, c: TxClient,
+): Promise<{ created: Record<string, unknown>[]; entries: number[] }> {
+  // Teaching an alias is optional and is the whole point of the loop: the
+  // reviewer's correction becomes reusable. Conflicts supersede with a
+  // penalty (§6.3) rather than overwriting, so one misclick costs one extra
+  // review rather than permanently poisoning auto-resolution.
+  const created: Record<string, unknown>[] = [];
+  const entries: number[] = [];
+  for (const proposal of aliasProposals(raw)) {
+    const normalizedValue = normalizeCounterparty(proposal.rawValue) ?? proposal.rawValue;
+    const canonicalValue =
+      normalizeCounterparty(proposal.canonicalValue) ?? proposal.canonicalValue;
+
+    // THE INTERLOCK. Refuse only a genuine disagreement: an active rule for the
+    // same key pointing somewhere ELSE. Re-asserting the same mapping is a
+    // confirmation, not a conflict, and §6.3 counts it as one.
+    const active = await aliasRepo.findActiveAlias(
+      proposal.aliasType, normalizedValue, proposal.scopeSource, c);
+    if (active !== null && active.canonicalValue !== canonicalValue
+      && !proposal.confirmConflict) {
+      throw new ApiError(409, 'ALIAS_CONFLICT_UNCONFIRMED',
+        `'${active.rawValue}' already resolves to '${active.canonicalValue}', taught by `
+        + `${active.createdBy}. Replacing it supersedes that rule and marks the key contested, `
+        + 'so neither mapping resolves automatically until a human confirms one twice (§6.3).',
+        {
+          existingAliasId: active.id,
+          existingCanonicalValue: active.canonicalValue,
+          proposedCanonicalValue: canonicalValue,
+          normalizedValue,
+          confirmWith: { confirmConflict: true },
+        });
+    }
+
+    const upsert = await aliasRepo.upsertAlias({
+      aliasType: proposal.aliasType, scopeSource: proposal.scopeSource,
+      rawValue: proposal.rawValue,
+      normalizedValue,
+      canonicalValue,
+      createdBy: reviewedBy, createdFromMatchId: match.id,
+    }, c);
+    created.push(aliasDto(upsert.alias));
+    const e = await appendAuditEntry({
+      ...HUMAN, ...blank, runId: match.runId, actorId: reviewedBy,
+      eventType: upsert.outcome === 'reaffirmed' ? 'ALIAS_REAFFIRMED'
+        : upsert.outcome === 'superseded' ? 'ALIAS_CONFLICT_SUPERSEDED' : 'ALIAS_CREATED',
+      subjectType: 'alias', subjectId: upsert.alias.id,
+      reason:
+        `${reviewedBy} asserted '${upsert.alias.rawValue}' resolves to ` +
+        `'${upsert.alias.canonicalValue}' while approving match ${match.id}`,
+      beforeState: upsert.outcome === 'superseded' ? { aliasId: upsert.previous.id,
+        canonicalValue: upsert.previous.canonicalValue } : null,
+      afterState: { aliasId: upsert.alias.id, canonicalValue: upsert.alias.canonicalValue,
+        eligibleForAliasTier: upsert.alias.eligibleForAliasTier },
+      details: { outcome: upsert.outcome, matchId: match.id },
+    }, c);
+    entries.push(e.sequenceNo);
+  }
+  return { created, entries };
+}
 
 export function matchesRouter(): Router {
   const r = Router();
@@ -47,9 +130,25 @@ export function matchesRouter(): Router {
     // match returns 200 with the existing state, not an error — a reviewer who
     // double-clicks should not see a failure for an action that already
     // succeeded.
+    /**
+     * IDEMPOTENT, BUT NOT INERT (ADR-131). Re-approving an already-approved
+     * match must still process any `aliasProposals` the retry carries —
+     * otherwise the conflict interlock below is a dead end: it approves the
+     * match, refuses the alias, and the reviewer's "Replace the Existing Rule"
+     * retry arrives at an already-`human_confirmed` match, short-circuits here,
+     * and reports `aliasesCreated: []` as though it had succeeded. The alias
+     * could never be taught on the second attempt, which is the only attempt
+     * that was ever going to teach it.
+     */
     if (existing.status === 'human_confirmed') {
+      const created = await withTransaction(
+        (c) => teachAliases(body['aliasProposals'], existing, reviewedBy, c));
       const byId = await membersById(existing);
-      res.json({ match: matchSummary(existing, byId), aliasesCreated: [], auditEntryIds: [] });
+      res.json({
+        match: matchSummary(existing, byId),
+        aliasesCreated: created.created,
+        auditEntryIds: created.entries,
+      });
       return;
     }
     if (existing.status !== 'pending_review') {
@@ -77,44 +176,27 @@ export function matchesRouter(): Router {
       }, c);
       entries.push(approved.sequenceNo);
 
-      // Teaching an alias is optional and is the whole point of the loop: the
-      // reviewer's correction becomes reusable. Conflicts supersede with a
-      // penalty (§6.3) rather than overwriting, so one misclick costs one extra
-      // review rather than permanently poisoning auto-resolution.
-      const created: Record<string, unknown>[] = [];
-      for (const proposal of aliasProposals(body['aliasProposals'])) {
-        const upsert = await aliasRepo.upsertAlias({
-          aliasType: proposal.aliasType, scopeSource: proposal.scopeSource,
-          rawValue: proposal.rawValue,
-          normalizedValue: normalizeCounterparty(proposal.rawValue) ?? proposal.rawValue,
-          canonicalValue: normalizeCounterparty(proposal.canonicalValue) ?? proposal.canonicalValue,
-          createdBy: reviewedBy, createdFromMatchId: match.id,
-        }, c);
-        created.push(aliasDto(upsert.alias));
-        const e = await appendAuditEntry({
-          ...HUMAN, ...blank, runId: match.runId, actorId: reviewedBy,
-          eventType: upsert.outcome === 'reaffirmed' ? 'ALIAS_REAFFIRMED'
-            : upsert.outcome === 'superseded' ? 'ALIAS_CONFLICT_SUPERSEDED' : 'ALIAS_CREATED',
-          subjectType: 'alias', subjectId: upsert.alias.id,
-          reason:
-            `${reviewedBy} asserted '${upsert.alias.rawValue}' resolves to ` +
-            `'${upsert.alias.canonicalValue}' while approving match ${match.id}`,
-          beforeState: upsert.outcome === 'superseded' ? { aliasId: upsert.previous.id,
-            canonicalValue: upsert.previous.canonicalValue } : null,
-          afterState: { aliasId: upsert.alias.id, canonicalValue: upsert.alias.canonicalValue,
-            eligibleForAliasTier: upsert.alias.eligibleForAliasTier },
-          details: { outcome: upsert.outcome, matchId: match.id },
-        }, c);
-        entries.push(e.sequenceNo);
-      }
-      return { match, created, entries };
+      return { match, entries };
     });
+
+    /**
+     * A SECOND TRANSACTION, SO THE APPROVAL SURVIVES A REFUSED ALIAS (ADR-131).
+     *
+     * `teachAliases` throws `409 ALIAS_CONFLICT_UNCONFIRMED` on a proposal that
+     * would replace an active rule. Inside the approval transaction that throw
+     * rolls the approval back — measured, and it left the match `pending_review`
+     * — which makes the interface's promise false: *"The match was approved.
+     * Only the alias was held back — a judgement about this match is never
+     * discarded over a disagreement about a general rule."*
+     */
+    const alias = await withTransaction(
+      (c) => teachAliases(body['aliasProposals'], result.match, reviewedBy, c));
 
     const byId = await membersById(result.match);
     res.json({
       match: matchSummary(result.match, byId),
-      aliasesCreated: result.created,
-      auditEntryIds: result.entries,
+      aliasesCreated: alias.created,
+      auditEntryIds: [...result.entries, ...alias.entries],
     });
   }));
 
@@ -244,6 +326,12 @@ const ALIAS_SCOPES: readonly AliasScope[] = ['gateway', 'bank', 'ledger', 'any']
 
 export function aliasProposals(raw: unknown): {
   aliasType: AliasType; scopeSource: AliasScope; rawValue: string; canonicalValue: string;
+  /**
+   * The reviewer has SEEN the rule they are replacing and said replace it
+   * anyway (ADR-131). Absent or false means an unconfirmed conflict is refused
+   * rather than silently superseding a correct rule.
+   */
+  confirmConflict: boolean;
 }[] {
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw)) {
@@ -271,6 +359,7 @@ export function aliasProposals(raw: unknown): {
     return {
       aliasType: aliasType as AliasType, scopeSource: scopeSource as AliasScope,
       rawValue, canonicalValue,
+      confirmConflict: o['confirmConflict'] === true,
     };
   });
 }
