@@ -464,5 +464,30 @@ export async function countRecordsWithCounterparty(
   return rows[0]!.count;
 }
 
+/**
+ * Every counterparty key in the run with how many records carry it.
+ *
+ * ONE query for a whole page of review items, rather than
+ * `countRecordsWithCounterparty` per suggestion — the review queue builds a
+ * suggestion for each pending match it returns, and a per-match count would be
+ * N round trips for a number that comes from a single GROUP BY.
+ *
+ * Serves two purposes at once (ADR-125): the counts decide which side of a
+ * differing pair is the CANONICAL form (the one already more common in the
+ * run), and the same map yields `wouldAlsoResolve`.
+ */
+export async function counterpartyNormCounts(
+  runId: string, client?: TxClient,
+): Promise<Map<string, number>> {
+  const { rows } = await (client ?? getPool()).query<{ norm: string; count: number }>(
+    `SELECT counterparty_norm AS norm, count(*)::int AS count
+       FROM transactions
+      WHERE run_id = $1 AND counterparty_norm IS NOT NULL
+      GROUP BY counterparty_norm
+      ORDER BY counterparty_norm`,
+    [runId]);
+  return new Map(rows.map((r) => [r.norm, r.count]));
+}
+
 /** Exported so a caller can assert the SQL order matches the TS comparator. */
 export { compareCanonical };

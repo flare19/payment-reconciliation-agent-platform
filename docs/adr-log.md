@@ -1321,3 +1321,45 @@ On a product whose whole argument is that every decision carries its reason, the
 > **All 22 approvals recorded so far carry no note.** The view renders that as *"none given — approving does not require one"* rather than printing the word "Approved" in the reason column. A substituted word would manufacture a justification nobody gave, which is the same failure as drawing an absent figure as a zero (ADR-098).
 
 Whether approval *should* require a reason is a real question and is left open rather than decided here — it is a contract change to endpoint 10, it would invalidate 22 existing records, and `exc_resolution_complete` already takes the opposite position for exceptions (both terminal states require a note). **The two surfaces genuinely disagree, and that disagreement is now visible instead of hidden.**
+
+---
+
+### ADR-125 · The alias suggestion is real; the loop around it has three holes
+
+**F9 set out to exercise the alias learning loop and found that it could not be reached at all.**
+
+**1 · `aliasSuggestions` was a hardcoded `[]` (fixed).** `routes/runs.ts`'s review-queue handler returned an empty array with a comment deferring the work. `ReviewCard` renders its entire teach-an-alias section only when `aliasSuggestions[0]` exists — so the checkbox, the `wouldAlsoResolve` line, the conflict path, all of it, had never once been reachable from a browser. **ui-spec §7's demo path step 10 is "teach one alias, show `wouldAlsoResolve: 6`", and it could not be performed.** Fifth instance of declared-and-never-populated, after `datasetSeed`, `AGENT_MAX_COST_USD_PER_RUN`, `STALE_RUN_TIMEOUT_MINUTES` and this file's own error code below.
+
+Now generated deterministically: a suggestion exists when a pending match's members carry **exactly two** distinct counterparty keys. One means nothing to teach; three or more means the group disagrees in more than one direction and the reviewer should not be handed a guess. **Canonical is whichever key already appears on more records in the run**, ties broken lexicographically — mapping the odd spelling onto the established one is the correction a reviewer means to make, and a length heuristic would invert on the first merchant whose abbreviation is longer than its full name. On the holdout this yields 5 suggestions over 49 pending proposals, the strongest being `API HOLDINGS → THREPSI SOLUTIONS` with `wouldAlsoResolve: 5`.
+
+> **THE VALUES SENT ARE THE NORMALIZED KEYS, NOT `counterpartyRaw`, AND THE FIRST IMPLEMENTATION HAD THIS WRONG.** A bank row's raw counterparty is its whole settlement description — `IMPS-SETL-BMS TICKETS-697172334728-setl_cSIThmKMybcQZ8-BATCH29` — unique per transaction. Endpoint 10 derives `normalized_value` by running `normalizeCounterparty(rawValue)`, which does **not** reproduce the bank-specific stripping AUDIT-1 added in `eb5995d`. Suggesting the raw string would have taught an alias keyed on a value no future record can carry: a rule that looks taught, applies to nothing, and quietly makes every warm run identical to a cold one. Caught by reading the generated suggestions before teaching one.
+
+**2 · `ALIAS_CONFLICT_UNCONFIRMED` is declared and thrown nowhere.** It sits in `ERROR_CODES`, `api-contract.md` promises it, and `ReviewCard` carries a full confirm-and-retry UI for it — *"The match was approved. Only the alias was held back."* Measured: proposing a **different** canonical for an already-active key returns **200**, supersedes the correct alias, and reports nothing. The repository's behaviour underneath is correct and deliberate (§6.3 supersedes with a penalty rather than overwriting, so `eligibleForAliasTier` goes false), but **the confirmation gate does not exist**, so a reviewer can silently replace a right rule with a wrong one. Not fixed here — it is only reachable from a UI that does not currently hydrate (ADR-126), and it deserves its own unit.
+
+**3 · A warm run resolves more records and still reports itself as cold.** Teaching one alias moved matched members **570 → 573** and the match rate **65.22% → 65.56%**, with every honesty gate passing and precision unchanged. But `matches.tier` shows **no `alias` tier at all**, `learned_aliases.applied_count` stays **0**, `recordsAutoResolvedByAliases` is **0** and `leverageRatio` is **0** — so `coldStartMatchRatePct` equals `matchRatePct` and the run picker labels a genuinely warm run **Cold**.
+
+> **ADR-020's entire reporting mechanism is the cold/warm pair, and on the only warm run this project has ever produced it reports zero leverage on an alias that demonstrably resolved three records.** The scorer sees it too: the answer key attributes 27 pairs to `viaTier: alias` and the engine attributes **0**. The learning works; the attribution does not. Until that is fixed the alias feature cannot be demonstrated, because its headline number is structurally zero.
+
+---
+
+### ADR-126 · No client component inside a page hydrates — every interactive control in the product is inert
+
+**This is a P0, it is PRE-EXISTING, and it reproduces on `main` at `89500d5`.** Found while trying to teach an alias through the UI for F9.
+
+**What was measured.** On the dashboard, `main button` matches exactly one element — *Run It Again* — and it has no React fiber attached (`Object.getOwnPropertyNames` shows no `__reactFiber$…`). Clicking it programmatically changes nothing in the DOM. The same holds on `/review` for the teach checkbox, the reviewer-name field, *Approve Match* and *Reject*, and for the view tabs and pagination links. **The masthead's links, in the layout, hydrate normally** — so React is running; it is the page subtree that never attaches.
+
+**Every interactive feature in the product is affected:** `RunLauncher` (Run It Again), `ReviewCard` (approve, reject, teach an alias), `ResolveActions` (resolve, won't fix), `AskAnalyst`, `InvestigationPoller`, `VerifyChain`. `NavLinks` is the only client component that works, and it is the only one in the layout rather than a page.
+
+**Ruled out**, each by measurement rather than reasoning:
+- *A stale build* — reproduces after `rm -rf .next` and a fresh `next dev`.
+- *F1's Suspense boundaries* — reverting `chrome/` to its pre-F1 state changes nothing.
+- *Any Day 17 change* — an isolated `git worktree` at `main` on port 3100 fails identically.
+- *A truncated RSC stream* — the raw HTTP response is complete: 318 KB, 112 `__next_f.push` calls, closing `</html>`, and React's `$RC("B:0","S:0")` boundary-completion script.
+- *A failed chunk* — `app/review/page.js`, `layout.js`, `main-app.js` and `webpack.js` all return 200.
+- *A hydration error* — the console is empty of errors on a clean load.
+
+**Why nobody noticed.** The backlog's own loose-threads table already says it without drawing the conclusion: *"AskAnalyst arm → confirm panel — **never watched render**"*, *"Run launcher open state — same"*, *"the ticking counter and automatic transition are not [verified]"*. Day 16's resolve was exercised **against the live local API**, not through a browser click — `what-broke.md` says so in those words. **No client component in this application has ever been verified by clicking it**, and three of Day 17's own units (F10, F11, and the browser half of F9) were the ones scheduled to find this.
+
+**Consequence for the plan.** F10 and F11 are not "verification" tasks any more; they are downstream of this. F28's approve/reject, F9's teach-an-alias, endpoint 25's Ask-Analyst button and the audit chain's verify button are all unreachable until it is fixed. **It outranks every remaining P1 on the Day 17 list**, and it must be fixed before the pitch video, because the demo path is a sequence of clicks.
+
+Root cause is **not yet identified** and is deliberately not guessed at here. The next step is a minimal reproduction — one page, one `'use client'` button with an `onClick` that logs — to establish whether the failure is app-wide or specific to how these pages are composed.

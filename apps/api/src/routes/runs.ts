@@ -67,6 +67,89 @@ export function resolveConfig(
   return out as Omit<RunConfig, 'referenceDate' | 'aliasCountAtStart'>;
 }
 
+/**
+ * The pre-filled alias the reviewer is already looking at (api-contract §
+ * `ReviewItem`, ui-spec §5). Produced DETERMINISTICALLY from the two
+ * counterparty strings in front of them — never an LLM inference.
+ *
+ * ------------------------------------------------------------------------
+ * THIS RETURNED A HARDCODED `[]` UNTIL DAY 17, WHICH MADE THE WHOLE LEARNING
+ * LOOP UNREACHABLE. `ReviewCard` renders its teach-an-alias section only when
+ * `aliasSuggestions[0]` exists, so the complete UI below it — the checkbox, the
+ * `409 ALIAS_CONFLICT_UNCONFIRMED` interlock, the confirm-and-retry path — had
+ * never once been reachable from a browser. ui-spec §7's demo path step 10 is
+ * "teach one alias, show wouldAlsoResolve", and it could not be performed.
+ * ------------------------------------------------------------------------
+ *
+ * WHICH SIDE IS CANONICAL IS DECIDED BY THE DATA, NOT BY STRING LENGTH. The
+ * canonical form is whichever counterparty key already appears on more records
+ * in this run; the rarer one becomes the alias key. Mapping the odd spelling
+ * onto the established one is the correction a reviewer means to make, and it
+ * keeps the choice reproducible — a length heuristic would invert on the first
+ * merchant whose abbreviation is longer than its full name. Ties break
+ * lexicographically so the output is stable (ADR-032).
+ *
+ * A suggestion is offered only when the members carry EXACTLY TWO distinct
+ * keys. One key means there is nothing to teach; three or more means the group
+ * disagrees in more than one direction and the reviewer should not be handed a
+ * guess about which pair they meant.
+ */
+export function aliasSuggestionsFor(
+  m: matchRepo.Match,
+  byId: ReadonlyMap<string, import('../types/engine.js').NormalizedTransaction>,
+  counts: ReadonlyMap<string, number>,
+): { aliasType: string; rawValue: string; canonicalValue: string; wouldAlsoResolve: number }[] {
+  /**
+   * THE VALUES SENT ARE THE NORMALIZED KEYS, NOT `counterpartyRaw`, AND THAT IS
+   * THE WHOLE CORRECTNESS OF THIS FUNCTION.
+   *
+   * A bank row's `counterparty_raw` is its full settlement description —
+   * `IMPS-SETL-BMS TICKETS-697172334728-setl_cSIThmKMybcQZ8-BATCH29` — which is
+   * unique per transaction. Endpoint 10 derives `normalized_value` by running
+   * `normalizeCounterparty(rawValue)`, and that path does NOT reproduce the
+   * bank-specific stripping AUDIT-1 added in `eb5995d`. Suggesting the raw
+   * string would therefore teach an alias keyed on a value no future record can
+   * ever carry — a rule that looks taught, applies to nothing, and quietly makes
+   * every warm run identical to a cold one.
+   *
+   * `normalizeCounterparty` is idempotent on an already-normalized value
+   * (verified over the live keys), so passing the norm round-trips exactly.
+   * `raw_value` then stores the key rather than the description; §6.1 calls that
+   * column "what the human saw", and the merchant name IS what they saw — the
+   * IMPS envelope around it is not.
+   */
+  const seen = new Set<string>();
+  for (const mem of m.members) {
+    const t = byId.get(mem.transactionId);
+    if (t?.counterpartyNorm == null || t.counterpartyNorm === '') continue;
+    seen.add(t.counterpartyNorm);
+  }
+  if (seen.size !== 2) return [];
+
+  const [a, b] = [...seen].sort() as [string, string];
+  const na = counts.get(a) ?? 0;
+  const nb = counts.get(b) ?? 0;
+  // Higher run-wide count wins; a tie falls to the lexicographically smaller.
+  const canonical = nb > na ? b : a;
+  const rawKey = canonical === a ? b : a;
+
+  return [{
+    aliasType: 'counterparty_name',
+    rawValue: rawKey,
+    canonicalValue: canonical,
+    /**
+     * Other records the correction would cover. The match's own members are
+     * excluded — a reviewer asking "what else does this fix?" does not mean
+     * the record in front of them.
+     */
+    wouldAlsoResolve: Math.max(
+      0,
+      (counts.get(rawKey) ?? 0)
+        - m.members.filter((mem) => byId.get(mem.transactionId)?.counterpartyNorm === rawKey).length,
+    ),
+  }];
+}
+
 export function runsRouter(
   env: Env, readSeedDataset: (seed: number | null) => RunSources,
 ): Router {
@@ -241,6 +324,11 @@ export function runsRouter(
     const { page, pageSize, offset } = pageParams(req);
     const { matches, total } = await matchRepo.listReviewQueue(runId, pageSize, offset);
     const byId = await transactionsById(runId, matches.flatMap((m) => m.members.map((x) => x.transactionId)));
+    /**
+     * ONE query for the page, not one per match. Serves both the direction rule
+     * and `wouldAlsoResolve` (ADR-125).
+     */
+    const cpCounts = await txnRepo.counterpartyNormCounts(runId);
     res.json({
       items: matches.map((m) => ({
         matchId: m.id, tier: m.tier, confidence: m.confidence,
@@ -254,11 +342,7 @@ export function runsRouter(
           };
         }),
         whyFlagged: whyFlagged(m),
-        // Alias suggestions are produced DETERMINISTICALLY (schema.md §12) — the
-        // differing field pair the reviewer is already looking at, pre-filled.
-        // Never an LLM inference. Wiring `wouldAlsoResolve` needs a count across
-        // the run, which lands with the alias-learning UI.
-        aliasSuggestions: [],
+        aliasSuggestions: aliasSuggestionsFor(m, byId, cpCounts),
       })),
       pagination: paginate(page, pageSize, total),
     });
