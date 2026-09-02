@@ -1415,3 +1415,11 @@ The obvious test for #55 — *"at the engine's own bounds the tool reproduces th
   **Verified by reverting `NavLinks.tsx` to `HEAD` and watching every nav href go bare**, then restoring — the discipline Day 13 established. Two links stay bare deliberately and say so in code: `not-found.tsx` (a run in a URL that 404'd is the most likely thing to have been wrong about it) and the six "Back to the dashboard" empty-states (they render only when no run exists).
 
   **What F1 does NOT prove:** both runs still reconcile byte-identical inputs, so both read 65.22% / 212. The URL now carries the run; that the *numbers* follow it is not observable until F3 makes the datasets differ. F1 fixed this blind, which is exactly why it survived a walkthrough.
+
+- **2026-09-02 — Day 17, unit F2: a second dataset, so that two runs can stop being one experiment run twice.** Nothing broke here; this is the data half of the `datasetSeed` fix. Generated at **seed 20260905**, label `demo`: 300 events → 922 records, 21 designed-unresolvable, ceiling 93%, 915 expected pairs, committed with its answer key (ADR-117).
+
+  **The seed is deliberately not DEV_SEED, even though `data/fixtures/dev/` already existed on disk with a key and would have been free.** ADR-027 gives DEV and HOLDOUT mutually exclusive jobs, and shipping the seed we develop against as the seed we demo blurs the one line that rule exists to draw. A third seed costs one command.
+
+  **The datasets differ in content, not in difficulty** — all three CSVs differ byte-for-byte and the row counts move (324/303/295 against 320/301/296), but the scenario distribution is identical because §3's weights are fixed. That is the property that makes two runs *comparable*; two datasets of different difficulty would have made the dashboard's side-by-side meaningless.
+
+  Regeneration is byte-identical, 667 API unit tests and 235 root tests pass, and the ADR-021 leak guard still refuses any path from `apps/api` to `data/truth` — verified including its own negative case, which fires.

@@ -1119,3 +1119,39 @@ The same pass removed a redundant read: endpoint 26 already returns full investi
 **3 · And the escape hatch needed the thing that might be broken.** Both the give-up state and the live state offer a plain `<a>` to the page's own URL beside the refresh button. If the automatic check ever fails *because* client JavaScript is not running — a chunk that failed to load, a hydration error, an extension — then a button wired to `router.refresh()` is no fallback at all: it needs exactly what is broken. A link is a full page load and works when nothing else does.
 
 **It gives up out loud after 90 seconds**, against `agent-design.md` §8's 60-second bound. Silent polling that has quietly died is indistinguishable from work still in progress, and a reader watching a spinner cannot tell which they are looking at.
+
+---
+
+### ADR-117 · The demo dataset gets its own seed, because DEV and HOLDOUT already have jobs
+
+**Decision.** A second committed dataset is generated at **seed 20260905**, label **`demo`**, at
+`data/fixtures/demo/` with its answer key at `data/truth/demo_seed_20260905.json`. It is *not*
+DEV_SEED (1337) promoted to a shipped artifact.
+
+**Why not just commit the dev dataset, which already exists on disk with a key?** Because ADR-027
+gives the two existing seeds mutually exclusive roles — **develop against DEV, report against
+HOLDOUT** — and the whole force of that rule is that a reader can tell which number came from which
+seed. A dataset we tune against, shipped as the thing we demo, blurs exactly the line ADR-027 draws,
+and invites the one question this project cannot afford: *"did you tune on the data you are showing
+us?"* The answer would be "no, but the seed is the one we develop against", which is a worse answer
+than not needing one. A third seed costs a single command and removes the question.
+
+It also keeps `data/fixtures/dev/` gitignored, so regenerating dev during development cannot
+silently change a committed artifact.
+
+**What the second dataset is for.** `datasetSeed` has been parsed, persisted and serialised since
+Day 8 and honoured nowhere (ADR-103) — `readSeedDataset()` always returns the holdout. So the two
+runs on the dashboard reconcile **byte-identical inputs** and report 65.22% twice. That is correct
+output and a dishonest impression: two rows that look like two experiments are one experiment run
+twice. F3 makes the seed load-bearing; this ADR is the data it loads.
+
+**Verified.** 300 events → 922 records (324 gateway / 303 bank / 295 ledger), 21 designed-
+unresolvable, ceiling 93%, 915 expected pairs. All three CSVs differ from holdout's byte-for-byte,
+and regeneration is byte-identical (ADR-067's determinism, re-checked on the new seed). The
+scenario distribution matches holdout's because §3's weights are fixed — **the datasets differ in
+content, not in difficulty**, which is what makes two runs comparable rather than merely different.
+
+**A committed dataset must have a committed answer key.** Without one, two of the four headline
+tiles render "not measured" (ADR-041 + the provenance rule of ADR-098), so a keyless dataset makes
+the *weaker* demo, not the stronger one. F3 restricts `datasetSeed` to datasets that have a key, and
+refuses the rest with `400` rather than accepting and ignoring — the defect shape ADR-094 named.

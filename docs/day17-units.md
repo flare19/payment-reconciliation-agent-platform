@@ -47,8 +47,55 @@ every unit that re-opens an earlier unit's ground, so a re-test can be targeted 
 | **F25** | Analyst scoring in `tools/score` | loose / §7 | **yes** | Opus/high | 3 h |
 | **F26** | Rate limiting behind server-side rendering | loose / ADR-096 | **yes** | Sonnet/high | 45 m |
 | **F27** | Deploy web to Vercel (U19) | crit. path 8 | no | Sonnet/med | 60 m |
+| **Added Day 17 — found by Tejas walking the built UI** ||||||
+| **F28** | A "Reviewed" view: decided proposals, who decided, and the note | walkthrough | no | Sonnet/med | 45 m |
+| **F29** | Match detail — inspect why the engine believes a group is one event | walkthrough | **yes** | Opus/med | 90 m |
 
 Phase 0+1 ≈ 6 h · Phase 2 ≈ 6 h · Phase 3 ≈ 2 h · Phase 4 ≈ 5 h.
+
+### F28 — the "Reviewed" view
+
+**The gap:** approving or rejecting a proposal removes it from `/review` and it then appears
+**nowhere but the audit chain**. On a product whose argument is that every decision carries its
+reason, the human decisions are the ones that disappear. Same defect family as F7.
+
+**It needs NO API change.** `matches` already stores `reviewed_by`, `reviewed_at` and `review_note`
+(`repositories/matches.ts:45-54`), status moves to `human_confirmed` / `human_rejected`, and
+**endpoint 8 already takes `?status=`**. A rejected match keeps its row — endpoint 11 returns its
+*members* to the exception pool, it does not delete the match — so approvals and rejections are
+both readable. This is a frontend screen over data that already exists.
+
+**Do it after F7**, so the two closure surfaces (exception closed by a human, proposal decided by a
+human) are designed to look like each other rather than being invented twice.
+
+### F29 — match detail
+
+**This one is NOT cosmetic, and it is not free either.** The strongest number in the project is
+*precision 1.0000, FP 0* — a claim about **matches** — and there is currently no way to ask the
+product why it believes three records are one payment. Exceptions carry their full reasoning;
+matches carry none. That asymmetry is an argumentative gap, not a visual one.
+
+**The cost is a new endpoint.** `api-contract.md` has no `GET /api/matches/:matchId`; endpoint 8
+serves `MatchSummary[]` for browsing only. So F29 means a contract change, a route, a repository
+read and a screen — and it lands in the P2/P3 band that ui-spec §8 already degraded on purpose
+(ADR-102).
+
+**Known hazard:** `score_breakdown` is **NULL for batch matches**, which already crashed seven
+review pages once. Any detail screen must render that absence as an absence.
+
+**Recommendation: build the cheap half.** Expand a match row in place to show its members, tier,
+group rule and score breakdown — reusing `/records/[transactionId]` for the per-record trail rather
+than duplicating it. That closes the argumentative gap with no contract change. Promote to a full
+screen only if time survives Phase 2.
+
+### On seeding an alias case — DON'T. The dataset already has 24.
+
+The holdout answer key contains **24 `MERCHANT_NAME_VARIANT` events**, every one
+`requiresAlias: true` and `expectedOutcome: MATCH_3WAY`. F9 is therefore not "manufacture a case"
+but "find where those 24 land and teach one". **Hand-seeding an exception would be strictly worse:**
+a planted record has no entry in the answer key, so every pair it touches becomes unscorable and any
+match rate computed over it is a number with no ground truth behind it. The one dataset property
+this project cannot trade away is that the key was written before the engine ran.
 **Phases 0–2 are the submission. Phase 3 is polish. Phase 4 is what gets cut first**, except F27,
 which is not optional.
 
