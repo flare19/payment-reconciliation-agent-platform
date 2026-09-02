@@ -1176,3 +1176,30 @@ refuses the rest with `400` rather than accepting and ignoring — the defect sh
 **Measured.** A fresh run with no `datasetSeed` reproduces the holdout **byte-for-byte** — identical `input_file_hashes`, 65.22%, 212 exceptions. A run at seed 20260905 produces **64.61% and 198 exceptions**, and scores against its own key at **precision 1.0000, FP 0**, recall 0.6139, macro P 0.919 / R 0.8833, unresolvable recall 1.0, every honesty gate passed, exit 0.
 
 > **THE SECOND DATASET IS ALSO EVIDENCE, NOT JUST FURNITURE.** The engine had never been scored against data it was not built on. It holds precision at 1.0000 with zero false positives on a dataset that did not exist when the matching rules were written. That is a stronger claim than anything the holdout alone can support, and it is available because the seed now does something.
+
+---
+
+### ADR-119 · Every matching figure ships twice: engine-alone and with review
+
+**A measurement that changes when nobody changes the code is not yet a measurement.**
+
+Run `verify` was scored at **recall 0.6075**. A re-score of the same run, with a byte-identical `tools/score`, returned **0.6941**. Between the two, a human approved 22 matches. `validation-strategy.md` §5 counts `auto_confirmed` **or** `human_confirmed` as a true positive and `scoring.ts` implemented that faithfully — so **8.7 points of "measured accuracy" arrived because somebody clicked Approve**, and nothing on screen or in the report said so.
+
+**This was not a bug.** It was a documented rule meeting a fact the rule did not anticipate: `human_confirmed` is a state a match *enters after the run is over*. The figure was correct at the instant it was computed and silently wrong an hour later.
+
+**Decision.** Every matching figure is computed under two confirmation policies, and **both always ship, both always labelled**:
+
+| | Confirmed | Deferred | Property |
+|---|---|---|---|
+| `ENGINE_ALONE` | `auto_confirmed` | `pending_review` + `human_confirmed` + `human_rejected` | **invariant after the run finishes** |
+| `WITH_REVIEW` | `auto_confirmed` + `human_confirmed` | `pending_review` | moves as reviewers work |
+
+`ENGINE_ALONE` is the headline for any claim about the **engine**; `WITH_REVIEW` is the system including its human loop, and is honest only with the human decision count printed beside it. Reporting either alone is the failure this ADR exists to prevent. It is ADR-020's cold/warm discipline applied to review, which is where it should always have been.
+
+**The stability is a property of the API, not a convention.** `POST /api/matches/:matchId/approve` refuses anything that is not `pending_review` (`409 MATCH_NOT_REVIEWABLE`), so review can only move a match *between* review states — never into or out of `auto_confirmed`. Engine-alone therefore reconstructs the run exactly as the engine left it, however much reviewing has happened since.
+
+**It also repairs `review_queue_precision`, which drifted for the same reason.** As reviewers clear the queue the denominator shrinks, so *"when this engine asks a human, is it asking about the right things?"* was being answered over a human-selected subset of the engine's own asks. Engine-alone answers it over the queue **as the engine handed it over**, which is the question §5.1.1 poses.
+
+**Verified.** Engine-alone reproduces `verify`'s pre-approval report to the digit (P 1.0000, R 0.6075, TP 435, FP 0). The guard was watched failing: widening `ENGINE_ALONE` to include `human_confirmed` — the pre-ADR behaviour — fails *"ENGINE_ALONE changed when a human clicked Approve"*. `SCORER_VERSION` 1.3.0 → 1.4.0, so re-posting appends rather than colliding with the unique constraint and the older measurements survive as history.
+
+> **THE SELF-CONSISTENCY CHECK THIS UNLOCKED, AND IT WAS PREVIOUSLY IMPOSSIBLE.** Three runs reconcile identical holdout bytes with identical code, so they must score identically. They now all report engine-alone recall **0.6075**. Before this change one of them reported 0.6941 and nothing was wrong with it. **An invariant that cannot be stated cannot be checked**, and "two runs over the same bytes agree" is the cheapest regression test this project has never had.

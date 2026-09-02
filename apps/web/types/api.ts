@@ -133,6 +133,11 @@ export interface EngineMetrics {
 /** Every field here was produced offline against an answer key that existed first. */
 export interface MeasuredMetrics {
   scorerVersion: string;
+  /**
+   * THE SYSTEM INCLUDING ITS HUMAN REVIEW LOOP. Moves as reviewers work, so it
+   * must never be rendered without `humanReview.confirmedGroups` beside it
+   * (validation-strategy §5.1.1a, ADR-119).
+   */
   matching: {
     precision: number; recall: number; f1: number;
     truePositives: number; falsePositives: number; falseNegatives: number;
@@ -143,6 +148,22 @@ export interface MeasuredMetrics {
     pendingExcludedFromQueuePrecision: number;
     falsePositivePairs: { a: string; b: string }[];
   };
+  /**
+   * THE ENGINE AS IT LEFT THE RUN. Invariant afterwards, and the headline for
+   * any claim about the engine rather than the system.
+   *
+   * `null` on a report written by scorer < 1.4.0 — two such reports exist and
+   * are deliberately left in place, so this is a real absence to render, not a
+   * theoretical one (ADR-119).
+   */
+  matchingEngineOnly: MeasuredMetrics['matching'] | null;
+  humanReview: {
+    confirmedGroups: number;
+    rejectedGroups: number;
+    stillPendingGroups: number;
+    recallDelta: number;
+    precisionDelta: number;
+  } | null;
   classification: {
     macroPrecision: number;
     macroRecall: number;

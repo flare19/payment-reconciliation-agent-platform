@@ -1445,3 +1445,15 @@ The obvious test for #55 — *"at the engine's own bounds the tool reproduces th
   Decided with Tejas: **split the figure** — engine-alone and engine+human, always together, always labelled. Filed as **F30**, and it lands before the tile-labelling and dashboard-composition units, because it changes what the headline number means. `verify` and `phase4-free`'s reports are knowingly left stale until then rather than re-posted twice.
 
   > **The pattern, and it is the seventh instance.** Every gate in this repo is watched failing before it is trusted, and every *bound* is measured before it is adopted. Nothing had ever asked when a measurement was taken relative to the thing it measures. A number that is correct at the moment it is computed and silently wrong an hour later passes every check this project has.
+
+- **2026-09-02 — Day 17, unit F30: a measured number that changed when nobody changed the code (ADR-119).** Filed out of F4 and fixed the same day, because it affects the headline the whole submission rests on.
+
+  `verify` scored **recall 0.6075**; a re-score with a byte-identical `tools/score` returned **0.6941**. Between them a human approved 22 matches. §5 counts `human_confirmed` as a true positive, and the scorer implemented that faithfully — so **8.7 points of measured accuracy arrived because somebody clicked Approve.** Not a bug: a documented rule meeting a fact it had not anticipated, namely that `human_confirmed` is a state a match *enters after the run is over*. The figure was right when computed and silently wrong an hour later.
+
+  Every matching figure is now computed under two policies — `ENGINE_ALONE` (`auto_confirmed` only, **invariant** once the run ends) and `WITH_REVIEW` — and **both always ship, labelled**, with the human decision count beside the second. It is ADR-020's cold/warm discipline applied to review, where it should always have been. The stability is enforced by the API, not by convention: approve refuses anything that is not `pending_review`, so review can never move a match into or out of `auto_confirmed`.
+
+  It also repaired `review_queue_precision`, which drifted the same way — clearing the queue shrank its denominator, so *"is the engine asking about the right things?"* was being answered over a human-selected subset of the engine's own asks.
+
+  **Watched failing:** widening `ENGINE_ALONE` to include `human_confirmed` — the pre-fix behaviour — fails *"ENGINE_ALONE changed when a human clicked Approve"*. Engine-alone then reproduces `verify`'s pre-approval report to the digit: P 1.0000, R 0.6075, TP 435, FP 0.
+
+  > **THE CHECK THIS UNLOCKED HAD BEEN IMPOSSIBLE TO STATE.** Three runs reconcile identical holdout bytes with identical code, so they must score identically. All three now report engine-alone recall **0.6075**. Before this, one reported 0.6941 and nothing was detectably wrong. *An invariant that cannot be stated cannot be checked* — and "two runs over the same bytes agree" is the cheapest regression test this project has never had. Add it to AUDIT-4's script.

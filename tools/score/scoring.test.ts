@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   scoreMatching, scoreClassification, scoreResolvability, scoreByDifficulty,
-  tierDiagnostic, pairsFromMatches, pairKey, rowKey,
+  tierDiagnostic, pairsFromMatches, pairKey, rowKey, ENGINE_ALONE, WITH_REVIEW,
   type AnswerKey, type EngineSnapshot, type KeyEvent, type EngineMatch,
 } from './scoring.js';
 import { assertSameDataset, buildReport } from './index.js';
@@ -97,6 +97,74 @@ describe('the group→pair mapping', () => {
     assert.equal(pairs.size, 3);
     assert.ok(pairs.has(pairKey(rowKey(G(1)), rowKey(L(1)))));
     assert.ok(pairs.has(pairKey(rowKey(B(1)), rowKey(L(1)))), 'the implied leg must be scored');
+  });
+});
+
+describe('§5.1.1a — engine-alone vs with-review (ADR-119)', () => {
+  /**
+   * THE DEFECT THIS PREVENTS. Run `verify` was scored at recall 0.6075, then a
+   * human approved 22 matches, and a re-score of the SAME RUN with a
+   * BYTE-IDENTICAL SCORER returned 0.6941. Eight and a half points of "measured
+   * accuracy" arrived because somebody clicked Approve, and nothing said so.
+   *
+   * Every check in this project watches a guard fail before trusting it. The
+   * guard here is subtler than usual: what must be demonstrated is that one
+   * number MOVES under review and the other DOES NOT. A test that only asserted
+   * the two figures exist would pass on the broken scorer.
+   */
+  const engineFound = ['t-g1', 't-b1', 't-l1'];
+
+  test('review moves the with-review figure and CANNOT move engine-alone', () => {
+    const deferred = snapshot([group('m', 'pending_review', engineFound)]);
+    const approved = snapshot([group('m', 'human_confirmed', engineFound)]);
+
+    const beforeEngine = scoreMatching(KEY, deferred, ENGINE_ALONE);
+    const afterEngine = scoreMatching(KEY, approved, ENGINE_ALONE);
+    const beforeReview = scoreMatching(KEY, deferred, WITH_REVIEW);
+    const afterReview = scoreMatching(KEY, approved, WITH_REVIEW);
+
+    // The engine did the same work in both worlds. Its figure must not notice.
+    assert.deepEqual(afterEngine, beforeEngine,
+      'ENGINE_ALONE changed when a human clicked Approve — the whole point of §5.1.1a');
+    assert.equal(afterEngine.truePositives, 0);
+    assert.equal(afterEngine.pendingPairs, 3, 'a human-confirmed pair is still DEFERRED work');
+
+    // And the system's figure must notice, or the split says nothing.
+    assert.equal(beforeReview.truePositives, 0);
+    assert.equal(afterReview.truePositives, 3);
+    assert.ok(afterReview.recall > beforeReview.recall);
+  });
+
+  test('a rejection is deferred work engine-alone, and withdrawn with review', () => {
+    const rejected = snapshot([group('m', 'human_rejected', engineFound)]);
+    assert.equal(scoreMatching(KEY, rejected, ENGINE_ALONE).pendingPairs, 3);
+    // With review the engine withdrew the claim: neither confirmed nor pending.
+    assert.equal(scoreMatching(KEY, rejected, WITH_REVIEW).pendingPairs, 0);
+    assert.equal(scoreMatching(KEY, rejected, WITH_REVIEW).truePositives, 0);
+  });
+
+  test('with no review at all the two are identical — by coincidence, not by rule', () => {
+    const untouched = snapshot([group('m', 'auto_confirmed', engineFound)]);
+    assert.deepEqual(
+      scoreMatching(KEY, untouched, ENGINE_ALONE),
+      scoreMatching(KEY, untouched, WITH_REVIEW));
+  });
+
+  test('the default policy is WITH_REVIEW, so no existing caller changed meaning', () => {
+    const mixed = snapshot([group('m', 'human_confirmed', engineFound)]);
+    assert.deepEqual(scoreMatching(KEY, mixed), scoreMatching(KEY, mixed, WITH_REVIEW));
+  });
+
+  test('review-queue precision is answered over the queue AS HANDED OVER', () => {
+    // It drifts under WITH_REVIEW because clearing the queue shrinks the
+    // denominator: the question "is the engine asking about the right things?"
+    // was being answered over a human-selected subset of its own asks.
+    const half = snapshot([
+      group('m1', 'human_confirmed', engineFound),
+      group('m2', 'pending_review', ['t-g2', 't-b2', 't-l2']),
+    ]);
+    assert.equal(scoreMatching(KEY, half, ENGINE_ALONE).pendingPairs, 6);
+    assert.equal(scoreMatching(KEY, half, WITH_REVIEW).pendingPairs, 3);
   });
 });
 

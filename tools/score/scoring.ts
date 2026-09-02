@@ -198,6 +198,33 @@ export function isJudgeableSameSourcePair(key: AnswerKey, k: string): boolean {
       && pairKey(rowKey(p.a), rowKey(p.b)) === k);
 }
 
+/**
+ * Which match statuses count as an engine CLAIM, and which as DEFERRED to a
+ * human (§5.1.1a, ADR-119).
+ *
+ * Two presets, and every matching figure is computed under both. `ENGINE_ALONE`
+ * is invariant after the run finishes — `POST /api/matches/:matchId/approve`
+ * refuses anything that is not `pending_review` (409 MATCH_NOT_REVIEWABLE), so
+ * review moves a match only BETWEEN review states, never into or out of
+ * `auto_confirmed`.
+ */
+export interface ConfirmationPolicy {
+  readonly confirmed: readonly string[];
+  readonly deferred: readonly string[];
+}
+
+/** The system including its human loop. Moves as reviewers work. */
+export const WITH_REVIEW: ConfirmationPolicy = {
+  confirmed: ['auto_confirmed', 'human_confirmed'],
+  deferred: ['pending_review'],
+};
+
+/** The engine as it left the run. Cannot change afterwards. */
+export const ENGINE_ALONE: ConfirmationPolicy = {
+  confirmed: ['auto_confirmed'],
+  deferred: ['pending_review', 'human_confirmed', 'human_rejected'],
+};
+
 export interface MatchingScore {
   precision: number; recall: number; f1: number;
   truePositives: number; falsePositives: number; falseNegatives: number;
@@ -243,8 +270,10 @@ export function pairsFromMatches(
   return out;
 }
 
-/** §5.1 + §5.1.1 + ADR-072 case 2. */
-export function scoreMatching(key: AnswerKey, engine: EngineSnapshot): MatchingScore {
+/** §5.1 + §5.1.1 + §5.1.1a + ADR-072 case 2. */
+export function scoreMatching(
+  key: AnswerKey, engine: EngineSnapshot, policy: ConfirmationPolicy = WITH_REVIEW,
+): MatchingScore {
   const byTransactionId = new Map(engine.records.map((r) => [r.transactionId, r]));
   const produced = pairsFromMatches(engine.matches, byTransactionId);
 
@@ -262,13 +291,15 @@ export function scoreMatching(key: AnswerKey, engine: EngineSnapshot): MatchingS
     if (p.shouldMatch) shouldMatch.add(k); else shouldNotMatch.add(k);
   }
 
-  // Confirmed only. `pending_review` is a proposal and belongs to neither
-  // bucket; `human_rejected` is a claim the engine withdrew.
+  // Confirmed only. A deferred pair is a proposal and belongs to neither bucket.
+  // Under WITH_REVIEW, `human_rejected` is a claim the engine withdrew and is in
+  // neither set; under ENGINE_ALONE it is deferred, because at the moment the
+  // run finished that is exactly what it was (§5.1.1a).
   const confirmed = new Set<string>();
   const pending = new Set<string>();
   for (const [k, v] of produced) {
-    if (v.status === 'auto_confirmed' || v.status === 'human_confirmed') confirmed.add(k);
-    else if (v.status === 'pending_review') pending.add(k);
+    if (policy.confirmed.includes(v.status)) confirmed.add(k);
+    else if (policy.deferred.includes(v.status)) pending.add(k);
   }
 
   let tp = 0;

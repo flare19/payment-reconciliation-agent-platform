@@ -53,16 +53,32 @@ export function HeadlineRow({
       />
 
       {measured ? (
+        /*
+         * THE ENGINE'S OWN FIGURE, NOT THE SYSTEM'S (ADR-119).
+         *
+         * `matching` counts a human-approved proposal as an engine true
+         * positive, so it RISES every time somebody clicks Approve — run
+         * `verify` moved from recall 0.6075 to 0.6941 on 22 approvals, with a
+         * byte-identical scorer and no code change. A tile that showed that
+         * without saying so would credit the engine with a person's work,
+         * which is the exact failure ADR-020's cold/warm rule exists to stop.
+         *
+         * So the number rendered is `matchingEngineOnly`, which cannot move
+         * after the run finishes, and the human contribution is disclosed
+         * rather than folded in. `null` on the two reports written before
+         * scorer 1.4.0 — a real absence, so it falls back and says so.
+         */
         <Figure
           size="hero"
           label="False Positives"
           provenance="measured"
-          value={count(measured.matching.falsePositives)}
+          value={count((measured.matchingEngineOnly ?? measured.matching).falsePositives)}
           unit="wrong matches"
           note={
             <>
-              Precision {ratio4(measured.matching.precision)} over{' '}
-              {count(measured.matching.truePositives)} confirmed pairs
+              Precision {ratio4((measured.matchingEngineOnly ?? measured.matching).precision)} over{' '}
+              {count((measured.matchingEngineOnly ?? measured.matching).truePositives)} pairs the
+              engine confirmed on its own
             </>
           }
           basis={{
@@ -72,8 +88,23 @@ export function HeadlineRow({
               + `which was generated before the engine ran and is never read by the API (ADR-021). `
               + `${count(measured.matching.excludedExceptionEventPairs)} pairs were excluded from both `
               + `sides because their economic event is itself an exception (ADR-072), and `
-              + `${count(measured.matching.pendingPairs)} proposed-but-unconfirmed pairs are scored `
-              + `separately as review-queue precision rather than counted here.`,
+              + `${count((measured.matchingEngineOnly ?? measured.matching).pendingPairs)} `
+              + `proposed-but-unconfirmed pairs are scored separately as review-queue precision `
+              + `rather than counted here. `
+              + (measured.matchingEngineOnly === null
+                ? 'This report predates the engine-alone figure, so it counts human approvals '
+                  + 'toward the engine. Re-score the run to separate them.'
+                : measured.humanReview !== null
+                  && (measured.humanReview.confirmedGroups > 0 || measured.humanReview.rejectedGroups > 0)
+                  ? `A reviewer has since approved ${count(measured.humanReview.confirmedGroups)} and `
+                    + `rejected ${count(measured.humanReview.rejectedGroups)} of the engine's `
+                    + `proposals. Counting those too, precision is `
+                    + `${ratio4(measured.matching.precision)} over `
+                    + `${count(measured.matching.truePositives)} pairs and recall is `
+                    + `${measured.humanReview.recallDelta} higher. Both figures ship; the tile shows `
+                    + 'the engine alone, because that is the one that cannot change afterwards.'
+                  : 'Nobody has reviewed a proposal on this run, so the engine-alone and '
+                    + 'with-review figures happen to be identical.'),
           }}
         />
       ) : (

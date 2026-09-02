@@ -61,12 +61,13 @@ import { createHash } from 'node:crypto';
 
 import {
   scoreMatching, scoreClassification, scoreResolvability, scoreByDifficulty,
+  WITH_REVIEW, ENGINE_ALONE,
   tierDiagnostic, round4,
   type AnswerKey, type EngineSnapshot, type EngineRecord, type EngineMatch,
   type EngineException,
 } from './scoring.js';
 
-export const SCORER_VERSION = '1.3.0';
+export const SCORER_VERSION = '1.4.0';
 
 interface Args {
   runId: string; keyFile: string; api: string; post: boolean; out: string | null;
@@ -179,7 +180,25 @@ export async function fetchEngineSnapshot(
 export interface ScoreReport {
   [k: string]: unknown;
   scorerVersion: string;
+  /**
+   * The system INCLUDING its human review loop. Moves as reviewers work, so it
+   * is honest only beside `humanReview.confirmedGroups` (§5.1.1a, ADR-119).
+   */
   matching: ReturnType<typeof scoreMatching>;
+  /**
+   * The engine as it left the run. **Invariant after the run finishes**, and the
+   * headline whenever a claim is made about the ENGINE rather than the system.
+   */
+  matchingEngineOnly: ReturnType<typeof scoreMatching>;
+  /** How much of `matching` a human supplied. Never omitted, even at zero. */
+  humanReview: {
+    confirmedGroups: number;
+    rejectedGroups: number;
+    stillPendingGroups: number;
+    /** `matching.recall - matchingEngineOnly.recall`. */
+    recallDelta: number;
+    precisionDelta: number;
+  };
   classification: ReturnType<typeof scoreClassification>;
   byDifficulty: ReturnType<typeof scoreByDifficulty>;
   resolvability: ReturnType<typeof scoreResolvability>;
@@ -190,7 +209,17 @@ export interface ScoreReport {
 
 /** Assemble the whole §5 measurement. Pure — every input is already in memory. */
 export function buildReport(key: AnswerKey, engine: EngineSnapshot): ScoreReport {
-  const matching = scoreMatching(key, engine);
+  const matching = scoreMatching(key, engine, WITH_REVIEW);
+  const matchingEngineOnly = scoreMatching(key, engine, ENGINE_ALONE);
+  const round4 = (n: number) => Math.round(n * 10_000) / 10_000;
+  const byStatus = (st: string) => engine.matches.filter((x) => x.status === st).length;
+  const humanReview = {
+    confirmedGroups: byStatus('human_confirmed'),
+    rejectedGroups: byStatus('human_rejected'),
+    stillPendingGroups: byStatus('pending_review'),
+    recallDelta: round4(matching.recall - matchingEngineOnly.recall),
+    precisionDelta: round4(matching.precision - matchingEngineOnly.precision),
+  };
   const classification = scoreClassification(key, engine);
   const resolvability = scoreResolvability(key, engine);
 
@@ -224,6 +253,8 @@ export function buildReport(key: AnswerKey, engine: EngineSnapshot): ScoreReport
   return {
     scorerVersion: SCORER_VERSION,
     matching,
+    matchingEngineOnly,
+    humanReview,
     classification,
     byDifficulty: scoreByDifficulty(key, engine),
     resolvability,
@@ -245,13 +276,28 @@ export function formatReport(r: ScoreReport, key: AnswerKey): string {
   const m = r.matching;
   const L: string[] = [];
   L.push('');
+  const e = r.matchingEngineOnly;
+  const h = r.humanReview;
   L.push('══ MATCHING (pairs) ═══════════════════════════════════════════');
-  L.push(`  precision ${m.precision}   recall ${m.recall}   F1 ${m.f1}`);
-  L.push(`  TP ${m.truePositives}   FP ${m.falsePositives}   FN ${m.falseNegatives}`);
-  L.push(`  FALSE POSITIVES: ${m.falsePositives}   <- the raw integer, per ADR-020`);
-  L.push(`  pending_review pairs ${m.pendingPairs} (scored separately, ADR-040)` +
-    `   review-queue precision ${m.reviewQueuePrecision ?? 'n/a'}` +
-    ` over ${m.pendingPairs - m.pendingExcludedFromQueuePrecision} judged`);
+  L.push('  BOTH FIGURES SHIP, ALWAYS (§5.1.1a, ADR-119). Engine-alone is the');
+  L.push('  headline for any claim about the ENGINE; it cannot change after the');
+  L.push('  run finishes. The with-review figure includes human decisions.');
+  L.push('');
+  L.push(`  ENGINE ALONE   precision ${e.precision}   recall ${e.recall}   F1 ${e.f1}`);
+  L.push(`                 TP ${e.truePositives}   FP ${e.falsePositives}   FN ${e.falseNegatives}`);
+  L.push(`  WITH REVIEW    precision ${m.precision}   recall ${m.recall}   F1 ${m.f1}`);
+  L.push(`                 TP ${m.truePositives}   FP ${m.falsePositives}   FN ${m.falseNegatives}`);
+  L.push(h.confirmedGroups === 0 && h.rejectedGroups === 0
+    ? '  human review   none yet — the two figures are identical BY COINCIDENCE, not by rule'
+    : `  human review   ${h.confirmedGroups} approved, ${h.rejectedGroups} rejected, `
+      + `${h.stillPendingGroups} still pending`
+      + `   =>  recall +${h.recallDelta}, precision ${h.precisionDelta >= 0 ? '+' : ''}${h.precisionDelta}`);
+  L.push('');
+  L.push(`  FALSE POSITIVES: ${e.falsePositives} engine-alone / ${m.falsePositives} with review`
+    + '   <- the raw integer, per ADR-020');
+  L.push(`  deferred pairs ${e.pendingPairs} as the engine left them (ADR-040)` +
+    `   review-queue precision ${e.reviewQueuePrecision ?? 'n/a'}` +
+    ` over ${e.pendingPairs - e.pendingExcludedFromQueuePrecision} judged`);
   L.push(`  excluded from both sides: ${m.excludedExceptionEventPairs} pairs whose EVENT is an ` +
     `EXCEPTION (ADR-072), ${m.excludedSameSourceLegs} same-source cardinality legs`);
   L.push('');

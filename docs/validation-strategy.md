@@ -237,13 +237,56 @@ Both ship. Publishing match rate *and* precision/recall side by side is what con
 
 A proposal is not a claim, and scoring it as one would be wrong in either direction — counting a pending pair as a match inflates recall with work no human has done; counting it as a miss punishes the engine for correctly asking.
 
-**Primary precision/recall count `auto_confirmed` and `human_confirmed` pairs only.** Pending pairs are scored separately and reported as a third figure:
+**Precision/recall count `auto_confirmed` and `human_confirmed` pairs only.** Pending pairs are scored separately and reported as a third figure:
 
 ```
 review_queue_precision = correct pending proposals / all pending proposals
 ```
 
 That number answers the question the review queue actually raises: *when this engine asks a human, is it asking about the right things?* A queue at 0.9 precision is a useful assistant; a queue at 0.4 is noise that costs more attention than it saves. It is also the number that justifies the review band existing at all, and it would be invisible if pending pairs were folded into either bucket.
+
+### 5.1.1a Every matching figure is reported TWICE: engine-alone and with review (ADR-119)
+
+**A measurement that changes when nobody changes the code is not yet a measurement.**
+
+§5.1.1 above counts `human_confirmed` as a true positive, and that is right — the engine *found* the
+pair; a human only agreed. But `human_confirmed` is a state a match **enters after the run is over**,
+when a reviewer clicks Approve. So a single, unchanged run reports different accuracy at different
+times, and the drift is invisible:
+
+```
+run `verify`, one run, one unchanged scorer
+  scored 2026-09-01 19:54                     recall 0.6075
+  22 matches approved 21:34 -> 00:32
+  re-scored 2026-09-02                        recall 0.6941     +8.7 points
+```
+
+Nothing on screen said that eight of those points were a person clicking a button. **This is the
+shape ADR-020 built the cold/warm rule for** — a figure that improves because of human effort must
+never be published without the figure that excludes it.
+
+So every matching figure is computed twice and **both always ship, both always labelled**:
+
+| | Confirmed set | Deferred set | Property |
+|---|---|---|---|
+| **engine-alone** | `auto_confirmed` | `pending_review` + `human_confirmed` + `human_rejected` | **Invariant.** Cannot change after the run finishes |
+| **with review** | `auto_confirmed` + `human_confirmed` | `pending_review` | Moves as reviewers work |
+
+**Engine-alone is stable by construction, and that is a property of the API, not a convention.**
+`POST /api/matches/:matchId/approve` refuses anything that is not `pending_review`
+(`409 MATCH_NOT_REVIEWABLE`), so review can only move a match *between* review states — never into
+or out of `auto_confirmed`. Engine-alone therefore reconstructs the run exactly as the engine left
+it, however much reviewing has happened since.
+
+That also fixes `review_queue_precision`, which drifts for the same reason: as reviewers clear the
+queue the denominator shrinks, so "is the engine asking about the right things?" was being answered
+over a shrinking, human-selected subset. Engine-alone answers it over **the queue as the engine
+handed it over**, which is the question that was being asked.
+
+**Which one is the headline?** Engine-alone, whenever a claim is made about the engine. The
+with-review figure is the system's performance including its human loop, and is honest only while
+the number of human decisions is printed beside it. Reporting either alone is the failure mode this
+section exists to prevent.
 
 ### 5.1.2 How `viaTier` is reconciled (ADR-072)
 
