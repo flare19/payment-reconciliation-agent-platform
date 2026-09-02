@@ -25,11 +25,15 @@ import styles from './page.module.css';
  *
  * Block order is the argument the project is making, rendered:
  *   1. match rate · FALSE POSITIVES · cold start · ceiling  (equal weight, one row)
- *   2. tier attribution
- *   3. exceptions by category
- *   4. throughput + explain-layer cost
+ *   2. exceptions by category      — the primary feature (F18, ADR-142)
+ *   3. throughput + explain-layer cost
+ *   4. tier attribution             — HOW the number in block 1 was earned
  *   4.5 the Analyst
  *   5. run picker
+ *
+ * 2–3 are ordered ahead of 4 on purpose: backlog item 13 names throughput,
+ * measured accuracy and the exception list as the 30-second argument, and 4
+ * is supporting detail on block 1 rather than one of those three things.
  *
  * Everything is fetched on the server. Nothing on this page is a client
  * component, so there is no spinner, no waterfall, and no moment where a
@@ -171,21 +175,17 @@ export default async function DashboardPage(
             </p>
           </section>
 
-          <Section
-            id="tiers"
-            title="How the Number Was Earned"
-            standfirst="Which rule confirmed each pair the engine matched."
-            basis={{
-              summary: 'What a bad version of this bar would look like',
-              body:
-                'Every confirmed pair is attributed to the rule that produced it. A bar dominated '
-                + 'by fuzzy matching would be a bad sign — the engine would be reaching a number by '
-                + 'resemblance rather than by proof — so the split is shown rather than summarised.',
-            }}
-          >
-            <TierAttribution engine={metrics.engine} />
-          </Section>
-
+          {/*
+            F18 (backlog item 13): the bar names throughput, measured accuracy
+            and the exception list. Accuracy is the headline row above; this
+            reorder puts Exceptions and Cost of Running It (throughput) directly
+            beneath it, ahead of Tier Attribution — which explains HOW the match
+            rate was earned rather than naming one of the three things a judge is
+            told to look for. CLAUDE.md's own framing settles the tiebreak between
+            the two: "the exception list is the primary feature, not a fallback
+            path," so it leads. No runQ threading changed — same props, same
+            links, only the document order (ADR-142).
+          */}
           <Section
             id="exceptions"
             title="The Exception List"
@@ -222,6 +222,21 @@ export default async function DashboardPage(
             }}
           >
             <EnginePerformance engine={metrics.engine} livePendingReview={livePendingReview} />
+          </Section>
+
+          <Section
+            id="tiers"
+            title="How the Number Was Earned"
+            standfirst="Which rule confirmed each pair the engine matched."
+            basis={{
+              summary: 'What a bad version of this bar would look like',
+              body:
+                'Every confirmed pair is attributed to the rule that produced it. A bar dominated '
+                + 'by fuzzy matching would be a bad sign — the engine would be reaching a number by '
+                + 'resemblance rather than by proof — so the split is shown rather than summarised.',
+            }}
+          >
+            <TierAttribution engine={metrics.engine} />
           </Section>
 
           <Section

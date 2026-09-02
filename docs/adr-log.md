@@ -1728,3 +1728,20 @@ Every tag is accurate about the paragraph it sits on. **The reading that made th
 **What the copy adds rather than removes:** the price is now followed by the reason the system is shaped this way — *"It is saved when it lands, so this exception is free to open from then on, for you and for anyone after you. That is the reason the Analyst works one exception at a time rather than sweeping the list."* The cost stops being a warning and becomes the argument for the on-demand design, which is what it actually is.
 
 **The armed panel's appearance is UNVERIFIED and cannot be seen without a click** — the same limit as F11. It costs nothing to check: arming is a local state change, and only the second button spends. Click *Ask the Analyst*, look, then *Not now*.
+
+---
+
+### ADR-142 · F18 — throughput and the exception list move ahead of "how", not literally into 900 pixels
+
+**Backlog item 13's complaint was true: throughput sat in block 4 of 5, and the exception list was one link inside the headline row's neighbourhood rather than a section of its own near the top.** Both are now sections 2 and 3, immediately under the headline row and ahead of Tier Attribution:
+
+```
+before   Headline → Tiers → Exceptions → Performance → Analyst → Runs
+after    Headline → Exceptions → Performance → Tiers → Analyst → Runs
+```
+
+**The tiebreak between Exceptions and Performance was not arbitrary.** CLAUDE.md states it directly — *"the exception list is the primary feature, not a fallback path"* — so it leads. Tier Attribution moved back a slot rather than up, on the same logic in reverse: it explains **how** the headline number was earned, and "how" is supporting detail on block 1, not one of the three things the bar names.
+
+**No `runQ` threading changed, and that was checked rather than assumed.** `ExceptionBreakdown`'s category links carry `run=` unchanged after the move — moving a `<Section>` in the JSX tree does not touch the props passed into it. Confirmed in the rendered HTML: all seven category links still resolve with the run query param attached.
+
+> **HONEST MEASUREMENT, NOT AN OVERCLAIM.** At a common 1400×900 laptop viewport: the headline row (block 1 — match rate, false positives, cold-start, ceiling) is fully visible with no scroll, and the exception list's heading appears right at the fold's edge. **The throughput section does not clear the fold at that height, and neither did it before this change.** The hero's title and thesis are the tallest single element on the page, and shrinking them was outside this unit's scope — item 13 asked for a restructure, not a rewrite of the hero. What moved is *document order*, which is the honest form of "above the fold" available without a larger redesign: throughput is now two sections closer to the top than it was, immediately behind the two things a judge is told to look for first.
