@@ -1,8 +1,8 @@
-import { readFileSync } from 'node:fs';
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import type { Env } from './config/env.js';
 import type { ErrorCode } from './types/dto.js';
 import type { RunSources } from './services/run/orchestrator.js';
+import { readSeedDataset as defaultSeedDataset } from './config/datasets.js';
 import { healthRouter } from './routes/health.js';
 import { runsRouter } from './routes/runs.js';
 import { auditRouter } from './routes/audit.js';
@@ -14,22 +14,6 @@ import { investigationsRouter } from './routes/investigations.js';
 import { rateLimit } from './routes/rate-limit.js';
 
 const VERSION = '1.0.0';
-
-/**
- * The committed holdout dataset, read from disk on demand.
- *
- * Read per run rather than cached at boot so the file hashes recorded on the
- * run always describe the bytes that run actually read. A cached copy would
- * make `input_file_hashes` a claim about start-up rather than about the run.
- */
-function defaultSeedDataset(): RunSources {
-  const dir = new URL('../../../data/fixtures/holdout/', import.meta.url).pathname;
-  return {
-    gateway: readFileSync(dir + 'gateway_export.csv', 'utf8'),
-    bank: readFileSync(dir + 'bank_settlement.csv', 'utf8'),
-    ledger: readFileSync(dir + 'merchant_ledger.csv', 'utf8'),
-  };
-}
 
 /**
  * Express app factory. Kept separate from `index.ts` so tests can build an app
@@ -52,7 +36,7 @@ export class ApiError extends Error {
 }
 
 export function createApp(
-  env: Env, readSeedDataset: () => RunSources = defaultSeedDataset,
+  env: Env, readSeedDataset: (seed: number | null) => RunSources = defaultSeedDataset,
 ): Express {
   const app = express();
   app.disable('x-powered-by');

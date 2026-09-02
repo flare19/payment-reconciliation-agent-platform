@@ -1155,3 +1155,24 @@ content, not in difficulty**, which is what makes two runs comparable rather tha
 tiles render "not measured" (ADR-041 + the provenance rule of ADR-098), so a keyless dataset makes
 the *weaker* demo, not the stronger one. F3 restricts `datasetSeed` to datasets that have a key, and
 refuses the rest with `400` rather than accepting and ignoring — the defect shape ADR-094 named.
+
+---
+
+### ADR-118 · `datasetSeed` selects the bytes, and an unknown seed is refused — the third instance of one defect, closed
+
+**The defect (ADR-103).** `routes/runs.ts` parsed `datasetSeed`, `repositories/runs.ts` persisted it and `serialize.ts` published it back — and `readSeedDataset()` was a **zero-argument closure** that always returned the holdout. Passing `datasetSeed: 12345` produced a run *labelled* 12345 that *reconciled* 90210. Identical in shape to `AGENT_MAX_COST_USD_PER_RUN` (fixed, ADR-094) and `STALE_RUN_TIMEOUT_MINUTES` (still open, ADR-097): parsed, documented, published, enforced nowhere.
+
+**The decision.**
+
+1. `readSeedDataset(seed: number | null)` resolves through a registry in `config/datasets.ts`.
+2. An unregistered seed is refused with `400 INVALID_REQUEST`, carrying `availableSeeds` in `details`. **A field that accepts what it cannot honour is dishonest; one that refuses is not.**
+3. A run with no `datasetSeed` now persists `90210` rather than `NULL`, so every run records what it actually read instead of leaving the reader to assume.
+4. The dataset is loaded **before** `createRun`. An unreadable dataset fails the request rather than leaving a run stuck at `pending` that nothing will finish — there is no reaper (ADR-097).
+
+**Why the registry is a hand-maintained allowlist and not a directory scan.** A dataset is offerable only if it has a committed answer key; without one it can never populate `score_reports` and two of four headline tiles render "not measured" (ADR-041, ADR-098), making the *weaker* demo. But the obvious check — look for `data/truth/<label>_seed_<seed>.json` — is exactly what **ADR-021 forbids**, and the leak guard enforces that by grep, so even an `existsSync` fails it. **So the engine is told which datasets are offerable and never told why.** The invariant is enforced outside the wall by `tools/generate/committed-datasets.test.ts`, which may see both sides: it asserts every registered seed has committed fixtures *and* a committed key, that the key was generated from that seed, that the fixtures hash to what the key's manifest claims, and that all four files are **tracked by git** rather than merely present on disk.
+
+**DEV_SEED (1337) is deliberately not offerable.** `data/fixtures/dev/` is gitignored, so it does not exist in a deployed environment. A seed that works only on a developer's laptop is worse than one that is not offered.
+
+**Measured.** A fresh run with no `datasetSeed` reproduces the holdout **byte-for-byte** — identical `input_file_hashes`, 65.22%, 212 exceptions. A run at seed 20260905 produces **64.61% and 198 exceptions**, and scores against its own key at **precision 1.0000, FP 0**, recall 0.6139, macro P 0.919 / R 0.8833, unresolvable recall 1.0, every honesty gate passed, exit 0.
+
+> **THE SECOND DATASET IS ALSO EVIDENCE, NOT JUST FURNITURE.** The engine had never been scored against data it was not built on. It holds precision at 1.0000 with zero false positives on a dataset that did not exist when the matching rules were written. That is a stronger claim than anything the holdout alone can support, and it is available because the seed now does something.

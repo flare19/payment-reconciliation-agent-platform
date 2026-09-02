@@ -19,6 +19,7 @@ import { Router } from 'express';
 import { ApiError } from '../app.js';
 import type { Env } from '../config/env.js';
 import { ENGINE_DEFAULTS } from '../config/defaults.js';
+import { DEFAULT_SEED, availableSeeds, findSeedDataset } from '../config/datasets.js';
 import type { RunConfig } from '../types/engine.js';
 import { executeRun, type RunSources } from '../services/run/orchestrator.js';
 import { createExplainClient } from '../services/llm-provider.js';
@@ -66,7 +67,9 @@ export function resolveConfig(
   return out as Omit<RunConfig, 'referenceDate' | 'aliasCountAtStart'>;
 }
 
-export function runsRouter(env: Env, readSeedDataset: () => RunSources): Router {
+export function runsRouter(
+  env: Env, readSeedDataset: (seed: number | null) => RunSources,
+): Router {
   const r = Router();
 
   // Built ONCE, not per run: the SDK client is stateless and rebuilding it per
@@ -97,7 +100,32 @@ export function runsRouter(env: Env, readSeedDataset: () => RunSources): Router 
     const label = typeof body['label'] === 'string' && body['label'].trim() !== ''
       ? body['label'].trim()
       : `seed-${new Date().toISOString()}`;
-    const datasetSeed = typeof body['datasetSeed'] === 'number' ? body['datasetSeed'] : null;
+    /**
+     * `datasetSeed` WAS PARSED, PERSISTED, SERIALISED AND HONOURED NOWHERE
+     * (ADR-103) — passing 12345 labelled the run 12345 and reconciled 90210.
+     * It now selects the bytes, and a seed with no committed dataset is refused
+     * rather than silently ignored: a field that accepts what it cannot honour
+     * is the defect shape ADR-094 named, and this was its third instance.
+     */
+    const raw = body['datasetSeed'];
+    if (raw !== undefined && raw !== null
+      && !(typeof raw === 'number' && Number.isSafeInteger(raw))) {
+      throw new ApiError(400, 'INVALID_REQUEST',
+        'datasetSeed must be an integer', { availableSeeds: availableSeeds() });
+    }
+    const datasetSeed = typeof raw === 'number' ? raw : DEFAULT_SEED;
+    if (findSeedDataset(datasetSeed) === undefined) {
+      throw new ApiError(400, 'INVALID_REQUEST',
+        `no committed dataset for datasetSeed ${datasetSeed}`,
+        { availableSeeds: availableSeeds() });
+    }
+
+    /**
+     * Loaded BEFORE the run row exists. An unreadable dataset then fails the
+     * request instead of leaving a run stuck at `pending` that nothing will
+     * ever finish — there is no reaper yet (ADR-097).
+     */
+    const sources = readSeedDataset(datasetSeed);
 
     const run = await runsRepo.createRun({
       label, datasetSeed,
@@ -107,7 +135,7 @@ export function runsRouter(env: Env, readSeedDataset: () => RunSources): Router 
     // Deliberately NOT awaited: the contract is 202-then-poll. `executeRun`
     // records its own failure, so a rejection here would be a programming error
     // and is logged rather than lost.
-    void executeRun(run.id, readSeedDataset(), config, explain).catch((err: unknown) => {
+    void executeRun(run.id, sources, config, explain).catch((err: unknown) => {
       console.error('[api] run crashed outside its own error handling', run.id, err);
     });
 
