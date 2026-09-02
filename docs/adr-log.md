@@ -1534,3 +1534,22 @@ alias DECISIVE for   3 records
 3. **An alias only ever adds matched records.** Asserted on the shipped dataset rather than claimed as a law, because greedy global assignment does not guarantee it — if it ever fires, the cold/warm pairing has to be stated differently.
 
 **Cost:** one extra matching pass per warm run, roughly a second, and nothing on a cold run — the pass is skipped entirely where the run's own figures already are the cold ones.
+
+---
+
+### ADR-133 · There is no "Measure" button, and the absence says why instead of naming a command
+
+**The complaint was correct: the dashboard told a judge to run `npm run score`.** An instruction the only people who see that screen cannot follow, printed where a number should be — which makes a deliberate architectural boundary read as an unfinished feature.
+
+**A Measure button cannot exist.** **ADR-021** forbids any module under `apps/api` from reading `data/truth/`, enforced by a leak guard that greps for it. That rule is why the accuracy claim is believable at all: *"does any code path reach the answer key?"* is otherwise a question you have to audit, and keeping the key outside the application makes leak-freedom obvious in five seconds. A button that made the API score a run would trade the project's central structural honesty claim for a convenience.
+
+**So the measurement keeps arriving the way the contract always intended, just automatically.** `POST /api/runs/:runId/score-report` (endpoint 23) exists precisely so an offline scorer can push a result in. `npm run score:watch` is that scorer on a loop: it polls for completed runs with no report, scores each against the answer key its `datasetSeed` names, and posts it. **A run started from the dashboard is measured within a few seconds of finishing, and the engine still cannot see the answers.**
+
+The key is found by filename — the generator writes `<label>_seed_<seed>.json`, so the seed→key mapping already exists on disk and a second copy in the watcher would eventually disagree with it. A run whose dataset has no committed key is reported and skipped, not retried forever.
+
+**The copy now explains rather than instructs:**
+
+> *Not measured yet — no score report has been posted for this run.*
+> *The engine is never given the answer key, so it cannot mark its own work. Accuracy is measured by a separate offline pass and posted back, which is why this is absent rather than estimated.*
+
+That sentence is worth more to a judge than the number would have been: it says the engine **cannot** mark its own homework, which is the property the whole measurement rests on.

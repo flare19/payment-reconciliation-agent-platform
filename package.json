@@ -12,7 +12,8 @@
     "score": "tsx tools/score/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test --import tsx tools/**/*.test.ts",
-    "analyst": "npm run analyst --prefix apps/api --"
+    "analyst": "npm run analyst --prefix apps/api --",
+    "score:watch": "tsx tools/score/watch.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -29,9 +29,24 @@ export function HeadlineRow({
 }) {
   const { matchRate, coldStart } = engine;
 
+  /**
+   * NEVER NAME A CLI COMMAND HERE. This read "run `npm run score` to produce
+   * one", which is an instruction the only people who see this screen cannot
+   * follow — and it makes a deliberate architectural boundary look like an
+   * unfinished feature.
+   *
+   * The boundary is ADR-021: no module under `apps/api` may read the answer
+   * key, so the application structurally CANNOT measure itself, and a
+   * measurement arrives from an offline pass through endpoint 23. That is the
+   * reason the accuracy figures are worth believing, so the absence says it
+   * rather than apologising for it.
+   */
   const noScoreReport =
-    'Not measured against ground truth. No score report exists for this run — '
-    + 'run `npm run score` to produce one.';
+    'Not measured yet — no score report has been posted for this run.';
+  const whyUnmeasured =
+    'The engine is never given the answer key, so it cannot mark its own work. Accuracy is '
+    + 'measured by a separate offline pass and posted back, which is why this is absent rather '
+    + 'than estimated.';
 
   return (
     <div className={styles.row}>
@@ -113,7 +128,7 @@ export function HeadlineRow({
           label="False Positives"
           provenance="absent"
           absentReason={noScoreReport}
-          note="The engine’s own figure is deliberately not substituted here."
+          note={whyUnmeasured}
         />
       )}
 

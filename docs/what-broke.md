@@ -1582,3 +1582,9 @@ The obvious test for #55 — *"at the engine's own bounds the tool reproduces th
   **One real gap, fixed.** `datasets` comes from `/api/health`; if that call fails the array is empty, and the panel rendered **no choices beside a working Run button** — which would start a holdout run while appearing to offer no choice, leaving the reader no way to know which dataset they had just reconciled. It now says so and disables the button.
 
   **Both dataset paths verified end to end** with the exact payload the launcher builds: holdout → 65.56% / 212 / cold 65.22, demo → 64.61% / 198 / cold 64.61. **The demo run reports cold equal to warm**, which is correct and is an independent check on F9.5: the one taught alias resolves nothing on that dataset, and the cold pass reports no difference rather than inventing one.
+
+- **2026-09-02 — Day 17: the dashboard told judges to run a CLI command (ADR-133).** *"No score report exists for this run — run `npm run score` to produce one."* Printed where a number should be, to an audience that cannot run it, making a deliberate boundary look like an unfinished feature.
+
+  **A "Measure" button cannot exist**: ADR-021 forbids `apps/api` from reading `data/truth/`, and that rule is precisely why the accuracy claim is credible. So the fix is not to move the scorer inside the wall but to stop making a human trigger it: **`npm run score:watch`** polls for completed runs with no report and posts one through endpoint 23 — the endpoint that exists for exactly this. A run started from the dashboard is measured seconds after it finishes, with the engine still unable to see the answers. It found and scored all six unmeasured runs on its first pass; **all 20 runs now carry a measurement.**
+
+  The copy now explains instead of instructing — *"the engine is never given the answer key, so it cannot mark its own work"* — which is a better thing for a judge to read than the number would have been.
