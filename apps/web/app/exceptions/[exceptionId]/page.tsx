@@ -239,24 +239,32 @@ export default async function ExceptionDetailPage(
         )}
 
         {/*
-          "THESE WORDS" WAS A POINTER, AND POINTERS MOVE. Every sentence here
-          now names its subject — *this explanation* — so that no future
-          rearrangement can silently re-aim it at a paragraph somebody else
+          "THE MODEL" IS GONE FROM THIS PARAGRAPH TOO, AND FOR THE SAME REASON
+          THE TAG DROPPED IT (ADR-143). Tejas read "written by the model" as a
+          claim about the Analyst three separate times, on three exceptions the
+          Analyst had never touched — the qualifiers around the noun kept
+          changing, the noun itself never did. This names the actual system,
+          the Explain Layer, which cannot be misread as the other one.
+
+          "THESE WORDS" WAS ALSO A POINTER, AND POINTERS MOVE. Every sentence
+          here still names its subject — *this explanation* — so a future
+          rearrangement cannot silently re-aim it at a paragraph somebody else
           wrote. The tag above says who wrote it; this says what it is worth.
         */}
         <p className={styles.explainFoot}>
           {exception.explanationSource === 'template'
-            ? 'This explanation was written by a deterministic template — the model was '
-              + 'unavailable or disabled, and nothing below this line changed as a result.'
+            ? 'This explanation was written by a deterministic template — a live model was '
+              + 'unavailable or disabled when this run wrote it, and nothing below this line '
+              + 'changed as a result.'
             : exception.explanationSource === 'llm_cache'
-              ? 'This explanation was written by the model, about a decision the rules had '
-                + 'already made, and it has no influence over the match, the category, or the '
-                + 'evidence below. The model was not called for this record: the same wording had '
+              ? 'This explanation was written by the Explain Layer, about a decision the rules '
+                + 'had already made, and it has no influence over the match, the category, or '
+                + 'the evidence below. It was not called for this record: the same wording had '
                 + 'already been written for an exception of this exact shape and was reused, '
                 + 'which is why a run explains hundreds of exceptions for the price of a couple '
                 + 'of dozen.'
-              : 'This explanation was written by the model, about a decision the rules had '
-                + 'already made. It has no influence over the match, the category, or the '
+              : 'This explanation was written by the Explain Layer, about a decision the rules '
+                + 'had already made. It has no influence over the match, the category, or the '
                 + 'evidence below.'}
           {exception.sharedExplanationCount !== null && exception.sharedExplanationCount > 0 && (
             <> It describes a <em>shape</em> rather than this particular record — the same

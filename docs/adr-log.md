@@ -1745,3 +1745,25 @@ after    Headline → Exceptions → Performance → Tiers → Analyst → Runs
 **No `runQ` threading changed, and that was checked rather than assumed.** `ExceptionBreakdown`'s category links carry `run=` unchanged after the move — moving a `<Section>` in the JSX tree does not touch the props passed into it. Confirmed in the rendered HTML: all seven category links still resolve with the run query param attached.
 
 > **HONEST MEASUREMENT, NOT AN OVERCLAIM.** At a common 1400×900 laptop viewport: the headline row (block 1 — match rate, false positives, cold-start, ceiling) is fully visible with no scroll, and the exception list's heading appears right at the fold's edge. **The throughput section does not clear the fold at that height, and neither did it before this change.** The hero's title and thesis are the tallest single element on the page, and shrinking them was outside this unit's scope — item 13 asked for a restructure, not a rewrite of the hero. What moved is *document order*, which is the honest form of "above the fold" available without a larger redesign: throughput is now two sections closer to the top than it was, immediately behind the two things a judge is told to look for first.
+
+---
+
+### ADR-143 · "The model" is retired from the explanation tag — a common noun cannot compete with a proper one
+
+**Three reports in one session, on three different exceptions, and the third one arrived after both prior fixes.** ADR-138 gave the tag its own axis (`llm` / `llm_cache` / `template`, no longer confusable with each other). ADR-140 fixed a real ordering bug where the footnote briefly sat under the Analyst's words. ADR-140's follow-up made the tag name its surface — *"Explanation written by the model"*. **All three were correct, and the misreading survived all three.** On `75e66f8a`, an exception with zero investigations, the tag still read as a claim that the Analyst had looked at it.
+
+**The word doing the damage was never fixed by qualifying it.** "The model" is a common noun. This page has a named system called **the Analyst** already in view — in the nav, in the section two screens down, in every other exception a reader has likely already opened. A reader's eye resolves "the model" to the nearest proper noun that means roughly the same thing, regardless of how the sentence around it is qualified. *"Explanation written by the model"* still parses, for a hurried reader, as *"[the Analyst,] which is a model, wrote the explanation."* Three real people-shaped read attempts said so.
+
+**Fixed by removing the noun rather than annotating it again:**
+
+```
+llm         Written by the model            → Written by the Explain Layer
+llm_cache   Written by the model, reused     → Written by the Explain Layer, reused
+template    Written by a template            → unchanged
+```
+
+**"Explain Layer" is not a new term invented for this fix — it already labels its own panel on the same page**, in "Cost of Running It" → "Explain Layer" (`EnginePerformance.tsx`, since Day 11 / ADR-084). The tag and that panel now name the same system the same way. Two proper nouns — **Explain Layer**, **Analyst** — cannot be confused for each other the way two readings of one common noun can; a reader does not need to hold a qualifier in mind, only recognize a name they have already seen used consistently.
+
+The footnote drops "the model" too, for the identical reason: *"This explanation was written by the Explain Layer…"*, in both the fresh-generation and cached-reuse branches.
+
+> **The pattern across three fixes on one string is worth naming precisely, because it will recur.** Each fix made the sentence more accurate and none of them made it more legible, because the defect was never in the sentence's accuracy — it was in sharing a word with a name the reader already trusted. **A generic term next to a proper noun that means something similar will keep losing**, no matter how it is qualified. The fix that finally worked did not add words; it removed the ambiguous one.

@@ -94,19 +94,25 @@ export const TIER_LABEL: Record<string, string> = {
  * know the model was not called for this row. It shows as what it is: a second
  * clause on the same sentence.
  *
- * AND IT NAMES WHAT IT LABELS, because this page has TWO model surfaces and
- * "the model" does not pick one. S13 writes the explanation during the run;
- * the Analyst investigates on demand; both are the same model id, and only the
- * Analyst was ever named. Read as a claim about the Analyst, *Written by the
- * model* on an exception nobody investigated looks like a bug — it was read
- * that way, twice, by the person who built it (ADR-140). The tag is longer for
- * it and that is the right trade: it is the first thing a reader uses to decide
- * who is talking.
+ * "THE MODEL" IS RETIRED FROM THIS TAG, AND IT TOOK THREE REPORTS TO LEARN WHY
+ * (ADR-143). Naming the surface — "Explanation written by the model" — was
+ * tried first (ADR-140) and still read as a claim about the Analyst on an
+ * exception nobody had investigated, three separate times, by the person who
+ * built the page. "The model" is a common noun; a reader with a named system
+ * called the Analyst already in view will resolve it to that name, no matter
+ * how the sentence around it is qualified. Adding words to a noun that is
+ * already wrong does not fix it.
+ *
+ * "Explain Layer" is not a new term — it already labels its own panel further
+ * down this exact page (`EnginePerformance`, "Cost of Running It" → "Explain
+ * Layer"), so this tag and that panel now name the same thing the same way,
+ * and neither spells anything close to "Analyst". Two proper nouns cannot be
+ * confused for each other the way two readings of "the model" can.
  */
 export const EXPLANATION_SOURCE_LABEL: Record<string, string> = {
-  llm: 'Explanation written by the model',
-  llm_cache: 'Explanation written by the model, reused',
-  template: 'Explanation written by a template',
+  llm: 'Written by the Explain Layer',
+  llm_cache: 'Written by the Explain Layer, reused',
+  template: 'Written by a template',
 };
 
 export const ACTOR_LABEL: Record<string, string> = {
