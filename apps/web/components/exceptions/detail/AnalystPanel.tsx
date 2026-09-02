@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Chip } from '@/components/ui/Chip';
+import { ModelVoice } from '@/components/ui/ModelVoice';
 import { at, count } from '@/lib/format';
 import { hrefWith } from '@/lib/run-context';
 import { InvestigationPoller } from './InvestigationPoller';
@@ -181,9 +182,17 @@ export function AnalystPanel(
                   <span className={styles.fieldLabel}>Recorded by the runtime</span>
                   <code className={styles.digest} translate="no">{s.resultDigest}</code>
                 </div>
+                {/*
+                  The digest above is the runtime's record; this is the model
+                  talking. They were already in separate fields with separate
+                  labels and still in identical ink — so the one distinction
+                  this panel exists to draw was the one a reader had to take on
+                  trust. No attribution here: the label directly above it says
+                  whose words these are (ADR-139).
+                */}
                 <div className={styles.stepField}>
                   <span className={styles.fieldLabel}>The model&rsquo;s inference</span>
-                  <p className={styles.inference}>{s.inference}</p>
+                  <ModelVoice>{s.inference}</ModelVoice>
                 </div>
               </div>
             </li>

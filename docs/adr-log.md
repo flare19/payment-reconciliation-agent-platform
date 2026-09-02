@@ -1654,3 +1654,21 @@ phase4-free   211 llm_cache   · 20 signatures · 1 template
 **Fixed on one axis — who wrote the words — with reuse as a clause on the same sentence:** `llm` → *Written by the model* · `llm_cache` → *Written by the model, reused* · `template` → *Written by a template*. The foot now branches for `llm_cache` and says the model was not called for this record, that the wording already existed for an exception of this exact shape, and why that is the point: **a run explains hundreds of exceptions for the price of a couple of dozen.** The cost story survives; it just stops masquerading as authorship.
 
 > **This is the F13/F14 defect class again, and the third instance in one day.** *Ceiling*, *Grounding-Gate Rejections*, and now *From the signature cache* — each named the mechanism accurately to whoever already knew it, and each answered a question the reader was not asking instead of the one they were. **The tell is a label that is a noun from the implementation rather than a claim about the thing on screen.** Worth grepping for on the remaining screens before the submission.
+
+---
+
+### ADR-139 · F16 — the model's voice is quotation and measure, never colour
+
+**Every sentence on the site was the same ink: the ones the engine computed, the ones we wrote about the engine, and the ones a model produced.** On a project whose entire argument is *which part of this did the model do*, that was the one distinction the typography did not make. The `AnalystPanel` was the sharpest case — `resultDigest` and `inference` sat in separate labelled fields, exactly as designed, **in identical type** — so the panel's whole reason for existing was something a reader had to take on trust.
+
+**The constraint was not to invent a second provenance (ADR-098), and the answer is that they are different questions.** Provenance asks *how far can I trust this number* and answers in colour: `--verified`, a tick, a tinted tile. Voice asks *whose sentence is this* and answers the way print has always answered it — the words are **quoted, set to a narrower measure, and attributed**. No tick, no `--verified`, no tinted panel. A reader who has learned that teal means *checked against an answer key* must never meet teal on a paragraph nobody checked.
+
+**One rule makes it worth having:** only the model's own words go in that voice. Our sentences *about* the model — the verdict gloss, the grounding banner, the footnote explaining a cached explanation — stay in the interface's voice, because a reader has to be able to tell a claim the model made from a claim we make on its behalf. **A template-written explanation is therefore NOT in the voice**, which is how the page shows without a word that the model did not write it: the same exception detail renders 8 voice blocks when the model wrote the explanation and the Analyst ran, 1 when only the explanation is the model's, and **0** when the explanation came from a template.
+
+> **THREE THINGS THE SCREENSHOTS FOUND THAT THE CODE COULD NOT.** F16 is a visual unit, so it was verified in a real headless Chromium rather than by reading markup — the embedded pane cannot render a streamed page (ADR-127), but a browser driven from the shell can.
+>
+> 1. **The attribution failed contrast.** `--voice-mark` was set to the agent chip's `#6c80a6`, which measures **3.98:1 on white and 3.42:1 on the sunk surface** against 11px text — both under AA. It is `#4a5e88` (6.47 / 5.56), same family, legible at the size it is actually set.
+> 2. **`<blockquote>` carries a 40px default left margin**, which opened a canyon between the quotation mark and the words it opens. Invisible in the source, invisible to a typecheck, obvious in a picture.
+> 3. **The hairline rule had to go.** It duplicated the idiom `Figure` and `Disclosure` already use for a basis body, stacked a second parallel rule inside the suggestion panel, and left the quotation mark floating in the channel between the two. The quotation and the measure are the signal; the rule was decoration competing with it.
+>
+> **A design unit verified only by grepping for a class name would have shipped all three.**

@@ -1,0 +1,70 @@
+/* The model's voice. Quotation and measure, never colour-as-status.
+   See ModelVoice.tsx and ADR-139 for why this shares nothing with provenance. */
+
+.voice {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 0.875rem minmax(0, 1fr);
+  column-gap: var(--s2);
+  align-items: start;
+  /* Narrower than the page's 78ch prose ON PURPOSE. A quoted column inside a
+     wider text block is the oldest signal in print that the voice has changed,
+     and it survives greyscale, dark mode and a colour-blind reader — none of
+     which is true of a tint. */
+  max-width: 62ch;
+}
+
+/* NO LEFT RULE, and that is a decision the first screenshot forced. A hairline
+   here duplicated the idiom `Figure` and `Disclosure` already use for a basis
+   body, stacked a second parallel rule inside the suggestion panel, and left
+   the quotation mark floating in the channel between the two. The quotation
+   and the measure are the signal; a rule was decoration competing with it. */
+
+.mark {
+  grid-row: 1;
+  font-size: 1.5rem;
+  line-height: 0.9;
+  color: var(--voice-mark);
+  user-select: none;
+}
+
+/* `margin: 0` is load-bearing, not tidiness. A <blockquote> carries a 40px
+   default left margin in every browser, and it put a canyon between the
+   quotation mark and the words it opens — visible in a screenshot, invisible in
+   the source, and invisible to a typecheck. */
+.body {
+  grid-row: 1;
+  margin: 0;
+  font-size: var(--t-body);
+  /* Looser than UI prose. Interface text is scanned; a quoted paragraph is
+     read, and it should invite that. */
+  line-height: 1.7;
+  color: var(--ink);
+  text-wrap: pretty;
+}
+
+/* The one explanation that heads a page gets a wider measure than a quoted
+   aside — still narrower than the 78ch prose around it, so the voice still
+   reads as a change of speaker, but without stranding half the block. */
+.lead {
+  max-width: 72ch;
+}
+
+.lead .body {
+  font-size: var(--t-lead);
+  line-height: 1.65;
+}
+
+.lead .mark { font-size: 1.875rem; }
+
+.attribution {
+  grid-column: 2;
+  margin-top: var(--s2);
+  font-size: var(--t-micro);
+  letter-spacing: 0.02em;
+  color: var(--voice-mark);
+}
+
+/* An em dash before the name, the way an epigraph is credited. Decorative —
+   the caption reads correctly without it. */
+.attribution::before { content: "— "; }

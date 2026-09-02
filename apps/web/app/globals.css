@@ -60,6 +60,21 @@
   --verified-bg: #eaf5f3;
   --verified-rule: #b5d9d3;
 
+  /* VOICE — who is speaking. NOT a second provenance (ADR-139).
+     Provenance answers "how far should I trust this number"; voice answers
+     "whose sentence is this". Different questions, so a different channel:
+     voice is carried by quotation and measure, and these two values only tint
+     the marks that say so. Never mix with --verified: a measured figure and a
+     model's paragraph are not degrees of the same thing, and a reader who
+     learns to read teal as "checked" must not meet it on unchecked prose.
+     Drawn from the tier ramp because that is the hue the audit screen already
+     gives the `agent` actor, so the two surfaces agree about who the model is. */
+  /* #4a5e88, not the #6c80a6 the agent chip uses: the attribution is 11px, and
+     the chip's hue measures 3.98:1 on white and 3.42:1 on the sunk surface —
+     both under AA. This one is 6.47 / 5.56. Same family, legible at the size it
+     is actually set. */
+  --voice-mark: #4a5e88;
+
   /* severity — used ONLY where severity is the meaning */
   --sev-high: #b0342a;
   --sev-high-bg: #fbeceb;
@@ -115,6 +130,8 @@
     --verified: #46c9b6;
     --verified-bg: #0f2723;
     --verified-rule: #1f5049;
+
+    --voice-mark: #8b9dc1;
 
     --sev-high: #ef7d70;
     --sev-high-bg: #2a1512;

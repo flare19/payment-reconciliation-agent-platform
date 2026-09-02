@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Chip } from '@/components/ui/Chip';
 import { Disclosure } from '@/components/ui/Disclosure';
+import { ModelVoice } from '@/components/ui/ModelVoice';
 import { VERDICT_LABEL, label } from '@/lib/taxonomy';
 import type { InvestigationDetail } from '@/types/api';
 import styles from './AnalystSuggestion.module.css';
@@ -116,13 +117,16 @@ export function AnalystSuggestion(
       {inv.proposedAction && <ProposedFields action={inv.proposedAction} />}
 
       {closing && (
-        <blockquote className={styles.closing}>
-          <p>{closing}</p>
-          <footer className={styles.closingAttr}>
-            the Analyst, at step <span className="num">{inv.reasoning.length}</span> of its own
-            reasoning · <span translate="no">{inv.model}</span>
-          </footer>
-        </blockquote>
+        <ModelVoice
+          attribution={
+            <>
+              the Analyst, at step <span className="num">{inv.reasoning.length}</span> of its own
+              reasoning · <span translate="no">{inv.model}</span>
+            </>
+          }
+        >
+          {closing}
+        </ModelVoice>
       )}
 
       <p className={styles.jump}>

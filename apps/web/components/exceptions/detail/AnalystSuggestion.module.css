@@ -86,21 +86,5 @@
   overflow-wrap: anywhere;
 }
 
-/* ── the model's own closing words ─────────────────────────────────────────── */
-
-.closing {
-  padding-left: var(--s4);
-  border-left: 1px solid var(--rule-strong);
-  font-size: var(--t-body);
-  line-height: 1.6;
-  color: var(--ink);
-  text-wrap: pretty;
-}
-
-.closingAttr {
-  margin-top: var(--s2);
-  font-size: var(--t-micro);
-  color: var(--ink-3);
-}
 
 .jump { font-size: var(--t-micro); }

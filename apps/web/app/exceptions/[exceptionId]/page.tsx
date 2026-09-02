@@ -8,6 +8,7 @@ import { LinkedRecords } from '@/components/exceptions/detail/LinkedRecords';
 import { ResolveActions } from '@/components/exceptions/detail/ResolveActions';
 import { SearchClaim } from '@/components/exceptions/detail/SearchClaim';
 import { Chip, SeverityChip, ActorChip } from '@/components/ui/Chip';
+import { ModelVoice } from '@/components/ui/ModelVoice';
 import { Section } from '@/components/ui/Section';
 import {
   ApiClientError, getException, getInvestigationsForException,
@@ -195,9 +196,20 @@ export default async function ExceptionDetailPage(
           </span>
         </div>
 
-        <p className={styles.explanation}>
-          {exception.explanationText ?? 'No explanation was generated for this exception.'}
-        </p>
+        {/*
+          THE VOICE IS CONDITIONAL ON AUTHORSHIP, which is the whole point of
+          having one. A template-written explanation is NOT the model's words,
+          so it is not set as the model's words — the page shows that without
+          saying it, and a reader who has seen one of each can tell them apart
+          before reading either (ADR-139).
+        */}
+        {exception.explanationText === null ? (
+          <p className={styles.explanation}>No explanation was generated for this exception.</p>
+        ) : exception.explanationSource === 'template' ? (
+          <p className={styles.explanation}>{exception.explanationText}</p>
+        ) : (
+          <ModelVoice size="lead">{exception.explanationText}</ModelVoice>
+        )}
 
         {analystMaySuggest ? (
           <AnalystSuggestion
