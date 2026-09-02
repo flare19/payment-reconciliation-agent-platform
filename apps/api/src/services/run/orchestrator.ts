@@ -393,7 +393,18 @@ async function runPhases(
   // pairwise pair can claim one of them (§10 rule 3).
   const assembled = stage.time('group', () => assembleGroups(groupPairs, batch.groups));
 
-  const appliedAliasIds = [...new Set(exactPairs.flatMap((m) => m.aliasIds))];
+  /**
+   * EVERY alias that actually resolved a counterparty key, not only those that
+   * produced a Tier 1.5 match (ADR-130). A counterparty alias cannot make a
+   * Tier 1.5 match — that tier re-runs the Tier 1 exact test, which needs a
+   * strong anchor — so gating attribution on it meant `applied_count` stayed 0
+   * and no `ALIAS_APPLIED` entry was ever written for the alias family the
+   * review queue actually teaches.
+   */
+  const appliedAliasIds = [...new Set([
+    ...exactPairs.flatMap((m) => m.aliasIds),
+    ...t15.counterpartyResolutions.map((r) => r.appliedAliasId),
+  ])];
 
   await withTransaction(async (c) => {
     const audit = new PhaseAudit(c, runId);
@@ -455,7 +466,7 @@ async function runPhases(
         await audit.write({
           ...blank,
           eventType: 'ALIAS_APPLIED', subjectType: 'alias', subjectId: id,
-          reason: `alias ${id} contributed to at least one Tier 1.5 match in this run`,
+          reason: `alias ${id} resolved at least one counterparty key in this run`,
           details: { aliasId: id },
         });
       }
@@ -531,6 +542,7 @@ async function runPhases(
     groups: assembled.matches,
     exceptions,
     aliasCountAtStart: config.aliasCountAtStart,
+    counterpartyResolutions: t15.counterpartyResolutions,
     aliasCounts,
     // Every alias ever taught is a correction a human made, revoked ones
     // included — see `aliasStatusCounts`. Dropping the revoked ones would

@@ -117,25 +117,43 @@ export function HeadlineRow({
         />
       )}
 
-      <Figure
-        size="hero"
-        label="Cold Start"
-        provenance="engine"
-        value={pct(coldStart.matchRatePct)}
-        note={
-          coldStart.isCold
-            ? `No learned aliases — ${count(coldStart.aliasesActiveAtStart)} active when the run began`
-            : `${count(coldStart.aliasesActiveAtStart)} learned aliases were active when the run began`
-        }
-        basis={{
-          summary: 'Cold and warm, always together',
-          body:
-            'A warm run reuses aliases a human taught the system on an earlier run, so it will '
-            + 'always score at least as well as a cold one. Reporting only the warm figure would '
-            + 'credit the engine for corrections a person made (ADR-020), so both are always shown '
-            + 'and always labelled — here they are equal because this run is cold.',
-        }}
-      />
+      {/*
+        ON A WARM RUN THIS FIGURE DOES NOT EXIST, and drawing the warm number
+        here is exactly what ADR-020 forbids. It used to do precisely that:
+        `run-metrics` computed cold start with the SAME expression as the warm
+        rate, so a run with a learned alias active reported the alias's benefit
+        under the label that exists to exclude it (ADR-130).
+      */}
+      {coldStart.matchRatePct === null ? (
+        <Figure
+          size="hero"
+          label="Without Learned Rules"
+          provenance="absent"
+          absentReason={
+            `Not computed. ${count(coldStart.aliasesActiveAtStart)} learned `
+            + `${coldStart.aliasesActiveAtStart === 1 ? 'rule was' : 'rules were'} active when this `
+            + 'run began, and what it would have matched without them needs a second pass the '
+            + 'engine does not make.'}
+          note="The warm figure is never shown here in its place."
+        />
+      ) : (
+        <Figure
+          size="hero"
+          label="Without Learned Rules"
+          provenance="engine"
+          value={pct(coldStart.matchRatePct)}
+          note={`No learned rules were active — this run is its own cold start`}
+          basis={{
+            summary: 'Cold and warm, always together',
+            body:
+              'A warm run reuses corrections a human taught the system earlier, so it will always '
+              + 'score at least as well as a cold one. Reporting only the warm figure would credit '
+              + 'the engine for work a person did (ADR-020). This run had no learned rules active, '
+              + 'so its own rate IS the cold-start rate — on a warm run this tile reports an '
+              + 'absence instead, because the comparison has not been computed.',
+          }}
+        />
+      )}
 
       {measured ? (
         <Figure

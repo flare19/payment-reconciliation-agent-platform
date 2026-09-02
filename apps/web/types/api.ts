@@ -27,7 +27,12 @@ export interface RunHeadline {
   matchRatePct: number;
   /** `null` until a score report exists. NEVER substitute an engine figure. */
   falsePositiveMatches: number | null;
+  /** `null` on a WARM run: the aliases-disabled counterfactual is not computed
+   *  there, and a warm number under a cold label is the failure ADR-020 exists
+   *  to prevent (ADR-130). */
   coldStartMatchRatePct: number | null;
+  /** The API's own answer. Never re-derive it by comparing two rates. */
+  isCold: boolean | null;
   exceptionCount: number;
   pendingReviewCount: number | null;
 }
@@ -82,7 +87,7 @@ export interface EngineMetrics {
     /** Shown on hover. A percentage whose denominator is not inspectable is not a measurement. */
     denominatorNote: string;
   };
-  coldStart: { isCold: boolean; matchRatePct: number; aliasesActiveAtStart: number };
+  coldStart: { isCold: boolean; matchRatePct: number | null; aliasesActiveAtStart: number };
   exceptions: {
     total: number;
     byCategory: Record<string, number>;

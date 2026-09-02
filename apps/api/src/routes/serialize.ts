@@ -84,6 +84,15 @@ export function runSummary(r: Run): Record<string, unknown> {
       matchRatePct: m['matchRate']['matchRatePct'] ?? null,
       falsePositiveMatches: null,        // measured, not engine-computed (ADR-041)
       coldStartMatchRatePct: (m['coldStart'] ?? {})['matchRatePct'] ?? null,
+      /**
+       * SERVED, so the browse list does not re-derive it (ADR-088's rule,
+       * ADR-130's instance). `RunPicker` decided coldness by testing
+       * `coldStartMatchRatePct === matchRatePct` — and those were the same
+       * expression in `run-metrics`, so every run in the picker was labelled
+       * "Cold", including the warm one. Coldness is `aliasCountAtStart === 0`
+       * and only the API knows it.
+       */
+      isCold: (m['coldStart'] ?? {})['isCold'] ?? null,
       exceptionCount: m['exceptions']?.['total'] ?? null,
       pendingReviewCount: m['reviewBurden']?.['pendingReviewCount'] ?? null,
     },

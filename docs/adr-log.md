@@ -1453,3 +1453,25 @@ The list is **served from `/api/health`** rather than duplicated in the frontend
 **2 · The explain option is removed, not merely defaulted off (Tejas, Day 17).** It was an opt-in ~$0.03 pass, defaulted off, and its reasoning was sound — but the most prominent button on a public unauthenticated demo should have **no path** to spending real credit, not a path a stranger has to decline. Every run is now `llmExplainEnabled: false`.
 
 > **Nothing is lost from the argument.** Every exception still gets its deterministic template, and no match, number, or audit entry differs either way — that is ADR-017, and it is the point. Plain English from a model stays available **per exception, on request, behind the Analyst's own confirmation**, which is where a human has already decided to spend. The one thing this forfeits is the side-by-side demonstration of ADR-017 by running the same dataset with and without explanations; that can still be shown from two existing runs rather than by offering a spend button.
+
+---
+
+### ADR-130 · F9.2 — the alias feature was attributed nothing, and cold-start reported the warm number
+
+**Three defects, one theme: the learning loop worked and every figure describing it was wrong.**
+
+**1 · Attribution counted the wrong tier.** `appliedAliasIds` and `recordsAutoResolvedByAliases` were both derived from `exactPairs.filter(tier === 'alias')` — **Tier 1.5 matches only**. But Tier 1.5 substitutes aliases and re-runs the **Tier 1 exact test**, which requires a shared strong anchor, and a *counterparty* alias creates no anchor. It feeds Tier 2's counterparty component instead (`counterpartyKey ?? counterpartyNorm`). So the entire alias family the review queue actually teaches can never produce a Tier 1.5 match, and was attributed **zero** by construction.
+
+Measured before: `applied_count 0`, `last_applied_at null`, **no `ALIAS_APPLIED` audit entry ever written**, `recordsAutoResolvedByAliases 0`, `leverageRatio 0` — on a run where the alias demonstrably moved matched records 570 → 573.
+
+Now derived from `Tier15Result.counterpartyResolutions` — S7's record of every transaction whose key an alias resolved, regardless of which tier used it — intersected with records that ended up matched. Both halves matter: a resolution that changed nothing is not leverage, and a match that would have happened anyway is not the alias's doing. **`leverageRatio` is now 6** — one human correction resolving six records, which is the number ui-spec §5 calls the feature's whole argument.
+
+> `counterpartyResolutions` was declared in `types/engine.ts`, populated by S7, and read by **nothing**. Sixth instance of declared-and-never-consumed, after `datasetSeed`, `AGENT_MAX_COST_USD_PER_RUN`, `STALE_RUN_TIMEOUT_MINUTES`, `aliasSuggestions` and `ALIAS_CONFLICT_UNCONFIRMED`.
+
+**2 · `coldStart.matchRatePct` was a copy of the warm rate, not a computation.** Both were literally `pct(matched.size, reconcilable)`. ADR-020 defines cold start as the rate **"with aliases disabled"** and exists to stop a match rate quietly including the benefit of human corrections — **and its implementation reported exactly that.** On a warm run the tile showed the alias's benefit under the label whose only job is to exclude it.
+
+A cold run's own rate *is* the cold rate and is still reported. On a warm run the counterfactual has not been computed — it needs a second matching pass with the alias set empty — so it is **`null`, rendered as an absence that says why**. Reporting an honest absence is strictly better than a warm number wearing a cold label; computing the real counterfactual is filed as its own unit.
+
+**3 · The run picker decided coldness by comparing the two rates**, which defect 2 made identical on every run — so **every run in the list was labelled "Cold"**, including the one with a learned alias active. Coldness is `aliasCountAtStart === 0` and only the API knows it, so `isCold` is now served on the headline and read rather than re-derived. That is ADR-088's rule — *the frontend must not re-derive a rule the API already answers* — and this is its second instance.
+
+**Verified end to end on a fresh warm run:** `coldStart.matchRatePct: null`, `isCold: false`, `aliasesActiveAtStart: 1`, `recordsAutoResolvedByAliases: 6`, `leverageRatio: 6`, `applied_count: 1`, `last_applied_at` set, one `ALIAS_APPLIED` entry. The picker now shows Warm for every run after the alias was taught and Cold for every run before it. Re-scored: precision 1.0000 on both datasets, every honesty gate passed.

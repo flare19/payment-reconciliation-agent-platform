@@ -44,7 +44,11 @@ export function RunPicker({ runs, selectedRunId }: { runs: RunSummary[]; selecte
            * screen said the picker was gone (ADR-121).
            */
           const h = run.headline;
-          const isCold = h !== null && h.coldStartMatchRatePct === h.matchRatePct;
+          // READ, never derived. This line used to compare
+          // `coldStartMatchRatePct === matchRatePct`, and those were the same
+          // expression in run-metrics, so every run was labelled Cold —
+          // including one that had a learned alias active (ADR-130).
+          const isCold = h?.isCold ?? null;
           return (
             <tr key={run.runId} className={isSelected ? styles.selected : undefined}>
               <th scope="row" className={styles.runCell}>
@@ -59,7 +63,7 @@ export function RunPicker({ runs, selectedRunId }: { runs: RunSummary[]; selecte
                 {isSelected && <span className="sr-only">(currently shown)</span>}
               </th>
               <td>
-                {h === null ? (
+                {isCold === null ? (
                   <span className={styles.pending}>—</span>
                 ) : (
                   <span className={`${styles.badge} ${isCold ? styles.cold : styles.warm}`}>

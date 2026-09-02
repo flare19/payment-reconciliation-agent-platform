@@ -169,6 +169,7 @@ describe('computeRunMetrics against the holdout', () => {
       nonPrimaryDuplicates: ing.transactions.length - d.pool.length,
     },
     pool: t15.pool, exactPairs, tier2, identity, groups: assembled.matches, exceptions,
+    counterpartyResolutions: t15.counterpartyResolutions,
     batchOutcomes: [],
     batchPairs: [],
     aliasCountAtStart: 0,

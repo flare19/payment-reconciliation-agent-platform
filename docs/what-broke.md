@@ -1535,3 +1535,15 @@ The obvious test for #55 — *"at the engine's own bounds the tool reproduces th
   **The launcher could only ever reproduce one number.** Nine of the first ten runs reconciled byte-identical input and reported the same rate, because `datasetSeed` worked at the API (ADR-118) while `startRun` did not accept one. That is determinism behaving correctly and reading as breakage. It now offers the committed datasets, served from `/api/health` so the UI cannot offer a seed the API would refuse, and **the label finally names the dataset it ran** — it said `demo-<timestamp>` on every run while reconciling the holdout, which became a false statement the moment a dataset was actually named `demo`.
 
   **The explain option is removed rather than defaulted off**, at Tejas's call: the most prominent button on a public unauthenticated demo should have no path to spending credit, not one a stranger declines. Every run is `llmExplainEnabled: false`; explanation stays available per exception behind the Analyst's confirmation, where a human has already chosen to spend.
+
+- **2026-09-02 — Day 17, F9.2: the alias loop worked and every number describing it was wrong (ADR-130).**
+
+  **Attribution counted the wrong tier.** `recordsAutoResolvedByAliases` came from `exactPairs.filter(tier === 'alias')` — Tier 1.5 matches only. Tier 1.5 re-runs the Tier 1 *exact* test, which needs a strong anchor, and a counterparty alias creates none; it feeds Tier 2's counterparty score instead. **So the alias family the review queue actually teaches could never be attributed anything.** Measured before: `applied_count 0`, no `ALIAS_APPLIED` entry ever written, `leverageRatio 0` — on a run where the alias moved matched records 570 → 573. Now sourced from `counterpartyResolutions` ∩ matched records: **`leverageRatio: 6`**, one correction resolving six records.
+
+  `counterpartyResolutions` was declared, populated by S7, and read by nothing — the sixth declared-and-never-consumed field this project has found.
+
+  **`coldStart.matchRatePct` was a copy of the warm rate.** Both were the same expression. ADR-020 defines cold start as "aliases disabled" and exists to stop a rate quietly including human corrections — **and its implementation did exactly that**, showing the alias benefit under the label whose only job is to exclude it. It is now `null` on a warm run, rendered as an absence that states why, because an honest absence beats a warm number wearing a cold label.
+
+  **The picker inferred coldness by comparing the two rates**, which the above made identical on every run — so every run was labelled Cold, including the warm one. `isCold` is now served and read, not re-derived. Second instance of ADR-088's rule.
+
+  > **The pattern across all three: the feature worked and the instrumentation was fiction.** Three separate figures — an audit event, a leverage ratio and a headline rate — each independently reported zero or a copy, and together they made a working learning loop look like a dead one. It survived because no alias had ever been taught, so no number describing one had ever been read.

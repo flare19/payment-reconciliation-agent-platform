@@ -115,6 +115,18 @@ export interface MetricsInput {
   groups: readonly ProposedMatch[];
   exceptions: readonly ClassifiedException[];
   aliasCountAtStart: number;
+  /**
+   * S7's record of every transaction whose counterparty key an alias actually
+   * resolved — regardless of which tier went on to use it (ADR-130).
+   *
+   * Attribution used to read `exactPairs.filter(tier === 'alias')`, which counts
+   * Tier 1.5 matches ONLY. A counterparty alias does not create a strong anchor,
+   * so it can never produce a Tier 1.5 match; it feeds Tier 2's counterparty
+   * component instead (`counterpartyKey ?? counterpartyNorm`). The alias taught
+   * on Day 17 resolved keys on real records, matched three more of them, and was
+   * attributed ZERO.
+   */
+  counterpartyResolutions: readonly { transactionId: string; appliedAliasId: string }[];
   /** Alias rows in each terminal state, at finalization. */
   aliasCounts: { active: number; superseded: number; revoked: number };
   /** Human corrections made to date — the denominator of the leverage ratio. */
@@ -214,7 +226,7 @@ export interface RunMetrics {
     denominatorNote: string;
     pendingReviewExcluded: number;
   };
-  coldStart: { matchRatePct: number; aliasesActiveAtStart: number; isCold: boolean };
+  coldStart: { matchRatePct: number | null; aliasesActiveAtStart: number; isCold: boolean };
   tierAttribution: Record<string, number>;
   aliasLearning: {
     humanCorrectionsToDate: number;
@@ -371,7 +383,7 @@ export function computeRunMetrics(input: MetricsInput): RunMetrics {
   const {
     population, pool, exactPairs, tier2, identity, groups, exceptions,
     aliasCountAtStart, aliasCounts, humanCorrectionsToDate, timings, batchOutcomes,
-    batchPairs, explain,
+    batchPairs, explain, counterpartyResolutions,
   } = input;
 
   const reconcilable = pool.filter((t) => t.statusNorm === 'reconcilable').length;
@@ -386,8 +398,13 @@ export function computeRunMetrics(input: MetricsInput): RunMetrics {
   // labelled. A run with no aliases active at start IS the cold run — saying so
   // explicitly is cheaper than a reader inferring it from a zero.
   const isCold = aliasCountAtStart === 0;
-  const aliasPairs = exactPairs.filter((p) => p.tier === 'alias');
-  const aliasResolvedRecords = new Set(aliasPairs.flatMap((p) => [p.aId, p.bId]));
+  /**
+   * Records an alias resolved AND that ended up in a confirmed match. Both
+   * halves matter: a resolution that changed nothing is not leverage, and a
+   * match that would have happened anyway is not the alias's doing.
+   */
+  const aliasResolvedRecords = new Set(
+    counterpartyResolutions.map((r) => r.transactionId).filter((id) => matched.has(id)));
 
   const byCategory: Record<string, number> = {};
   const bySeverity: Record<Severity, number> = { high: 0, medium: 0, low: 0 };
@@ -425,7 +442,19 @@ export function computeRunMetrics(input: MetricsInput): RunMetrics {
     },
 
     coldStart: {
-      matchRatePct: pct(matched.size, reconcilable),
+      /**
+       * ADR-020 defines this as the rate "with aliases disabled". It used to be
+       * the SAME EXPRESSION as the warm rate — a copy, not a computation — so on
+       * a warm run it reported the benefit of human corrections under the label
+       * that exists to exclude them. That is precisely the failure ADR-020 was
+       * written to prevent, and it shipped as its implementation.
+       *
+       * A cold run's own rate IS the cold rate, so it is reported. On a warm run
+       * the counterfactual has not been computed — it needs a second matching
+       * pass with the alias set empty — so it is `null` and says so, rather than
+       * a warm number wearing a cold label (ADR-130).
+       */
+      matchRatePct: isCold ? pct(matched.size, reconcilable) : null,
       aliasesActiveAtStart: aliasCountAtStart,
       isCold,
     },
