@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { getInvestigation } from '@/lib/api-client';
+import { hrefWith } from '@/lib/run-context';
 import styles from './InvestigationPoller.module.css';
 
 /**
@@ -48,7 +49,8 @@ const POLL_MS = 3000;
 const GIVE_UP_AFTER_S = 90;
 
 export function InvestigationPoller(
-  { investigationId, exceptionId }: { investigationId: string; exceptionId: string },
+  { investigationId, exceptionId, runQ }:
+  { investigationId: string; exceptionId: string; runQ: string | undefined },
 ) {
   const router = useRouter();
   const [elapsed, setElapsed] = useState(0);
@@ -101,7 +103,7 @@ export function InvestigationPoller(
               because JavaScript on this page is not running, a button that
               needs JavaScript is no fallback at all — this one is a full page
               load and works when nothing else does. */}
-          <a href={`/exceptions/${exceptionId}`} className={styles.hardReload}>
+          <a href={hrefWith(`/exceptions/${exceptionId}`, { run: runQ })} className={styles.hardReload}>
             or reload the page
           </a>
         </div>
@@ -116,7 +118,7 @@ export function InvestigationPoller(
       <button type="button" className={styles.manual} onClick={() => router.refresh()}>
         check now
       </button>
-      <a href={`/exceptions/${exceptionId}`} className={styles.manual}>reload</a>
+      <a href={hrefWith(`/exceptions/${exceptionId}`, { run: runQ })} className={styles.manual}>reload</a>
     </p>
   );
 }

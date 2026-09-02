@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { at, count, day, pct } from '@/lib/format';
+import { hrefWith } from '@/lib/run-context';
 import type { RunSummary } from '@/types/api';
 import styles from './RunPicker.module.css';
 
@@ -37,7 +38,7 @@ export function RunPicker({ runs, selectedRunId }: { runs: RunSummary[]; selecte
           return (
             <tr key={run.runId} className={isSelected ? styles.selected : undefined}>
               <th scope="row" className={styles.runCell}>
-                <Link href={`/?run=${run.runId}`} className={styles.runLink} scroll={false}>
+                <Link href={hrefWith('/', { run: run.runId })} className={styles.runLink} scroll={false}>
                   <span className={styles.runLabel} translate="no">{run.label}</span>
                   <span className={styles.runMeta}>
                     {run.status === 'completed' && run.finishedAt

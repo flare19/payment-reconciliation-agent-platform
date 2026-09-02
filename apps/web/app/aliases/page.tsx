@@ -31,6 +31,15 @@ export default async function AliasesPage(
   const status = one(params, 'status');
   const page = Number(one(params, 'page') ?? '1') || 1;
 
+  /**
+   * THE ALIAS LEDGER IS GLOBAL, SO THIS SCREEN RESOLVES NO RUN — `learned_aliases`
+   * is not per-run and nothing here is filtered by one. It still has to CARRY the
+   * run, because a reader passes through Aliases on the way somewhere else: drop
+   * `?run=` here and the next nav click silently reverts to the default run.
+   * Carried, never read.
+   */
+  const runQ = one(params, 'run');
+
   const data = await listAliases({ status, page });
 
   return (
@@ -56,7 +65,7 @@ export default async function AliasesPage(
           </p>
           <p className={styles.emptyBody}>
             Aliases are taught from the{' '}
-            <Link href="/review">review queue</Link>, where the match that justifies the mapping is
+            <Link href={hrefWith('/review', { run: runQ })}>review queue</Link>, where the match that justifies the mapping is
             on screen beside it.
           </p>
         </div>
@@ -110,7 +119,9 @@ export default async function AliasesPage(
           <Paginate
             pagination={data.pagination}
             unit="aliases"
-            hrefFor={(p) => hrefWith('/aliases', { status, page: p === 1 ? undefined : p })}
+            hrefFor={(p) => hrefWith('/aliases', {
+              run: runQ, status, page: p === 1 ? undefined : p,
+            })}
           />
         </>
       )}

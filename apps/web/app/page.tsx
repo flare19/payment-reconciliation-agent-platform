@@ -185,7 +185,7 @@ export default async function DashboardPage(
               </>
             }
           >
-            <ExceptionBreakdown engine={metrics.engine} />
+            <ExceptionBreakdown engine={metrics.engine} runQ={runQ} />
           </Section>
 
           <Section

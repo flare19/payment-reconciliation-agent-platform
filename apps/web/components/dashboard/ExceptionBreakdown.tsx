@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { SegmentBar, type Segment } from '@/components/ui/SegmentBar';
 import { count, oneDp } from '@/lib/format';
+import { hrefWith } from '@/lib/run-context';
 import type { EngineMetrics } from '@/types/api';
 import styles from './ExceptionBreakdown.module.css';
 
@@ -42,7 +43,15 @@ const LABEL: Record<string, string> = {
 
 const SEVERITY_ORDER = ['high', 'medium', 'low'] as const;
 
-export function ExceptionBreakdown({ engine }: { engine: EngineMetrics }) {
+/**
+ * `runQ` is threaded in rather than resolved here: these links leave the
+ * dashboard, and a category link that drops the run lands the reader on a
+ * DIFFERENT run's exceptions filtered by the category they clicked. It is
+ * `undefined` for the default run so the common case keeps a clean URL.
+ */
+export function ExceptionBreakdown(
+  { engine, runQ }: { engine: EngineMetrics; runQ: string | undefined },
+) {
   const { exceptions } = engine;
 
   const rows = Object.entries(exceptions.byCategory)
@@ -78,7 +87,7 @@ export function ExceptionBreakdown({ engine }: { engine: EngineMetrics }) {
           {rows.map(([category, n]) => (
             <li key={category} className={styles.row}>
               <Link
-                href={`/exceptions?category=${encodeURIComponent(category)}`}
+                href={hrefWith('/exceptions', { category, run: runQ })}
                 className={styles.link}
               >
                 <span className={styles.rowHead}>

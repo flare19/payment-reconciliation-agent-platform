@@ -25,6 +25,14 @@ export default function NotFound() {
         belongs to a different run — ids are per-run, so a link copied from one run will not
         resolve against another.
       </p>
+      {/*
+        THESE THREE DELIBERATELY DO NOT CARRY `?run=`. This page is statically
+        prerendered and has no request to read the run from — and more to the
+        point, the run in a URL that 404'd is the most likely thing to have been
+        wrong about it. Sending someone back to the default run is the correct
+        recovery here, and the copy above already says why the id did not
+        resolve.
+      */}
       <nav className={styles.links} aria-label="Where to go instead">
         <Link href="/" className={styles.retry}>Dashboard</Link>
         <Link href="/exceptions" className={styles.secondary}>Exceptions</Link>

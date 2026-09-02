@@ -81,6 +81,7 @@ export function AnalystPanel(
         <InvestigationPoller
           investigationId={inv.investigationId}
           exceptionId={inv.exceptionId}
+          runQ={runQ}
         />
       </div>
     );
