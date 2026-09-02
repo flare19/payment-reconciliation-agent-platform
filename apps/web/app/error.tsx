@@ -26,8 +26,22 @@ export default function DashboardError(
   // that is not recognisably a transport or contract failure is treated as a
   // rendering fault, because that is the honest default for an error thrown
   // inside a component.
-  const looksLikeApiFailure = /API_UNREACHABLE|Failed to fetch|NetworkError|ECONNREFUSED|fetch failed|CORS|\b[45]\d{2}\b/i
-    .test(error.message);
+  //
+  // A REAL 429 WAS MISDIAGNOSED AS "NOTHING IS WRONG WITH THE API" (found
+  // live, 2026-09-03). `ApiClientError`'s `message` is built from the API's
+  // JSON body alone -- `"Rate limit reached for read requests (120 per
+  // 60s). Retry in 7s."` -- and that string contains no three-digit code for
+  // `\b[45]\d{2}\b` to catch, because `status` and `code` are separate
+  // properties that this boundary's own comment already says do not survive
+  // the serialization. So a genuine API-layer refusal fell through to the
+  // "this is a rendering error... nothing is wrong with the API" branch --
+  // exactly the wrong-direction failure this classifier exists to prevent,
+  // on a run that had in fact been refused by the API and never reached the
+  // page at all. Rate-limit language is now matched directly rather than
+  // relying on a status-code substring the message never contains.
+  const looksLikeApiFailure =
+    /API_UNREACHABLE|Failed to fetch|NetworkError|ECONNREFUSED|fetch failed|CORS|RATE_LIMITED|Rate limit|\b[45]\d{2}\b/i
+      .test(error.message);
 
   return (
     <main id="main" className={styles.wrap}>
