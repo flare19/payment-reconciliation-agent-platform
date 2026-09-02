@@ -93,11 +93,20 @@ export const TIER_LABEL: Record<string, string> = {
  * The reuse still has to show — it is the cost story, and a reader deserves to
  * know the model was not called for this row. It shows as what it is: a second
  * clause on the same sentence.
+ *
+ * AND IT NAMES WHAT IT LABELS, because this page has TWO model surfaces and
+ * "the model" does not pick one. S13 writes the explanation during the run;
+ * the Analyst investigates on demand; both are the same model id, and only the
+ * Analyst was ever named. Read as a claim about the Analyst, *Written by the
+ * model* on an exception nobody investigated looks like a bug — it was read
+ * that way, twice, by the person who built it (ADR-140). The tag is longer for
+ * it and that is the right trade: it is the first thing a reader uses to decide
+ * who is talking.
  */
 export const EXPLANATION_SOURCE_LABEL: Record<string, string> = {
-  llm: 'Written by the model',
-  llm_cache: 'Written by the model, reused',
-  template: 'Written by a template',
+  llm: 'Explanation written by the model',
+  llm_cache: 'Explanation written by the model, reused',
+  template: 'Explanation written by a template',
 };
 
 export const ACTOR_LABEL: Record<string, string> = {
