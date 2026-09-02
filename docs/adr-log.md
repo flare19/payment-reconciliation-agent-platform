@@ -1902,3 +1902,15 @@ Verified live: the exact failing URL (`/review?run=771829ef…&page=18`) now ret
 **Fixed with force-clear, not just disable.** Once `rejectReason.trim() !== ''`, a `useEffect` sets `teachAlias` back to `false` — the STATE agrees with the checkbox, not only its `disabled` attribute — and the checkbox itself is disabled with an inline note explaining why (*"Not available while rejecting this match... clear the rejection reason to teach it instead"*), muted rather than hidden, so the reader sees why the option went away rather than wondering if it was ever there.
 
 Verified functionally in the live page, not just by reading the source: checked the box (`checked: true`), typed a rejection reason, and confirmed both `checked: false` and `disabled: true` landed in the same render pass; cleared the reason and confirmed the control re-enabled.
+
+---
+
+### ADR-153 · A "go to page" box, built to not repeat the exact bug this project already found once
+
+**Tejas's request: flipping through 47 review proposals one at a time in front of judges is awkward.** `Paginate` is shared across six screens — five plain server pages plus `ReviewQueue`, already a client component — and it works in both contexts only because it carries no `'use client'` of its own. `ReviewQueue`'s own history comment already names the exact failure a careless fix would reintroduce: *"functions cannot cross the server-to-client boundary... it is a runtime rule, so `tsc` accepted the callback and the page threw on load."* Marking `Paginate` itself `'use client'` to get an interactive jump box would force all five server pages to pass `hrefFor` across that boundary and break identically, everywhere, at once — the same bug this codebase already paid to find once, reintroduced one layer up.
+
+**Built as a plain `<form method="get">` instead — zero client JS, matching the pattern the `/exceptions` sort form already uses.** `hrefFor(1)` is called once, server-side, to recover the current base path and every other live query param (run, filters, sort); those become hidden inputs, and a single visible `number` input carries the typed page. `hrefFor` itself is never passed anywhere — it stays exactly where it already safely lived, called and discarded within the same render.
+
+**Gated on `totalPages > 5`** — below that, Previous/Next is already faster than typing a number, and the box would be clutter on every short list on the site for the sake of the one long one.
+
+**Verified in both boundary contexts, not just one:** present in the rendered HTML on `/audit` (a plain server page, no client component anywhere in that chain) and on `/review` (rendered inside the client-wrapped `ReviewQueue`). Production build succeeded, which is itself a check this class of bug fails — the historical instance threw at runtime despite `tsc` passing. Submitted the form via its own `FormData` and confirmed the assembled target — `/review?run=<verify>&page=18` — is the exact URL already verified to load BIGBASKET correctly.

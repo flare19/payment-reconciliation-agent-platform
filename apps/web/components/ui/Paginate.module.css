@@ -39,3 +39,44 @@
 .disabled:hover { background: var(--surface-sunk); border-color: var(--rule); }
 
 .pageOf { font-size: var(--t-meta); color: var(--ink-3); white-space: nowrap; }
+
+/* The jump box. A plain GET form (see Paginate.tsx) -- styled to sit beside
+   Previous/Next rather than announce itself as a separate feature. */
+.jump {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding-left: var(--s3);
+  border-left: 1px solid var(--rule);
+}
+
+.jumpLabel {
+  font-size: var(--t-meta);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.jumpInput {
+  width: 3.5rem;
+  padding: var(--s2) var(--s2);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--t-meta);
+  text-align: center;
+  /* Windows dark mode renders a white-on-white spinner without this. */
+  color-scheme: light dark;
+}
+.jumpInput:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+.jumpButton {
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--t-meta);
+  cursor: pointer;
+}
+.jumpButton:hover { background: var(--surface-hover); border-color: var(--ink-4); }
