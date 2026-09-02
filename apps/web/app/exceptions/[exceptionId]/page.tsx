@@ -211,12 +211,20 @@ export default async function ExceptionDetailPage(
           <ModelVoice size="lead">{exception.explanationText}</ModelVoice>
         )}
 
-        {analystMaySuggest ? (
-          <AnalystSuggestion
-            investigation={investigation}
-            engineSuggestion={exception.suggestedAction}
-          />
-        ) : exception.suggestedAction && (
+        {/*
+          THE FOOTNOTE BELONGS TO THE PARAGRAPH ABOVE IT, AND F15 SEPARATED THEM.
+          Dropping the Analyst's block into the suggestion slot pushed this
+          footnote below it, so "the model wrote these words" — a sentence about
+          the EXPLANATION — ended up sitting under the ANALYST's words and
+          reading as a claim about those instead. Tejas read it that way twice.
+
+          So the explain block now closes before the Analyst opens: explanation,
+          then its own footnote, then the Analyst as a separate voice with its
+          own attribution. When the suggestion is the engine's, it came out of
+          the same call as the explanation and stays above the footnote, which
+          covers both (ADR-140).
+        */}
+        {!analystMaySuggest && exception.suggestedAction && (
           <p className={styles.suggested}>
             <span className="label">Suggested Action</span>
             {exception.suggestedAction}
@@ -231,32 +239,47 @@ export default async function ExceptionDetailPage(
         )}
 
         {/*
-          THE FOOT AND THE TAG MUST AGREE. They did not: the tag read "From the
-          signature cache" while this line read "The model wrote these words",
-          and a reader had no way to tell which was true. Both are — the words
-          are the model's, written once for the first exception of this shape
-          and reused here. The tag now says so, and this line says when the
-          model was actually called (ADR-138).
+          "THESE WORDS" WAS A POINTER, AND POINTERS MOVE. Every sentence here
+          now names its subject — *this explanation* — so that no future
+          rearrangement can silently re-aim it at a paragraph somebody else
+          wrote. The tag above says who wrote it; this says what it is worth.
         */}
         <p className={styles.explainFoot}>
           {exception.explanationSource === 'template'
-            ? 'Written by a deterministic template — the model was unavailable or disabled, and '
-              + 'nothing below this line changed as a result.'
+            ? 'This explanation was written by a deterministic template — the model was '
+              + 'unavailable or disabled, and nothing below this line changed as a result.'
             : exception.explanationSource === 'llm_cache'
-              ? 'The model wrote these words about a decision the rules had already made, and it '
-                + 'has no influence over the match, the category, or anything below. It was not '
-                + 'called for this record: the same wording had already been written for an '
-                + 'exception of this exact shape and was reused, which is why a run explains '
-                + 'hundreds of exceptions for the price of a couple of dozen.'
-              : 'The model wrote these words about a decision the rules had already made. It has no '
-                + 'influence over the match, the category, or anything below.'}
+              ? 'This explanation was written by the model, about a decision the rules had '
+                + 'already made, and it has no influence over the match, the category, or the '
+                + 'evidence below. The model was not called for this record: the same wording had '
+                + 'already been written for an exception of this exact shape and was reused, '
+                + 'which is why a run explains hundreds of exceptions for the price of a couple '
+                + 'of dozen.'
+              : 'This explanation was written by the model, about a decision the rules had '
+                + 'already made. It has no influence over the match, the category, or the '
+                + 'evidence below.'}
           {exception.sharedExplanationCount !== null && exception.sharedExplanationCount > 0 && (
-            <> This explanation is shared with{' '}
+            <> It describes a <em>shape</em> rather than this particular record — the same
+              paragraph stands for{' '}
               <span className="num">{count(exception.sharedExplanationCount)}</span> other
-              exceptions of the same structural shape.</>
+              exceptions the engine failed on for the same structural reason.</>
+          )}
+          {analystMaySuggest && (
+            <> What follows is different: the Analyst was asked about <em>this</em> record, and
+              those are its own words about it.</>
           )}
         </p>
       </section>
+
+      {/* ── 2b · the Analyst's suggestion, OUTSIDE the explain block ─────
+          A second speaker, and therefore a second block. It carries its own
+          attribution and cannot be covered by the explanation's footnote. */}
+      {analystMaySuggest && (
+        <AnalystSuggestion
+          investigation={investigation}
+          engineSuggestion={exception.suggestedAction}
+        />
+      )}
 
       {/* ── 3 · the finding ─────────────────────────────────────────────── */}
       <Section

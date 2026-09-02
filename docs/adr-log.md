@@ -1672,3 +1672,34 @@ phase4-free   211 llm_cache   · 20 signatures · 1 template
 > 3. **The hairline rule had to go.** It duplicated the idiom `Figure` and `Disclosure` already use for a basis body, stacked a second parallel rule inside the suggestion panel, and left the quotation mark floating in the channel between the two. The quotation and the measure are the signal; the rule was decoration competing with it.
 >
 > **A design unit verified only by grepping for a class name would have shipped all three.**
+
+---
+
+### ADR-140 · A footnote belongs to its paragraph, and F15 moved the paragraph
+
+**Reported as "the label change didn't land": five exceptions, and the tag looked wrong on four of them.** It was not. Measured:
+
+```
+dc3e1b72  verify        llm         0 investigations   "Written by the model"
+c28a597c  verify        llm         0                  "Written by the model"
+40b6c7c7  verify        llm         1                  "Written by the model"
+ec1ece0b  phase4-free   llm_cache   0                  "Written by the model, reused"
+e0f97770  phase4-free   llm_cache   1                  "Written by the model, reused"
+```
+
+Every tag is accurate about the paragraph it sits on. **The reading that made them look wrong is that "the model" means the Analyst** — and on a page carrying two model surfaces, that reading is not a mistake, it is the interface failing to distinguish them. S13 writes the explanation during the run; Phase A investigates on demand. Both are the same model id; only one of them is named on the page.
+
+**And underneath the misreading there was a real defect, introduced by F15.** Dropping the Analyst's block into the suggestion slot placed it *between* the explanation and the explanation's own footnote, so:
+
+> *[the Analyst's verdict, its proposal, its quoted words]*
+> *"The model wrote these words about a decision the rules had already made. It has no influence over the match, the category, or anything below."*
+
+**"These words" is a pointer, and F15 moved what it pointed at.** A sentence written about the explanation ended up beneath the Analyst's paragraph, claiming — of the Analyst, wrongly — that the words above it had no influence on anything.
+
+**Three changes, and the third is the one that prevents a recurrence:**
+
+1. **The explain block closes before the Analyst opens.** Explanation → its own footnote → `</section>`, then `AnalystSuggestion` as a sibling block with its own attribution. When the suggestion is the *engine's*, it came out of the same call as the explanation and stays inside, above the footnote, which covers both. Verified in the rendered HTML across all four combinations.
+2. **The footnote now says what the two speakers are for.** The explanation *"describes a shape rather than this particular record — the same paragraph stands for 20 other exceptions the engine failed on for the same structural reason"*, and where an investigation is shown, *"What follows is different: the Analyst was asked about this record, and those are its own words about it."* That is the distinction the tag alone could never carry, and it is the honest one: **one paragraph is about a class, the other about a row.**
+3. **Every sentence in the footnote names its subject.** *This explanation was written by…* rather than *The model wrote these words…*. A deictic pointer is a dependency on layout order that neither a type nor a test can see; a named subject cannot be silently re-aimed by moving a block.
+
+> **The pattern, and it is a new one for this repo's list.** Every previous instance was a *field* that was parsed, documented and enforced nowhere. This is a *sentence* that was true where it was written and false where it was moved — correct in the diff that wrote it, correct in the diff that moved it, wrong only in the composition of the two. **Nothing that reads one commit can catch that.** It needed a person reading the finished page.
