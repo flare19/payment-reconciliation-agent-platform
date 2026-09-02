@@ -218,12 +218,26 @@ export default async function ExceptionDetailPage(
           </p>
         )}
 
+        {/*
+          THE FOOT AND THE TAG MUST AGREE. They did not: the tag read "From the
+          signature cache" while this line read "The model wrote these words",
+          and a reader had no way to tell which was true. Both are — the words
+          are the model's, written once for the first exception of this shape
+          and reused here. The tag now says so, and this line says when the
+          model was actually called (ADR-138).
+        */}
         <p className={styles.explainFoot}>
           {exception.explanationSource === 'template'
             ? 'Written by a deterministic template — the model was unavailable or disabled, and '
               + 'nothing below this line changed as a result.'
-            : 'The model wrote these words about a decision the rules had already made. It has no '
-              + 'influence over the match, the category, or anything below.'}
+            : exception.explanationSource === 'llm_cache'
+              ? 'The model wrote these words about a decision the rules had already made, and it '
+                + 'has no influence over the match, the category, or anything below. It was not '
+                + 'called for this record: the same wording had already been written for an '
+                + 'exception of this exact shape and was reused, which is why a run explains '
+                + 'hundreds of exceptions for the price of a couple of dozen.'
+              : 'The model wrote these words about a decision the rules had already made. It has no '
+                + 'influence over the match, the category, or anything below.'}
           {exception.sharedExplanationCount !== null && exception.sharedExplanationCount > 0 && (
             <> This explanation is shared with{' '}
               <span className="num">{count(exception.sharedExplanationCount)}</span> other

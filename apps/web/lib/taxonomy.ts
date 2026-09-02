@@ -78,10 +78,26 @@ export const TIER_LABEL: Record<string, string> = {
  * (ui-spec §4), and it is the difference between "the model wrote this" and
  * "a template did, because the model was unavailable and nothing broke".
  */
+/**
+ * ONE AXIS: WHO WROTE THE WORDS. Reuse is a qualifier on that, not an
+ * alternative to it.
+ *
+ * `llm_cache` read *From the signature cache*, in the same slot and the same
+ * grammar as *Written by the model*, so the two read as different authors. They
+ * are not — a cached explanation was written by the model too, for the first
+ * exception of its shape, and this run reused it rather than paying to write
+ * the same paragraph 212 times. The foot of that same block has always said
+ * "The model wrote these words", so the screen contradicted itself: tag said
+ * cache, footnote said model (ADR-138).
+ *
+ * The reuse still has to show — it is the cost story, and a reader deserves to
+ * know the model was not called for this row. It shows as what it is: a second
+ * clause on the same sentence.
+ */
 export const EXPLANATION_SOURCE_LABEL: Record<string, string> = {
   llm: 'Written by the model',
-  llm_cache: 'From the signature cache',
-  template: 'Deterministic template',
+  llm_cache: 'Written by the model, reused',
+  template: 'Written by a template',
 };
 
 export const ACTOR_LABEL: Record<string, string> = {

@@ -1630,3 +1630,27 @@ after    median  8 · max 10 · none over 10
 **No `summary` column exists**, so the Analyst's own words here are the last `inference` in the reasoning chain — a step the gate checked, not a separate assertion — and it is labelled as that (*"the Analyst, at step 6 of its own reasoning"*) rather than presented as a conclusion the runtime recorded. The raw `proposedAction` JSON stays in the panel below: the top of the page is the readable version, the panel is the record.
 
 **Verified against real data on all four paths**, three of them from rows that already existed: grounded `CONFIRMED_UNRESOLVABLE`, grounded `NEEDS_EXTERNAL_DATA`, gate-rejected `INSUFFICIENT_EVIDENCE` (template retained, rejection stated), and no investigation at all (template alone, unchanged). The proposal path has no data anywhere in this database, so it was verified by planting one row and restoring it — **and the first attempt was refused by `inv_proposal_paired`**, a CHECK constraint requiring `proposed_action` to accompany a `RESOLUTION_PROPOSED` verdict and nothing else. The schema will not let those two disagree, which is worth knowing before anyone writes a fixture that assumes they can.
+
+---
+
+### ADR-138 · The explanation tag named the mechanism where the reader needed the author — and contradicted the footnote under it
+
+**Found by Tejas reading four exceptions and asking why two of them disagreed.** Two records with byte-identical explanation text, one tagged *Written by the model* and the other *From the signature cache*, and no way to tell from the screen whether those meant different authors.
+
+**The data was correct. The label was not.** Measured:
+
+```
+verify        211 llm         · 20 signatures · 1 template
+phase4-free   211 llm_cache   · 20 signatures · 1 template
+```
+
+`resolveExplanations` tags per SIGNATURE per RUN: `llm` when this run called the model for that signature, `llm_cache` when it found one already in `explanation_cache`. `verify` ran first and generated all twenty; `phase4-free` ran later and reused all twenty. **So the tag is uniform across a whole run, and switching runs flips every tag on the site** — which is exactly what made it look like it tracked something about the individual exception (the Analyst, in the reading that prompted this).
+
+**Two defects follow, and the second is the real one:**
+
+1. *From the signature cache* sat in the same slot and the same grammar as *Written by the model*, so they read as **alternative authors**. They are not. A cached explanation is model-written; it was written once for the first exception of its shape and reused, and the model simply was not called again.
+2. **The screen contradicted itself.** Under a *From the signature cache* tag, the foot of the same block read *"The model wrote these words about a decision the rules had already made."* Tag said cache, footnote said model, and nothing on the page reconciled them.
+
+**Fixed on one axis — who wrote the words — with reuse as a clause on the same sentence:** `llm` → *Written by the model* · `llm_cache` → *Written by the model, reused* · `template` → *Written by a template*. The foot now branches for `llm_cache` and says the model was not called for this record, that the wording already existed for an exception of this exact shape, and why that is the point: **a run explains hundreds of exceptions for the price of a couple of dozen.** The cost story survives; it just stops masquerading as authorship.
+
+> **This is the F13/F14 defect class again, and the third instance in one day.** *Ceiling*, *Grounding-Gate Rejections*, and now *From the signature cache* — each named the mechanism accurately to whoever already knew it, and each answered a question the reader was not asking instead of the one they were. **The tell is a label that is a noun from the implementation rather than a claim about the thing on screen.** Worth grepping for on the remaining screens before the submission.
