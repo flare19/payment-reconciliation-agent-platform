@@ -1781,3 +1781,15 @@ template    Written by a template
 ```
 
 **The reuse fact is not deleted, it moved.** The footnote already branches on `explanationSource` and has room for a sentence: for `llm_cache` it still says *"It was not called for this record: the same wording had already been written for an exception of this exact shape and was reused…"* — the cost-savings claim ADR-138 built the whole distinction to protect. What changed is *where* a reader meets that fact: the header answers one question, the footnote answers the next one, and neither is asked to answer both.
+
+---
+
+### ADR-145 · F19 — one launcher, moved into view, not rebuilt
+
+**Backlog item 12 asked for placement and motion, and it explicitly named its own precondition: "worthless until runs are isolated and datasets actually differ."** Both were already true — F1 isolated runs, F2/F3 gave the launcher a second real dataset — so this unit is exactly what the handoff said it would be: `RunLauncher` (built F9.4, click-tested F10) moved from the bottom of the page into the hero, with a `variant="hero"` prop that changes only its resting appearance. The panel that opens — dataset choice, cost statement, poll, and the landing on the *finished* run's own metrics via `router.push` — is the same code, unchanged.
+
+**One launcher, not two.** The bottom `Runs` section's `aside` used to render a second, independently-stateful `RunLauncher`. Two live instances of a stateful control doing the same job invites exactly the failure mode this project spends its whole design avoiding — a reader could arm one, get confused, and arm the other. It is now a plain link, `New run ↑` → `#launch`, back to the one launcher that exists. `find` on the rendered page confirms exactly one `"Run It Again"` control exists.
+
+**The motion is grayscale and stops under `prefers-reduced-motion`.** A slow (2.6 s) low-amplitude ring, `--ink` at falling opacity, `display: none` under reduced motion rather than a frozen ring left mid-fade. **Not `--focus`, not `--sev-medium`** — the button fill uses `--ink`, the same primary-action language as `.go` on the Analyst's confirm button and `.submit` in `ResolveActions`, for the identical reason ADR-141 gave: this is neither a hazard nor a keyboard-focus signal, and borrowing either token's colour would spend a vocabulary that means something else.
+
+**Verified interactively, not just in markup** — the embedded pane can render this page because it is not the streamed-response case ADR-127 names (no `async` server action mid-load): clicked the hero button, watched the full panel open with the dataset radios and cost copy, closed it with no spend, then clicked `New run ↑` from the bottom of the page and watched it scroll back to the same button. Screenshot in both light and dark mode; `prefers-reduced-motion: reduce` checked separately and shows the button with no ring at all.

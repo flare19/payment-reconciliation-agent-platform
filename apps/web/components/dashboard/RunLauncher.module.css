@@ -11,6 +11,53 @@
 }
 .open:hover { background: var(--surface-hover); border-color: var(--ink-4); }
 
+/* THE HERO VARIANT (F19). Filled ink, the same primary-action language as
+   .go here and .submit in ResolveActions — a reader who has seen either
+   already knows what this button does before reading it. NOT --focus and NOT
+   --sev-medium: the first is reserved for the keyboard focus ring, the
+   second for how bad an exception is, and this button is neither an
+   accessibility signal nor a hazard (ADR-141 made exactly this argument for
+   the Analyst's confirm button). Prominence comes from fill and motion, not
+   from borrowing a token that means something else. */
+.openHero {
+  position: relative;
+  padding: var(--s3) var(--s6);
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: var(--t-body);
+  font-weight: 600;
+  isolation: isolate;
+}
+.openHero:hover { background: var(--ink-2); border-color: var(--ink-2); }
+
+/* A slow, low-amplitude ring — not a bright colour, not a loop that fights
+   for attention against the numbers this page exists to show. Grayscale so
+   it reads as "here" rather than "hazard", and it sits BEHIND the button
+   (z-index via isolation above), never over the label. */
+.pulse {
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  border: 1px solid var(--ink);
+  animation: launchPulse 2.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  pointer-events: none;
+  z-index: -1;
+}
+
+@keyframes launchPulse {
+  0% { transform: scale(1); opacity: 0.55; }
+  70%, 100% { transform: scale(1.35); opacity: 0; }
+}
+
+/* The global reset already zeroes animation-duration under reduced motion
+   (globals.css); this removes the element outright rather than leaving a
+   frozen ring, which is cleaner than a stopped animation nobody asked for. */
+@media (prefers-reduced-motion: reduce) {
+  .pulse { display: none; }
+}
+
 .panel {
   display: flex;
   flex-direction: column;

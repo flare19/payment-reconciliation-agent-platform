@@ -36,9 +36,19 @@ import styles from './RunLauncher.module.css';
  * `datasetSeed` worked at the API (ADR-118) and the launcher could not ask for
  * anything else — so "Run It Again" could only ever reproduce one number, which
  * reads as broken rather than as deterministic.
+ *
+ * PLACEMENT, NOT A REBUILD (F19, ADR-145). The functionality above shipped on
+ * F9.4 and was already exercised end to end by F10 — this only moves it and
+ * gives the resting state presence. `variant="hero"` renders the same closed
+ * button with more visual weight and a slow pulse; `variant="compact"` (the
+ * default) is the smaller neutral one, kept for anywhere the launcher is
+ * secondary to what's already on screen. The panel that opens is identical
+ * either way — same fields, same poll, same `router.push` onto the finished
+ * run's OWN metrics rather than the previous run's, which is the one part of
+ * backlog item 12 that was never a placement question.
  */
 export function RunLauncher(
-  { datasets }: { datasets: SeedDatasetOption[] },
+  { datasets, variant = 'compact' }: { datasets: SeedDatasetOption[]; variant?: 'compact' | 'hero' },
 ) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -110,8 +120,13 @@ export function RunLauncher(
 
   if (!open) {
     return (
-      <button type="button" className={styles.open} onClick={() => setOpen(true)}>
-        Run It Again
+      <button
+        type="button"
+        className={`${styles.open} ${variant === 'hero' ? styles.openHero : ''}`}
+        onClick={() => setOpen(true)}
+      >
+        {variant === 'hero' && <span className={styles.pulse} aria-hidden="true" />}
+        Run It Again — Free
       </button>
     );
   }

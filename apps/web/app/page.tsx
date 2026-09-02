@@ -111,6 +111,21 @@ export default async function DashboardPage(
             whether it is the engine&rsquo;s account of itself or a measurement against ground
             truth.
           </p>
+
+          {/*
+            F19 (backlog item 12): the launcher existed since F9.4 but lived
+            only at the bottom, under Runs — visible to nobody who did not
+            already scroll past everything it would have let them try before
+            reading. It is unchanged functionally: same fields, same poll,
+            same landing on the FINISHED run's own metrics (never the
+            previous run's — that part was never a placement question). What
+            moved is presence: `variant="hero"` and `id="launch"` so the
+            bottom of the page can point back up to one launcher instead of
+            running a second, independent one (ADR-145).
+          */}
+          <div id="launch" className={styles.launchRow}>
+            <RunLauncher datasets={health?.datasets ?? []} variant="hero" />
+          </div>
         </div>
 
         <dl className={styles.runStrip}>
@@ -292,7 +307,15 @@ export default async function DashboardPage(
             + 'with a person’s work, so both are kept side by side and labelled — never presented '
             + 'as two unrelated rows.',
         }}
-        aside={<RunLauncher datasets={health?.datasets ?? []} />}
+        // F19: no second, independently-stateful launcher down here — the
+        // working one lives in the hero (id="launch"). A user who scrolled
+        // this far to look at the run list should not have to scroll back up
+        // by hand to start another one.
+        aside={
+          <a href="#launch" className={styles.launchBack}>
+            New run ↑
+          </a>
+        }
       >
         <RunPicker
           runs={runs}

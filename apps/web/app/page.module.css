@@ -35,6 +35,24 @@
   color: var(--ink-2);
 }
 
+/* F19. Own row, not squeezed into .heroText's 62ch column — a CTA that
+   wraps at prose width reads as another sentence, not a control. */
+.launchRow {
+  margin-top: var(--s2);
+}
+
+/* Wayfinding for the Runs section at the bottom of the page, back up to the
+   one working launcher in the hero. Deliberately plain — this is a link
+   between two views of the same control, not a second CTA competing with
+   the one in .openHero. */
+.launchBack {
+  font-size: var(--t-meta);
+  color: var(--ink-3);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+.launchBack:hover { color: var(--ink); }
+
 .runStrip {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
