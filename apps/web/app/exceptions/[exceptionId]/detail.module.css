@@ -250,3 +250,15 @@
   color: var(--ink-3);
   text-wrap: pretty;
 }
+
+/* Shown under the engine's template when an investigation exists but was
+   refused at the gate. The refusal is stated where the reader is standing,
+   rather than only two screens down where the panel is. */
+.suggestedNote {
+  display: block;
+  margin-top: var(--s2);
+  padding-top: var(--s2);
+  border-top: 1px solid var(--rule);
+  font-size: var(--t-micro);
+  color: var(--ink-3);
+}

@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { AnalystSuggestion } from '@/components/exceptions/detail/AnalystSuggestion';
 import { AnalystPanel } from '@/components/exceptions/detail/AnalystPanel';
 import { AskAnalyst } from '@/components/exceptions/detail/AskAnalyst';
 import { CandidateTable } from '@/components/exceptions/detail/CandidateTable';
@@ -80,6 +81,32 @@ export default async function ExceptionDetailPage(
 
   // Resolved here, once per distinct id, so the panel never has to guess what
   // kind of thing a citation points at.
+  /**
+   * WHEN THE ANALYST IS ALLOWED TO REPLACE THE TEMPLATED SUGGESTION.
+   *
+   * All four conditions, and each of them is a way the previous version of this
+   * page would have made a claim the system had not earned:
+   *
+   * - `concluded` — a running investigation has no verdict, and `groundingPassed`
+   *   is `false` by column DEFAULT while it runs, not by finding.
+   * - `groundingPassed` — **the important one.** The gate exists to stop a verdict
+   *   whose citations its own tool trace does not support from reaching a reader
+   *   as a finding. Three of this run's investigations were rejected by it.
+   *   Promoting one of those to the top of the page, in the slot a reader takes
+   *   as the recommendation, would defeat the gate more completely than not
+   *   having it.
+   * - a verdict exists — grounding can pass on an investigation that reached none.
+   * - not already declined — a person has overruled it, and their decision is the
+   *   more recent fact about this exception.
+   *
+   * In every excluded case the engine's template stays exactly where it was.
+   */
+  const analystMaySuggest = investigation !== null
+    && investigation.status === 'concluded'
+    && investigation.groundingPassed
+    && investigation.verdict !== null
+    && investigation.humanDisposition !== 'declined';
+
   const citations = investigation
     ? await Promise.all([...new Set(investigation.citations)].map(resolveCitation))
     : [];
@@ -172,10 +199,22 @@ export default async function ExceptionDetailPage(
           {exception.explanationText ?? 'No explanation was generated for this exception.'}
         </p>
 
-        {exception.suggestedAction && (
+        {analystMaySuggest ? (
+          <AnalystSuggestion
+            investigation={investigation}
+            engineSuggestion={exception.suggestedAction}
+          />
+        ) : exception.suggestedAction && (
           <p className={styles.suggested}>
             <span className="label">Suggested Action</span>
             {exception.suggestedAction}
+            {investigation?.status === 'concluded' && !investigation.groundingPassed && (
+              <span className={styles.suggestedNote}>
+                The Analyst also investigated this one and its verdict was rejected at the
+                grounding gate, so it is not shown here as a suggestion.{' '}
+                <a href="#analyst">It is still on the page, in full.</a>
+              </span>
+            )}
           </p>
         )}
 
