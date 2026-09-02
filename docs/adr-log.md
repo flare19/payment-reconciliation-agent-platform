@@ -1767,3 +1767,17 @@ template    Written by a template            → unchanged
 The footnote drops "the model" too, for the identical reason: *"This explanation was written by the Explain Layer…"*, in both the fresh-generation and cached-reuse branches.
 
 > **The pattern across three fixes on one string is worth naming precisely, because it will recur.** Each fix made the sentence more accurate and none of them made it more legible, because the defect was never in the sentence's accuracy — it was in sharing a word with a name the reader already trusted. **A generic term next to a proper noun that means something similar will keep losing**, no matter how it is qualified. The fix that finally worked did not add words; it removed the ambiguous one.
+
+---
+
+### ADR-144 · The tag says who; the footnote says how often — one clause per surface
+
+**Tejas's call: "written by explain layer, reused" was one fact too many for a header chip.** The tag is read in isolation, before anything else in the block — a five-word answer to *who wrote this* — and "reused" turned it into two facts read as one, on a chip whose whole job is to be legible at a glance.
+
+```
+llm         Written by the Explain Layer
+llm_cache   Written by the Explain Layer     ← "reused" dropped
+template    Written by a template
+```
+
+**The reuse fact is not deleted, it moved.** The footnote already branches on `explanationSource` and has room for a sentence: for `llm_cache` it still says *"It was not called for this record: the same wording had already been written for an exception of this exact shape and was reused…"* — the cost-savings claim ADR-138 built the whole distinction to protect. What changed is *where* a reader meets that fact: the header answers one question, the footnote answers the next one, and neither is asked to answer both.

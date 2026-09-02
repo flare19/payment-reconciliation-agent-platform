@@ -108,10 +108,18 @@ export const TIER_LABEL: Record<string, string> = {
  * Layer"), so this tag and that panel now name the same thing the same way,
  * and neither spells anything close to "Analyst". Two proper nouns cannot be
  * confused for each other the way two readings of "the model" can.
+ *
+ * `llm` AND `llm_cache` NOW SHARE ONE LABEL (ADR-144). The header chip is a
+ * five-word answer to "who wrote this", read in isolation before anything
+ * else on the block; "reused" turned that single fact into two and was one
+ * clause too many for what a glance is for. The distinction is not lost — it
+ * moved to the footnote below, which already branches on `explanationSource`
+ * and has the room to say the Explain Layer was not called for THIS record
+ * without turning the header into a sentence.
  */
 export const EXPLANATION_SOURCE_LABEL: Record<string, string> = {
   llm: 'Written by the Explain Layer',
-  llm_cache: 'Written by the Explain Layer, reused',
+  llm_cache: 'Written by the Explain Layer',
   template: 'Written by a template',
 };
 
