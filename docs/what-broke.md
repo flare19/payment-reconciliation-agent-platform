@@ -1594,3 +1594,18 @@ The obvious test for #55 — *"at the engine's own bounds the tool reproduces th
   Fixed presentationally instead: the picker shows the five most recent, always includes the selected run wherever it sits, states the true total, and links to all. Nothing is hidden — the audit screen still lists every run.
 
   > **Two runs carry every human action in the system and must survive any future rebuild.** `verify`: 24 review decisions, one closed exception, 29 human audit entries, and the three aliases in the ledger's supersession chain. `phase4-free`: the only rejection, with its reason, plus two closures. The other eighteen have zero. Rebuilding the demo database is a legitimate way to get a clean list before the video — but those decisions would have to be re-made deliberately, not assumed to carry over.
+
+- **2026-09-02 — Day 17, F11: the investigation poller renders correctly; the ticking is still a human's to confirm.** Verified at $0 by flipping a concluded investigation to `running` rather than paying for a live one. The exception detail page renders *"The Analyst Is Investigating"*, the live region *"Checking for the result… 0 s elapsed · check now · reload"*, and the no-JS reload link carries `?run=` — F1's invariant holding on the one path that matters when JavaScript is not.
+
+  The code reads correct: a 1 s `setInterval` drives `elapsed` through a functional update (no stale closure), a separate poll calls `getInvestigation` and fires exactly one `router.refresh()` at the moment status leaves `running`, a give-up timer stops it, and the cleanup clears all three. ADR-116's ownership rule is respected — the poller is mounted by the running state, not by the action that started it.
+
+  **What is still unverified is the same thing the backlog said: the counter ticking and the automatic transition.** Both need client hydration, and the embedded browser pane cannot complete a streamed response (ADR-127), so this instrument cannot see them. It is a human-browser check and the reproduction is three commands, recorded below. **Not claimed as verified.**
+
+  ```sql
+  -- watch it, then restore
+  UPDATE agent_investigations SET status='running', finished_at=NULL
+   WHERE id='<any concluded id>';
+  -- open /exceptions/<its exception_id>?run=<verify run id>, watch the seconds climb
+  UPDATE agent_investigations SET status='concluded', finished_at=now()
+   WHERE id='<same id>';   -- the page should transition on its own within ~3s
+  ```
