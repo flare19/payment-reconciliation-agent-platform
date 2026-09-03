@@ -544,7 +544,7 @@ Every `RecordPreview` carries **`sourceRowNumber`** alongside `transactionId` (A
 
 ```json
 {
-  "sequenceNo": 4412, "occurredAt": "2026-08-24T09:00:03.118Z",
+  "sequenceNo": 4412, "runId": "8f3e…", "occurredAt": "2026-08-24T09:00:03.118Z",
   "eventType": "MATCH_CONFIRMED_ALIAS",
   "subjectType": "match", "subjectId": "…", "transactionId": "…",
   "actorType": "engine", "actorId": "matching-engine@1.0.0",
@@ -553,11 +553,14 @@ Every `RecordPreview` carries **`sourceRowNumber`** alongside `transactionId` (A
   "reason": "Counterparty 'AMZN' resolved to 'AMAZON RETAIL' via alias approved by tejas on 2026-08-22; exact predicate then satisfied.",
   "beforeState": null,
   "afterState": { "matchId": "…", "tier": "alias" },
-  "details": { "aliasId": "…" }
+  "details": { "aliasId": "…" },
+  "prevHash": "0000…", "entryHash": "9f2c…"
 }
 ```
 
 Sorted by `sequenceNo` ascending — chronological, and deterministic even for entries written in the same millisecond.
+
+`prevHash` and `entryHash` are the hash chain (ADR-042, ADR-168). They are on every entry so a reviewer can **recompute the chain independently** rather than trust the server's own `/audit/verify` (endpoint 22): for each entry in `sequenceNo` order, `entryHash == sha256_hex( canonicalJson(entry without sequenceNo/prevHash/entryHash) + prevHash )`, and each `prevHash` equals the previous entry's `entryHash` — the first in a chain chains from 64 zeros. `runId` is included because it is one of the hashed fields (`null` for the alias-admin chain) and endpoints 13/18 can return entries from more than one chain. The exact `canonicalJson` rules — key sort, `null` for absent, ISO-8601 UTC timestamps, array order preserved, NUL/lone-surrogate sanitization — are in **schema.md §9.0**.
 
 ### `Alias` (endpoints 15–18)
 

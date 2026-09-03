@@ -347,6 +347,11 @@ export function exceptionDetail(
 export function auditEntry(e: StoredAuditEntry): Record<string, unknown> {
   return {
     sequenceNo: e.sequenceNo,
+    // Part of the chain identity, not decoration: `runId` is one of the hashed
+    // fields (`null` for the alias-admin chain), so a client recomputing
+    // `entryHash` needs it explicitly rather than inferring it from the URL
+    // — endpoints 13 and 18 return entries from more than one chain (ADR-168).
+    runId: e.runId,
     occurredAt: e.occurredAt instanceof Date ? e.occurredAt.toISOString() : e.occurredAt,
     eventType: e.eventType,
     subjectType: e.subjectType,
@@ -363,6 +368,13 @@ export function auditEntry(e: StoredAuditEntry): Record<string, unknown> {
     beforeState: e.beforeState,
     afterState: e.afterState,
     details: e.details,
+    // The chain links themselves (ADR-042, ADR-168). With these on the wire a
+    // reviewer can recompute `sha256(canonicalJson(entry minus
+    // sequenceNo/prevHash/entryHash) || prevHash)` per schema.md §9.0 and
+    // confirm the head independently, rather than trusting the server's own
+    // `/audit/verify`. `prevHash` of the first entry in a chain is 64 zeros.
+    prevHash: e.prevHash,
+    entryHash: e.entryHash,
   };
 }
 

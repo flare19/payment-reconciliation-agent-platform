@@ -2427,3 +2427,38 @@ longer the first thing the page says.
 **Consequences.**
 - `STALE_RUN_TIMEOUT_MINUTES` remains the last knob in CLAUDE.md §10's list that is parsed and
   enforced nowhere.
+
+### ADR-168 · The audit hash chain is on the wire, so tamper-evidence is externally checkable
+
+**Context.** `GET /api/runs/:runId/audit` returned every decision field but not `prev_hash` /
+`entry_hash`. "Tamper-evident" (ARCHITECTURE §4.6, ADR-042) therefore rested entirely on the
+server recomputing its own chain via `/audit/verify` — a reviewer had no way to confirm it
+independently. The README already states this limitation honestly (a judge-blocker fix), so this
+is the upgrade that removes it.
+
+**Decision.** `auditEntry` (endpoints 13, 14, 18) now serializes `prevHash`, `entryHash`, and
+`runId`.
+
+- `runId` joins the DTO because it is one of the hashed fields (`null` for the alias-admin
+  chain), and endpoints 13/18 return entries from more than one chain — a client cannot infer it
+  from the URL.
+- No new data is computed and nothing is written: the repository already `SELECT`ed all three
+  columns for `/audit/verify`. This is a serialization change.
+- **schema.md §9.0 gains a "Reproducing the chain from the API" recipe** — the exact field list,
+  the canonical-JSON rules (key sort by code unit, `null` for absent, ISO-8601 UTC, array order
+  preserved, NUL/lone-surrogate sanitization), and the `sha256(canonicalJson || prevHash)`
+  construction — so a client can reproduce every `entryHash` and the head.
+- **The test is the capability.** `routes.test.ts` pages through endpoint 14, recomputes the
+  whole 612-entry chain with an *independent* canonical serializer (no server code imported), and
+  asserts every `entryHash`, every link, and that the computed head equals both `chainHead` and
+  `expectedChainHead` from endpoint 22. Confirmed it fails when `runId` is wrongly excluded from
+  the hashed set — the recipe is load-bearing, not decorative.
+- The `/audit` screen shows each entry's truncated `entryHash`; the title carries both hashes and
+  the formula.
+
+**Scope.** One serializer, one DTO type, one doc section, one UI line, one test. No migration, no
+new endpoint, no write path touched — `audit_log` stays append-only (ADR-015).
+
+**Consequences.**
+- `STALE_RUN_TIMEOUT_MINUTES` remains the last knob in CLAUDE.md §10's list that is parsed and
+  enforced nowhere.

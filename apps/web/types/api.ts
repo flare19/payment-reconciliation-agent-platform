@@ -534,6 +534,8 @@ export type ActorType = 'engine' | 'human' | 'llm' | 'agent';
 
 export interface AuditEntry {
   sequenceNo: number;
+  /** `null` for the alias-admin chain. One of the hashed fields (ADR-168). */
+  runId: string | null;
   occurredAt: string;
   eventType: string;
   subjectType: string;
@@ -550,6 +552,14 @@ export interface AuditEntry {
   beforeState: unknown;
   afterState: unknown;
   details: Record<string, unknown> | null;
+  /**
+   * The hash chain (ADR-042, ADR-168). On the wire so a reviewer can recompute
+   * the chain from this endpoint alone — `entryHash ==
+   * sha256(canonicalJson(entry without sequenceNo/prevHash/entryHash) ||
+   * prevHash)`, schema.md §9.0 — rather than trust `/audit/verify`.
+   */
+  prevHash: string;
+  entryHash: string;
 }
 
 export interface AuditListResponse { entries: AuditEntry[]; pagination: Pagination }
