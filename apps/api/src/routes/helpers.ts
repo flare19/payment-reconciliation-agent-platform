@@ -64,6 +64,34 @@ export function pathParam(req: Request, name: string): string {
   return v;
 }
 
+/** RFC 4122 shape. Deliberately not version-pinned — `randomUUID` emits v4, but
+ *  refusing a well-formed v7 id would be a validator inventing a rule. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A path parameter that MUST be a UUID.
+ *
+ * Every id in this system is a UUID, and every one of them is interpolated
+ * into SQL as `$1::uuid`. Postgres rejects a malformed one with
+ * `22P02 invalid input syntax for type uuid`, which is not an `ApiError`, so it
+ * reached the error middleware as an unknown throw and came back
+ * `500 INTERNAL_ERROR`. A client's typo is a client error: `GET
+ * /api/runs/not-a-uuid/metrics` must be a `400` that names the problem, not a
+ * `500` that implies the server broke.
+ *
+ * Checking the shape here also means a malformed id never reaches the database
+ * at all, so the route stays thin and the repository keeps its guarantee that
+ * it is only ever handed well-formed ids.
+ */
+export function uuidParam(req: Request, name: string): string {
+  const v = pathParam(req, name);
+  if (!UUID_RE.test(v)) {
+    throw new ApiError(400, 'INVALID_REQUEST',
+      `${name} must be a UUID`, { got: v });
+  }
+  return v;
+}
+
 /** A required, non-empty string in a JSON body. */
 export function requireString(body: unknown, field: string): string {
   const v = (body as Record<string, unknown> | null)?.[field];

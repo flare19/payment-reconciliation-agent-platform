@@ -280,4 +280,6 @@ reproduces the local numbers exactly over real HTTPS. Redeploys are **manual, on
 
 ### A recurring defect shape to watch for
 
-Several config fields in this repo have been **parsed, documented, published, and enforced nowhere**: `AGENT_MAX_COST_USD_PER_RUN` (fixed), `STALE_RUN_TIMEOUT_MINUTES` (open), `datasetSeed` on `POST /api/runs` (fixed on the day17 branch). The missing test is always the same one — *assert the field changes something*. When you add a knob, add that test.
+Several config fields in this repo have been **parsed, documented, published, and enforced nowhere**: `AGENT_MAX_COST_USD_PER_RUN` (fixed), `STALE_RUN_TIMEOUT_MINUTES` (**open**), `datasetSeed` on `POST /api/runs` (fixed on the day17 branch), `aliasLearningEnabled` (fixed on day18 — it was the fourth instance, and the worst, because api-contract §2 names it as *the* way to measure the cold-start rate, so the documented route to the number the project is proudest of silently returned the warm one). The missing test is always the same one — *assert the field changes something*. When you add a knob, add that test, and **watch it fail against the unfixed code** before you trust it.
+
+`STALE_RUN_TIMEOUT_MINUTES` is the one still open. It is the same shape and it will read the same way to a reviewer who tries it.

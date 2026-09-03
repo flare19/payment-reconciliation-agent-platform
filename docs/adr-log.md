@@ -2089,3 +2089,57 @@ face.
   `eaa8b2e9` still links to `/records/…` and still resolves. `next build` clean.
 - `resolveCitation` is now called from two pages. If a third surface grows a citation list, it
   uses this function or it is wrong — the same "one rule, one place" point ADR-157/ADR-158 made.
+
+---
+
+### ADR-161 · Two places the API contract described a system we did not build
+
+**Context.** An external review of the localhost instance tested the contract as written rather
+than as intended, and found two endpoints whose documented shape the build does not honour.
+
+1. **`POST /api/runs` Variant A — multipart upload.** §2 documents `gatewayFile` / `bankFile` /
+   `ledgerFile` as the primary way to start a run, and the endpoint table lists `multipart`
+   before the JSON variant. A real `multipart/form-data` request returns
+   `400 MISSING_REQUIRED_FILE — "file upload is not enabled on this build"`. The upload path was
+   cut early under the degradation order and the contract was never walked back.
+2. **Endpoint 28 `toolCalls`.** The contract writes `toolCalls[]`, implying a trace array.
+   `AgentQuestion.toolCalls` is a `number`, and so are the identically named fields on
+   `AgentInvestigation` and `AgentCorroboration`. Every consumer treats it as a count; the
+   reasoning **trace** is a separate field (`reasoning[]` on an investigation).
+
+Both are the same failure, not two: **the contract is binding (CLAUDE.md §3), so where it and the
+code disagree the code is wrong until an ADR says otherwise.** Neither divergence had one, so for
+as long as they stood the repo's own rule declared the build broken. That is the expensive part —
+not the missing feature, but a rule the project leans on for credibility being quietly false in
+two places a reviewer can reach with `curl`.
+
+**Decision.**
+
+- **Variant A is cut, and the contract now says so** rather than describing it in the present
+  tense. §2 marks it `NOT BUILT`, states the actual `400`, and the endpoint table's Request
+  column no longer offers `multipart` as a choice. The system runs on the two registered seed
+  datasets, and the README says that in the same breath as the throughput number.
+- **The contract adopts the code's `toolCalls`**, documented as `toolCalls` (count) with a
+  pointer to `reasoning[]` for the trace. The code is not changed: a count is the right shape
+  here — `POST /ask` is a synchronous answer, and a caller wanting the trace reads the audit log,
+  which already records every call and is the only copy that is hash-chained.
+
+**Why this is not tuning (ADR-027).** No threshold, window, weight or tolerance moves; no run
+output changes. Both edits are documentation reconciling itself with shipped behaviour.
+
+**Why the upload is not simply built instead.** Ingestion is format-declared, never format-guessed
+(schema.md §2) — the three parsers are written against three known layouts. Accepting arbitrary
+CSVs means column mapping, format inference and a failure mode where a mis-mapped upload produces
+a confident wrong reconciliation. That is the exact class of answer this engine exists to refuse,
+and it is not a thing to add in the week before submission. Stating the limit costs a feature;
+guessing at it would cost the thesis.
+
+**Consequences.**
+- A reviewer following the contract now finds the build behind it. The limitation is discoverable
+  in the README instead of at a `400`.
+- If the upload is ever built, this ADR is superseded rather than edited, and §2 goes back to the
+  present tense.
+- The general rule this is the second reminder of: **an endpoint's contract entry is a claim, and
+  an unbuilt claim is a defect with a documentation-shaped fix.** The doc sweep in
+  `adr-060-doc-sweep-guard.test.ts` checks ADR/doc drift; it does not execute the contract, and
+  nothing does. A contract-conformance test is the real fix and is not in scope here.

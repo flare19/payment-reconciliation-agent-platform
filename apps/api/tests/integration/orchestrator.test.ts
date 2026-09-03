@@ -5,6 +5,7 @@ import { runMigrations } from '../../src/db/migrate.js';
 import { createPool, closePool, getPool } from '../../src/db/pool.js';
 import { ENGINE_DEFAULTS } from '../../src/config/defaults.js';
 import { createRun, findRun } from '../../src/repositories/runs.js';
+import { upsertAlias } from '../../src/repositories/aliases.js';
 import { verifyRunChain, readChain } from '../../src/repositories/audit.js';
 import { listTransactions } from '../../src/repositories/transactions.js';
 import { executeRun, hashSource } from '../../src/services/run/orchestrator.js';
@@ -348,6 +349,59 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
     assert.equal(out.exceptions, 212);
     assert.equal(out.referenceDate, '2026-08-21');
     assert.equal(out.auditEntries, 612, 'the same inputs must produce the same trail');
+  });
+
+  /**
+   * THE KNOB TEST, and the only kind that catches this defect shape.
+   *
+   * `aliasLearningEnabled` was parsed by `config/env`, defaulted in
+   * `config/defaults`, accepted as a `configOverrides` key by `POST /api/runs`,
+   * written verbatim into `config_snapshot` — and read by nothing. A run posted
+   * with `false` came back warm, with aliases applied and `isCold: false`,
+   * while its own snapshot said the feature was off. Every existing test
+   * passed, because every one of them asserted the field was *carried*, and
+   * none asserted it *did* anything. That is the third instance in this repo
+   * (CLAUDE.md §10), and the missing test is always this one.
+   *
+   * api-contract §2 names this field as *the* documented way to measure the
+   * cold-start rate, so the assertion is the contract's own promise: with the
+   * flag off, the run sees no aliases and reports itself cold.
+   *
+   * The rate consequence follows from there and is covered separately —
+   * `cold-pass.test.ts` proves the two pipeline passes are comparable, and
+   * ADR-132's counterfactual is what turns "no aliases" into the cold number.
+   */
+  test('aliasLearningEnabled:false makes the run COLD — the knob does something', async () => {
+    await upsertAlias({
+      aliasType: 'counterparty_name', scopeSource: 'any',
+      rawValue: 'API HOLDINGS', normalizedValue: 'API HOLDINGS',
+      canonicalValue: 'THREPSI SOLUTIONS', createdBy: 'orchestrator.test',
+    });
+
+    const mkRun = async (label: string) => (await createRun({
+      label, datasetSeed: 90210, configSnapshot: {
+        ...ENGINE_DEFAULTS, referenceDate: '1970-01-01', aliasCountAtStart: 0 },
+    })).id;
+
+    const warmId = await mkRun('knob-warm');
+    await executeRun(warmId, sources, { ...ENGINE_DEFAULTS, aliasLearningEnabled: true });
+    const warm = await findRun(warmId);
+
+    const coldId = await mkRun('knob-cold');
+    await executeRun(coldId, sources, { ...ENGINE_DEFAULTS, aliasLearningEnabled: false });
+    const cold = await findRun(coldId);
+
+    // The alias exists for both runs. The ONLY difference is the flag.
+    assert.equal(warm!.configSnapshot.aliasCountAtStart, 1,
+      'with the flag on, the run must load the active alias');
+    assert.equal(cold!.configSnapshot.aliasCountAtStart, 0,
+      'with the flag off, the run must see NO aliases — this is what was broken');
+
+    const coldOf = (r: typeof warm) =>
+      ((r!.metrics as Record<string, Record<string, unknown>>)['coldStart'] ?? {})['isCold'];
+    assert.equal(coldOf(warm), false, 'a run with an alias active is not cold');
+    assert.equal(coldOf(cold), true,
+      'ADR-020: a run with no aliases active IS the cold run, and must say so');
   });
 
   test('a failed run says so, and its committed phases stay visible (ADR-046)', async () => {

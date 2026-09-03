@@ -197,7 +197,10 @@ export interface MeasuredMetrics {
       perCategory: Record<string, { precision: number; recall: number }>;
     };
   };
-  byDifficulty: Record<string, { pairs: number; recall: number; precision: number }>;
+  /** Recall only — precision is not sliceable by difficulty (a false positive
+   *  belongs to no event, so it carries no difficulty label). Scorer 1.5.0
+   *  removed the `precision` key rather than keep it aliased onto recall. */
+  byDifficulty: Record<string, { pairs: number; recall: number }>;
   resolvability: {
     unresolvableDesigned: number;
     unresolvableRecall: number;

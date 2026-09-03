@@ -196,9 +196,30 @@ export default async function AnalystPage(
             <span className={styles.stepNo}>3</span>
             <span className={styles.stepText}>
               <strong>Passes a grounding gate.</strong> Every id it cites must appear in a tool
-              result it actually received. A verdict that cites something it never saw is
-              rejected — <span className="num">{metrics ? count(metrics.groundingFailures) : '—'}</span>{' '}
-              were.
+              result it actually received, and a verdict that cites something it never saw is
+              rejected rather than shown.{' '}
+              {/*
+                NEVER A BARE ZERO. This read "rejected — 0 were" on any run with
+                no investigations, which is a vacuous zero dressed as evidence:
+                it reports an empty denominator as though the gate had been
+                tested and never needed to fire. On runs that HAVE been
+                investigated the gate has fired repeatedly, so the honest zero
+                and the misleading one looked identical. Scope the claim to this
+                run, always carry the denominator, and say plainly when there is
+                nothing to report — a gate that has caught something is a better
+                argument than a gate that has never been asked to.
+              */}
+              {metrics === null || metrics.total === 0 ? (
+                <>Nothing has been investigated on this run yet, so there is nothing here for it
+                to have caught.</>
+              ) : (
+                <>
+                  On this run it rejected{' '}
+                  <span className="num">{count(metrics.groundingFailures)}</span> of{' '}
+                  <span className="num">{count(metrics.total)}</span>{' '}
+                  {metrics.total === 1 ? 'verdict' : 'verdicts'}.
+                </>
+              )}
             </span>
           </li>
           <li>

@@ -13,7 +13,7 @@ Per ARCHITECTURE §7, this is a lightweight table — **not** an OpenAPI/Swagger
 | Concern | Decision |
 |---|---|
 | Base path | `/api` — all routes below are relative to it. |
-| Format | JSON in, JSON out. The single exception is `POST /api/runs` with file upload, which is `multipart/form-data`. |
+| Format | JSON in, JSON out, with no exceptions — the `multipart/form-data` upload variant of `POST /api/runs` is NOT BUILT (ADR-161). |
 | Casing | **`camelCase` on the wire.** Postgres is `snake_case`; the mapping happens once in the repository layer, never in the frontend. |
 | Money | Wire format is **`amountPaise: number` (integer)** plus a pre-formatted **`amountDisplay: string`** (`"₹1,234.50"`). The frontend never does currency arithmetic or formatting — one formatter, server-side, so the dashboard and the API can never disagree about a number. |
 | Dates | ISO-8601. Business dates as `"2026-08-14"`, instants as `"2026-08-14T08:15:02.000Z"` (UTC). The frontend renders in IST. |
@@ -72,7 +72,7 @@ against a 240/minute allowance, and a run completes in ~3 s (≈4 polls).
 | # | Route | Method | Request | Response | Purpose |
 |---|---|---|---|---|---|
 | 1 | `/api/health` | GET | — | `{ status, dbConnected, llmConfigured, version }` | Deploy smoke check. |
-| 2 | `/api/runs` | POST | `multipart` (3 files) **or** `{ useSeedDataset, datasetSeed?, label?, configOverrides? }` | `202` `{ runId, status, label, startedAt }` | Upload sources / trigger a run. |
+| 2 | `/api/runs` | POST | `{ useSeedDataset, datasetSeed?, label?, configOverrides? }` — JSON only; multipart upload is NOT BUILT (ADR-161) | `202` `{ runId, status, label, startedAt }` | Trigger a run over a registered seed dataset. |
 | 3 | `/api/runs` | GET | `?page&pageSize` | `{ runs: RunSummary[], pagination }` | Run history for the dashboard's run picker. |
 | 4 | `/api/runs/:runId` | GET | — | `RunDetail` (status, progress, counts, metrics when done) | Poll target while a run is in flight. |
 | 5 | `/api/runs/:runId/metrics` | GET | — | `Metrics` | The headline numbers panel. `409` if run not complete. |
@@ -98,7 +98,7 @@ against a 240/minute allowance, and a run completes in ~3 s (≈4 polls).
 | 25 | `/api/runs/:runId/investigations` | POST | `{ maxInvestigations?, categories?[] }` | `202` `{ phaseId, status }` | Start Phase A on a completed run. (ADR-048) |
 | 26 | `/api/runs/:runId/investigations` | GET | `?verdict&category&page&pageSize` | `{ investigations: InvestigationSummary[], agentMetrics, pagination }` | Analyst results for a run. |
 | 27 | `/api/investigations/:investigationId` | GET | — | `InvestigationDetail` (reasoning chain, tool trace, citations, proposal) | Drill-down into one investigation. |
-| 28 | `/api/runs/:runId/ask` | POST | `{ question }` | `{ answer, citations[], toolCalls[], steps, costUsd }` | Q&A agent over finalized run results. (ADR-056) |
+| 28 | `/api/runs/:runId/ask` | POST | `{ question }` | `{ questionId, answer, citations[], steps, toolCalls, tokensIn, tokensOut, costUsd, groundingPassed, askedAt }` — `toolCalls` is a COUNT (ADR-161) | Q&A agent over finalized run results. (ADR-056) |
 
 28 endpoints, all `GET` except nine `POST`s and one `PATCH`. Nothing here needs a `DELETE` — nothing in this system is ever deleted.
 
@@ -116,17 +116,24 @@ against a 240/minute allowance, and a run completes in ~3 s (≈4 polls).
 
 ### 2 · `POST /api/runs`
 
-**Variant A — upload (multipart/form-data)**
+**Variant A — upload (multipart/form-data) — NOT BUILT (ADR-161)**
 
-| Part | Required | Notes |
-|---|---|---|
-| `gatewayFile` | yes | CSV, ≤10 MB |
-| `bankFile` | yes | CSV, ≤10 MB |
-| `ledgerFile` | yes | CSV, ≤10 MB |
-| `label` | no | Defaults to `upload-<ISO timestamp>` |
-| `configOverrides` | no | JSON string, same shape as variant B |
+Cut under the degradation order and **not implemented on any build**. A `multipart/form-data`
+request returns:
 
-**Variant B — seeded dataset (application/json)**
+```json
+{ "error": { "code": "MISSING_REQUIRED_FILE",
+             "message": "file upload is not enabled on this build; pass { useSeedDataset: true }" } }
+```
+
+with `400`. Runs are started from the registered seed datasets only (`GET /api/health` lists
+them). The design, kept for whenever it is built: parts `gatewayFile` / `bankFile` / `ledgerFile`
+(CSV, ≤10 MB each), optional `label` defaulting to `upload-<ISO timestamp>`, optional
+`configOverrides` as a JSON string. Ingestion is format-declared rather than format-guessed
+(schema.md §2), so building this means column mapping and format inference — see ADR-161 for why
+that is not a pre-submission change.
+
+**Variant B — seeded dataset (application/json) — the only supported variant**
 
 ```json
 {

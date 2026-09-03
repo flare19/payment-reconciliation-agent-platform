@@ -30,7 +30,7 @@ import * as excRepo from '../repositories/exceptions.js';
 import * as scoreRepo from '../repositories/score-reports.js';
 import { verifyRunChain } from '../repositories/audit.js';
 import { formatPaise } from '../services/ingestion/money.js';
-import { handler, pageParams, found, enumParam, requireString, pathParam } from './helpers.js';
+import { handler, pageParams, found, enumParam, requireString, uuidParam } from './helpers.js';
 import { runSummary, runDetail, paginate, matchSummary, exceptionSummary } from './serialize.js';
 
 /** Config keys a caller may override (api-contract §2, endpoint 2). */
@@ -237,14 +237,14 @@ export function runsRouter(
 
   // 4 · GET /api/runs/:runId — the poll target.
   r.get('/:runId', handler(async (req, res) => {
-    const run = found(await runsRepo.findRun(pathParam(req, 'runId')),
-      'RUN_NOT_FOUND', `No run exists with id ${pathParam(req, 'runId')}`);
+    const run = found(await runsRepo.findRun(uuidParam(req, 'runId')),
+      'RUN_NOT_FOUND', `No run exists with id ${uuidParam(req, 'runId')}`);
     res.json(runDetail(run));
   }));
 
   // 5 · GET /api/runs/:runId/metrics
   r.get('/:runId/metrics', handler(async (req, res) => {
-    const runId = pathParam(req, 'runId');
+    const runId = uuidParam(req, 'runId');
     const run = found(await runsRepo.findRun(runId), 'RUN_NOT_FOUND', `No run exists with id ${runId}`);
     if (run.status !== 'completed') {
       throw new ApiError(409, 'RUN_NOT_COMPLETE',
@@ -268,7 +268,7 @@ export function runsRouter(
 
   // 6 · GET /api/runs/:runId/exceptions
   r.get('/:runId/exceptions', handler(async (req, res) => {
-    const runId = pathParam(req, 'runId');
+    const runId = uuidParam(req, 'runId');
     found(await runsRepo.findRun(runId), 'RUN_NOT_FOUND', `No run exists with id ${runId}`);
     const { page, pageSize, offset } = pageParams(req);
 
@@ -302,7 +302,7 @@ export function runsRouter(
 
   // 8 · GET /api/runs/:runId/matches   ·   9 · .../review-queue
   r.get('/:runId/matches', handler(async (req, res) => {
-    const runId = pathParam(req, 'runId');
+    const runId = uuidParam(req, 'runId');
     found(await runsRepo.findRun(runId), 'RUN_NOT_FOUND', `No run exists with id ${runId}`);
     const { page, pageSize, offset } = pageParams(req);
     const filter = {
@@ -319,7 +319,7 @@ export function runsRouter(
   }));
 
   r.get('/:runId/review-queue', handler(async (req, res) => {
-    const runId = pathParam(req, 'runId');
+    const runId = uuidParam(req, 'runId');
     found(await runsRepo.findRun(runId), 'RUN_NOT_FOUND', `No run exists with id ${runId}`);
     const { page, pageSize, offset } = pageParams(req);
     const { matches, total } = await matchRepo.listReviewQueue(runId, pageSize, offset);
@@ -350,7 +350,7 @@ export function runsRouter(
 
   // 24 · GET /api/runs/:runId/population — rows outside the denominator.
   r.get('/:runId/population', handler(async (req, res) => {
-    const runId = pathParam(req, 'runId');
+    const runId = uuidParam(req, 'runId');
     const run = found(await runsRepo.findRun(runId), 'RUN_NOT_FOUND', `No run exists with id ${runId}`);
     const { page, pageSize, offset } = pageParams(req);
     const kind = enumParam(req, 'kind', ['excluded', 'rejected', 'duplicates'] as const) ?? 'excluded';
@@ -384,7 +384,7 @@ export function runsRouter(
 
   // 22 · GET /api/runs/:runId/audit/verify — recompute the hash chain.
   r.get('/:runId/audit/verify', handler(async (req, res) => {
-    const runId = pathParam(req, 'runId');
+    const runId = uuidParam(req, 'runId');
     found(await runsRepo.findRun(runId), 'RUN_NOT_FOUND', `No run exists with id ${runId}`);
     // Eight fields, not §22's original five (issue #28). `anchored` is the important
     // addition: a hash chain proves the entries you HOLD are consistent, and
@@ -396,7 +396,7 @@ export function runsRouter(
 
   // 23 · POST /api/runs/:runId/score-report — the offline scorer posts a measurement.
   r.post('/:runId/score-report', handler(async (req, res) => {
-    const runId = pathParam(req, 'runId');
+    const runId = uuidParam(req, 'runId');
     const run = found(await runsRepo.findRun(runId), 'RUN_NOT_FOUND', `No run exists with id ${runId}`);
     const body = (req.body ?? {}) as Record<string, unknown>;
     const truthKeyFile = requireString(body, 'truthKeyFile');
@@ -437,7 +437,7 @@ export function runsRouter(
 
   // 19 · GET /api/runs/:runId/export?format=csv&scope=exceptions|matches
   r.get('/:runId/export', handler(async (req, res) => {
-    const runId = pathParam(req, 'runId');
+    const runId = uuidParam(req, 'runId');
     found(await runsRepo.findRun(runId), 'RUN_NOT_FOUND', `No run exists with id ${runId}`);
     const scope = enumParam(req, 'scope', ['exceptions', 'matches'] as const) ?? 'exceptions';
 

@@ -21,7 +21,7 @@ import * as txnRepo from '../repositories/transactions.js';
 import * as runsRepo from '../repositories/runs.js';
 import { appendAuditEntry } from '../repositories/audit.js';
 import { normalizeCounterparty } from '../services/ingestion/normalize.js';
-import { handler, found, requireString, optionalString, pathParam } from './helpers.js';
+import { handler, found, requireString, optionalString, uuidParam } from './helpers.js';
 import { matchSummary, aliasDto } from './serialize.js';
 import type { AliasType, AliasScope, MemberRole } from '../types/domain.js';
 
@@ -118,7 +118,7 @@ export function matchesRouter(): Router {
 
   // 10 · POST /api/matches/:matchId/approve
   r.post('/:matchId/approve', handler(async (req, res) => {
-    const matchId = pathParam(req, 'matchId');
+    const matchId = uuidParam(req, 'matchId');
     const body = (req.body ?? {}) as Record<string, unknown>;
     const reviewedBy = requireString(body, 'reviewedBy');
     const note = optionalString(body, 'note');
@@ -202,7 +202,7 @@ export function matchesRouter(): Router {
 
   // 11 · POST /api/matches/:matchId/reject
   r.post('/:matchId/reject', handler(async (req, res) => {
-    const matchId = pathParam(req, 'matchId');
+    const matchId = uuidParam(req, 'matchId');
     const body = (req.body ?? {}) as Record<string, unknown>;
     const reviewedBy = requireString(body, 'reviewedBy');
     // A rejection with no stated reason is a hole in the audit trail. The
@@ -255,7 +255,7 @@ export function manualMatchRouter(): Router {
   const r = Router();
 
   r.post('/:runId/matches', handler(async (req, res) => {
-    const runId = pathParam(req, 'runId');
+    const runId = uuidParam(req, 'runId');
     found(await runsRepo.findRun(runId), 'RUN_NOT_FOUND', `No run exists with id ${runId}`);
     const body = (req.body ?? {}) as Record<string, unknown>;
     const createdBy = requireString(body, 'createdBy');

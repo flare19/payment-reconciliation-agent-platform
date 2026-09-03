@@ -19,29 +19,49 @@ Every number here is tagged with **where it came from**, because the difference 
 
 **An engine's self-reported match rate goes *up* when it matches the wrong bank credit.** That is why only the second block is allowed to make an accuracy claim.
 
+**Every figure below is from one run** — `readme-canonical`, run id `831da294-ec28-46eb-9d04-11006f8f2628`,
+holdout seed 90210, scored by `tools/score` 1.5.0 at exit code 0. One run, so the numbers
+cannot drift against each other; regenerate the block from a single run whenever it changes.
+
 ```
 ENGINE ─ what the run did ─────────────────────────────────────────
-   920 source records          track asks for 50+
-   874 reconcilable            37 excluded · 9 duplicates collapsed
-   284 match groups            covering 570 records
-   212 exceptions              8-category taxonomy · all classified · all explained
-    71 review-queue groups     found, and deliberately not auto-confirmed
- 65.22% match rate             against a published ceiling of 93.0%
+   920 source records          track asks for 50+ · 323 gateway / 301 bank / 296 ledger
+   874 reconcilable            37 excluded · 9 duplicates collapsed · 0 rows rejected
+   284 match groups            573 records in the 214 groups that count toward the rate
+   212 exceptions              all classified · all explained · 21 distinct signatures
+    70 review-queue groups     216 records found and deliberately NOT auto-confirmed
+ 65.56% match rate  (warm)     against a published ceiling of 93.0%
+ 65.22% match rate  (cold)     the same run with learned aliases disabled
 
 MEASURED ─ graded against a key the engine cannot read ────────────
-   precision        1.0000     pair-level · false positives 0
-   recall           0.6075     ← the honest weakness. Addressed below.
+   precision        1.0000     pair-level · false positives 0 · TP 438
+   recall           0.6117     ← the honest weakness. Addressed below. FN 278
+   F1               0.7591
    unresolvable     21 / 21    every impossible case correctly refused
-   classification   macro P 0.9286 · R 0.8738
+   classification   macro P 0.9286 · R 0.8738   ← weaker than matching, on purpose stated
+   review queue     precision 1.0000 over 210 judged pairs
 
 VERIFIABLE ─ recomputable by anyone, from the links below ─────────
-   audit chain      612 entries · verifies · anchored
+   audit chain      614 entries · verifies · anchored
    reproducibility  byte-identical output from identical inputs
 ```
 
+**What this build does not do.** It reconciles the **two registered synthetic datasets**
+(`GET /api/health` lists them) — the multipart upload path is documented in the contract and
+**not built** ([ADR-161](docs/adr-log.md)), so you cannot yet point it at your own three CSVs.
+Ingestion is format-declared rather than format-guessed, and guessing at a column mapping is the
+one thing an engine built to refuse guesses should not ship in a hurry. Throughput is therefore
+measured at a single input size; there is no scale benchmark.
+
+Two more limits worth stating in the same breath as the numbers above: **7 of the 8 exception
+categories are exercised** by these datasets (`TIMING_DRIFT` has zero instances on either seed),
+and **the Analyst is not scored** — see [The Analyst](#the-analyst) for exactly what is and is
+not known about it.
+
 ### Verify it yourself in 5 seconds
 
-Don't take the table's word for it. This hits the deployed instance:
+Don't take the table's word for it. This hits the deployed instance — **a different run from the
+one tabulated above**, which is why its entry count differs; a chain is verified per run:
 
 ```bash
 curl -s "https://payment-reconciliation-agent-platform-production.up.railway.app/api/runs/cff41e32-dd53-43eb-a907-f1fa071bd32f/audit/verify"
@@ -53,7 +73,26 @@ curl -s "https://payment-reconciliation-agent-platform-production.up.railway.app
   "firstDivergenceSequenceNo": null }
 ```
 
-That endpoint recomputes a SHA-256 hash chain over all 612 decisions and reports where it breaks. It is designed to be able to say `false`. Swap `/audit/verify` for `/metrics` or `/exceptions` to read the run.
+The endpoint recomputes a SHA-256 hash chain over every decision in that run and reports where it
+breaks. It is designed to be able to say `false`. Swap `/audit/verify` for `/metrics` or
+`/exceptions` to read the run.
+
+**Verifying the tabulated run instead**, against a local instance — this is the run every number
+above comes from, and `npm run score` re-derives the measured block from the answer key:
+
+```bash
+curl -s "http://localhost:8080/api/runs/831da294-ec28-46eb-9d04-11006f8f2628/audit/verify"
+npm run score -- --run 831da294-ec28-46eb-9d04-11006f8f2628 --api http://localhost:8080
+```
+
+`npm run score` exits **0** when every honesty gate passed, **1** on a transport or hash failure,
+and **2** when a build blocker fired. The exit code is the claim; the printout is the explanation.
+
+**One thing you cannot verify from outside, stated rather than implied:** the audit entries
+endpoint returns decisions, not their hashes, so `/audit/verify` is the server recomputing its own
+chain. That detects corruption and accidental mutation — the append-only trigger and the chain are
+independent guards — but it is not a proof you can recompute yourself without the hashes. Treat
+"tamper-evident" as "the server will tell you if its own chain broke", which is what it is.
 
 ---
 
@@ -75,7 +114,7 @@ It does not merely *try* not to guess. Four structural properties make whole cla
 > The maximum honest match rate on this dataset is **93%**.
 > **Which means anyone reporting 97% here is reporting false positives.** The ceiling is its own fraud detector.
 
-**The refutation, stated plainly:** recall `0.6075` is real and it is the weakest number in the project. It concentrates in the HARD-difficulty band, and it is the price of the four properties above — every point of it was surrendered deliberately, at a known exchange rate, to hold precision at `1.0000`. The 71-group review queue is where most of it is recoverable: those are matches the engine *found* and declined to auto-confirm, sitting at a measured queue precision of `1.0000` over 213 judged pairs. Raising the match rate by loosening a threshold is explicitly forbidden by [ADR-027](docs/adr-log.md) — because a number that improves when the system gets things wrong is worse than no number at all.
+**The refutation, stated plainly:** recall `0.6117` is real and it is the weakest number in the project. It concentrates in the HARD-difficulty band, and it is the price of the four properties above — every point of it was surrendered deliberately, at a known exchange rate, to hold precision at `1.0000`. The 70-group review queue — 216 records — is where most of it is recoverable: those are matches the engine *found* and declined to auto-confirm, sitting at a measured queue precision of `1.0000` over 210 judged pairs. Raising the match rate by loosening a threshold is explicitly forbidden by [ADR-027](docs/adr-log.md) — because a number that improves when the system gets things wrong is worse than no number at all.
 
 ---
 
@@ -84,7 +123,7 @@ It does not merely *try* not to guess. Four structural properties make whole cla
 | Criterion | What this repo puts on the table | Evidence |
 |---|---|---|
 | **Problem taste** | Multi-source reconciliation with an **exception list as the primary feature**, not a fallback. 8 categories with precedence, computed severity, and a human review queue — the shape a real finance team actually operates. | [schema.md §8](docs/schema.md) |
-| **Build quality** | 52,482 lines of TypeScript · 233 files · 60 test files · 14 forward-only migrations · **158 ADRs** · 28 documented endpoints. All SQL confined to `repositories/`. Read-only agent access enforced by **Postgres**, not by convention. | [ARCHITECTURE.md](ARCHITECTURE.md) · [adr-log.md](docs/adr-log.md) |
+| **Build quality** | ~54,400 lines of TypeScript · 223 files · 62 test files · 13 forward-only migrations · **161 ADRs** · 28 documented endpoints. All SQL confined to `repositories/`. Read-only agent access enforced by **Postgres**, not by convention. | [ARCHITECTURE.md](ARCHITECTURE.md) · [adr-log.md](docs/adr-log.md) |
 | **AI judgment** | **The LLM decides nothing.** Every match, category and severity comes from deterministic rules; the model writes prose about decisions already made. Proven: a run with a live model produced a **byte-identical score report** to a keyless run. | [ADR-017](docs/adr-log.md) |
 | **Failure recovery** | **16 dated defect write-ups** — defect, root cause, fix, regression test. Including **six instances of the same meta-bug**: a test that passed whether or not the bug was present. The rule that came out of it: writing the test is not the guard, *watching it fail* is. | [what-broke.md](docs/what-broke.md) |
 
@@ -171,7 +210,7 @@ Documented before it was built. Every locked decision has its reasoning recorded
 | [ARCHITECTURE.md](ARCHITECTURE.md) | The scope lock — in scope, out of scope, concrete numbers, risks |
 | [docs/validation-strategy.md](docs/validation-strategy.md) | Ground truth, precision/recall scoring, **the honesty protocols** |
 | [docs/matching-engine.md](docs/matching-engine.md) | Stage order S0–S14, determinism guarantees, blocking, assignment |
-| [docs/schema.md](docs/schema.md) | Tables, tolerances, the 8-category taxonomy and its precedence |
+| [docs/schema.md](docs/schema.md) | Tables, tolerances, the 8-category taxonomy and its precedence (7 fire on these datasets) |
 | [docs/agent-design.md](docs/agent-design.md) | The Analyst: tool registry, investigation loop, grounding gate |
 | [docs/api-contract.md](docs/api-contract.md) | All 28 endpoints. Binding on the code. |
 | [docs/adr-log.md](docs/adr-log.md) | **158 decisions with reasoning.** Append-only — superseded, never edited |
@@ -196,4 +235,4 @@ The dashboard carries this same rule as a design constraint: every figure render
 
 ---
 
-*Built solo · 2026-08-24 → 2026-09-05 · 213 commits · 158 ADRs · 16 defect write-ups*
+*Built solo · 2026-08-24 → 2026-09-05 · 226 commits · 161 ADRs · 16 defect write-ups*
