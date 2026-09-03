@@ -22,8 +22,8 @@
  */
 
 import type {
-  AgentConfidence, CorroborationVerdict, ProposedAction, RawCorroboration, RawVerdict,
-  ReasoningStep, ToolCallRecord, ValidatedCorroboration, ValidatedVerdict, Verdict,
+  AgentConfidence, CorroborationVerdict, ProposedAction, RawAnswer, RawCorroboration, RawVerdict,
+  ReasoningStep, ToolCallRecord, ValidatedAnswer, ValidatedCorroboration, ValidatedVerdict, Verdict,
 } from '../../types/agent.js';
 import type { AliasType, Direction, SourceSystem } from '../../types/domain.js';
 import { AGENT_DEFAULTS } from '../../config/defaults.js';
@@ -729,6 +729,123 @@ function rejectCorroboration(
       reasoning: sanitizeReasoning(source.reasoning),
       citations: [],
       summary: typeof source.summary === 'string' ? source.summary : '',
+      groundingPassed: false,
+      groundingFailure: `${check}: ${reason}`,
+      budgetExhausted: false,
+    },
+    rejection: { check, reason },
+  };
+}
+
+
+/**
+ * A3 FOR AN ANSWER (agent-design.md §9, U15).
+ *
+ * The third vocabulary through one gate. `validateVerdict` judges an
+ * investigation, `validateCorroboration` a review-queue corroboration, and this
+ * an answer to a free-text question — and all three run the SAME
+ * `checkGrounding`, deliberately. A second grounding implementation is a second
+ * place for the allow-list to drift, and the drift would be invisible because
+ * each copy would keep passing its own tests.
+ *
+ * WHAT AN ANSWER MAY NOT DO. It may not carry a `proposedAction`, and one that
+ * arrives is REFUSED rather than quietly stripped. The Q&A agent reports what
+ * the run's data says; it does not recommend a change. Stripping the field
+ * would hide that the prompt had drifted into advising — the same argument
+ * ADR-081 makes for corroboration, and the same reason the check exists there.
+ */
+export interface AnswerGateResult {
+  answer: ValidatedAnswer;
+  rejection: { check: 'schema' | 'grounding'; reason: string } | null;
+}
+
+export function validateAnswer(raw: unknown, context: GateContext): AnswerGateResult {
+  assertContextIsScoped(context);
+
+  const schema = checkAnswerSchema(raw);
+  if (schema !== null) return rejectAnswer(raw, 'schema', schema);
+
+  const answer = raw as RawAnswer;
+
+  // `checkGrounding` takes a `RawVerdict`. An answer is that shape minus the
+  // verdict enum and the proposal, so it is widened with both rather than
+  // copied — one grounding implementation, three callers.
+  //
+  // `CONFIRMED_UNRESOLVABLE` is not an arbitrary stand-in. It selects
+  // `checkGrounding`'s "asserts something, so it requires a reasoning chain"
+  // arm, and EVERY answer asserts something: even "the data does not show
+  // that" is a claim about having looked. Without this arm an answer would be
+  // reachable from zero tool calls, which would make the emptiest answer the
+  // cheapest one to produce — exactly how an agent learns to stop retrieving.
+  const grounding = checkGrounding(
+    { ...answer, verdict: 'CONFIRMED_UNRESOLVABLE', summary: answer.answer, proposedAction: null },
+    context);
+  if (grounding !== null) return rejectAnswer(answer, 'grounding', grounding);
+
+  return {
+    answer: {
+      ...answer,
+      citations: [...new Set(answer.citations)].sort(),
+      groundingPassed: true,
+      groundingFailure: null,
+      budgetExhausted: false,
+    },
+    rejection: null,
+  };
+}
+
+function checkAnswerSchema(raw: unknown): string | null {
+  if (raw === null || typeof raw !== 'object') return 'answer is not an object';
+  const v = raw as Record<string, unknown>;
+
+  if (typeof v['answer'] !== 'string' || v['answer'].trim() === '') {
+    return 'answer is required and must be a non-empty string';
+  }
+  if (!CONFIDENCES.includes(v['confidence'] as AgentConfidence)) {
+    return `confidence must be one of ${CONFIDENCES.join(', ')}, got ${String(v['confidence'])}`;
+  }
+  if (!Array.isArray(v['citations']) || v['citations'].some((c) => typeof c !== 'string')) {
+    return 'citations must be an array of strings';
+  }
+  // See the header: refused, not stripped.
+  if (v['proposedAction'] !== undefined && v['proposedAction'] !== null) {
+    return 'an answer must not carry a proposedAction: the Q&A agent reports what the '
+      + 'data says, it does not recommend a change (ADR-081)';
+  }
+  if (!Array.isArray(v['reasoning'])) return 'reasoning must be an array';
+  for (const [i, step] of (v['reasoning'] as unknown[]).entries()) {
+    const s = step as Record<string, unknown>;
+    if (s === null || typeof s !== 'object') return `reasoning[${i}] is not an object`;
+    if (typeof s['tool'] !== 'string' || s['tool'] === '') return `reasoning[${i}].tool is required`;
+    if (typeof s['resultDigest'] !== 'string') return `reasoning[${i}].resultDigest is required`;
+    if (typeof s['inference'] !== 'string') return `reasoning[${i}].inference is required`;
+  }
+  return null;
+}
+
+/**
+ * A REFUSED ANSWER IS STILL RETURNED, never swallowed — the same posture the
+ * other two vocabularies take. The caller persists it with
+ * `groundingPassed: false` and the stated reason, because an answer the gate
+ * caught is evidence the gate works, and hiding it would remove the only
+ * signal that the prompt or the tools need attention.
+ */
+function rejectAnswer(
+  raw: unknown, check: 'schema' | 'grounding', reason: string,
+): AnswerGateResult {
+  const source = (raw ?? {}) as Partial<RawAnswer>;
+  return {
+    answer: {
+      answer: typeof source.answer === 'string' ? source.answer : '',
+      confidence: 'low',
+      // `sanitizeReasoning`, NOT `Array.isArray` — issue #22 fixed exactly that
+      // shortcut in the other two vocabularies, and re-introducing it here
+      // would let a malformed step through the one path built to catch it.
+      reasoning: sanitizeReasoning(source.reasoning),
+      // Emptied deliberately: a citation the gate refused is not evidence, and
+      // surfacing it beside a rejected answer would give an ungrounded id the
+      // appearance of a retrieved one.
+      citations: [],
       groundingPassed: false,
       groundingFailure: `${check}: ${reason}`,
       budgetExhausted: false,
