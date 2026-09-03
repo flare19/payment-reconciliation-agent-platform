@@ -16,6 +16,7 @@ import type {
   ExceptionListResponse, Health, InvestigationDetail, MatchListResponse, MatchSummary,
   PopulationResponse, ReviewQueueResponse, TransactionDetail,
   InvestigationListResponse, MetricsResponse, RunListResponse, RunSummary,
+  RunQuestion, QuestionListResponse,
 } from '@/types/api';
 
 const BASE_URL = process.env['NEXT_PUBLIC_API_BASE_URL'] ?? 'http://localhost:8080/api';
@@ -116,6 +117,32 @@ export const getMetricsIfComplete = (runId: string) =>
 /** A run Phase A never ran on, or an API with the agent disabled. */
 export const getInvestigationsIfAny = (runId: string) =>
   optional(getInvestigations(runId), ['RUN_NOT_COMPLETE', 'AGENT_DISABLED']);
+
+// ── endpoint 28 · ask a question about the run (U15) ─────────────────────────
+
+/**
+ * THE SECOND CONTROL IN THE FRONTEND THAT SPENDS MONEY, and the only one that
+ * takes free text.
+ *
+ * SYNCHRONOUS AND SLOW ON PURPOSE. Unlike endpoint 25 there is no 202 and no
+ * poll target: the contract returns the answer in the response body, so this
+ * promise is held open for the length of the whole investigation -- up to about
+ * 30 seconds at 6 bounded steps. Any caller must render a waiting state; a
+ * spinner-less button here reads as a broken page.
+ *
+ * The server bounds the question at 500 characters, and the component mirrors
+ * that bound rather than owning it -- the bound is a SPEND bound and the server
+ * is where it is enforced.
+ */
+export const askQuestion = (runId: string, question: string) =>
+  apiPost<RunQuestion>(`/runs/${runId}/ask`, { question });
+
+/** The persisted history. Free, and true even when the agent is switched off. */
+export const getQuestions = (runId: string) =>
+  apiFetch<QuestionListResponse>(`/runs/${runId}/questions`);
+
+export const getQuestionsIfAny = (runId: string) =>
+  optional(getQuestions(runId), ['RUN_NOT_COMPLETE', 'AGENT_DISABLED']);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // U18 · the remaining screens

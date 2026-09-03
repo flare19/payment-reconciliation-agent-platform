@@ -279,6 +279,36 @@ export interface InvestigationListResponse {
   pagination: Pagination;
 }
 
+// ── endpoint 28 · the Q&A agent (U15) ────────────────────────────────────────
+
+/**
+ * One question and its answer, as `agent_questions` stored it.
+ *
+ * `groundingPassed: false` is a REAL, RENDERABLE state and not an error: the A3
+ * gate refused the answer, stripped its citations, and the row was persisted
+ * anyway so the refusal is visible rather than silently retried. The UI must
+ * never present such an answer as though it were grounded.
+ */
+export interface RunQuestion {
+  questionId: string;
+  runId: string;
+  question: string;
+  answer: string | null;
+  citations: string[];
+  steps: number;
+  toolCalls: number;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  /** NULL on a free-tier key, never 0 — a zero reads as a measured figure. */
+  costUsd: number | null;
+  groundingPassed: boolean;
+  askedAt: string;
+}
+
+export interface QuestionListResponse {
+  questions: RunQuestion[];
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // U18 · the remaining screens
 // ─────────────────────────────────────────────────────────────────────────────
