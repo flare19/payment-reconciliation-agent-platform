@@ -2399,3 +2399,31 @@ deployed web (deployment.md §3).
   200-run list page. Once, on a cache-miss, on the server.
 - `STALE_RUN_TIMEOUT_MINUTES` remains the last knob in CLAUDE.md §10's list that is parsed and
   enforced nowhere.
+
+### ADR-167 · The exception list leads with the money, not the taxonomy
+
+**Context.** `/exceptions` is the primary screen, and it opened straight into structural facts —
+the category facet rail and a severity split — before naming a single rupee. This is the AI
+Finance Controller track; a controller triages by exposure, and "how much is on this list?" was a
+question the page made you work for.
+
+**Decision.** A one-line exposure band at the top of the main column, above the filter chips and
+the table: the run-wide amount at risk (`engine.exceptions.amountAtRisk`, ADR-164,
+`provenance: engine`), the high-severity subtotal, and the three largest single lines as links
+into their own exceptions. The taxonomy is unchanged and still in the facet rail — it is just no
+longer the first thing the page says.
+
+- **Run-wide, not filter-scoped.** The band and its top three describe the whole run regardless of
+  the active category/severity filter or the table's sort, matching the facet counts beside them
+  (also run totals by design). The top three come from one extra `listExceptions(sort: amount,
+  pageSize: 3)` read, parallel with the others.
+- **Absent, not faked.** The band renders only when the run's metrics carry the `amountAtRisk`
+  block; a run scored before ADR-164 shows the table with no band rather than a zero.
+- No new sort. The default is already "severity, then amount at risk" (ADR-044), which is right;
+  this is about what the page states first.
+
+**Scope.** Frontend only. No API change.
+
+**Consequences.**
+- `STALE_RUN_TIMEOUT_MINUTES` remains the last knob in CLAUDE.md §10's list that is parsed and
+  enforced nowhere.

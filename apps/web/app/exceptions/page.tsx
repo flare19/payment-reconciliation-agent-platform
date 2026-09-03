@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Disclosure } from '@/components/ui/Disclosure';
+import { ExceptionExposureBand } from '@/components/exceptions/ExceptionExposureBand';
 import { ExceptionTable } from '@/components/exceptions/ExceptionTable';
 import { FacetRail } from '@/components/exceptions/FacetRail';
 import { Paginate } from '@/components/ui/Paginate';
@@ -63,14 +64,19 @@ export default async function ExceptionsPage(
   // Metrics comes along too: the facet rail shows measured precision/recall per
   // category (queue item 2), which lives in `measured.classification` — absent,
   // never zero, when no score report exists (ADR-041).
-  const [data, agent, metrics] = await Promise.all([
+  const [data, agent, metrics, topByExposure] = await Promise.all([
     listExceptions(run.runId, { ...active, sort, page }),
     getInvestigationsIfAny(run.runId),
     getMetricsIfComplete(run.runId),
+    // Run-wide, unfiltered: the exposure band leads the page with the three
+    // largest single lines regardless of how the table below is filtered or
+    // sorted (queue item 4). One small extra read.
+    listExceptions(run.runId, { sort: 'amount', pageSize: 3 }).catch(() => null),
   ]);
   const { exceptions, facets, pagination } = data;
   const categoryAccuracy = metrics?.measured?.classification.multiLabel.perCategory ?? null;
   const hasScoreReport = (metrics?.measured ?? null) !== null;
+  const exposure = metrics?.engine.exceptions.amountAtRisk ?? null;
 
   /**
    * THE RUN'S TOTAL AND WHAT IS STILL OPEN ARE TWO FIGURES (ADR-123, and the
@@ -142,6 +148,17 @@ export default async function ExceptionsPage(
         />
 
         <div className={styles.main}>
+          {exposure && (
+            <ExceptionExposureBand
+              totalDisplay={exposure.totalDisplay}
+              totalCount={metrics!.engine.exceptions.total}
+              highSeverityDisplay={exposure.highSeverityDisplay}
+              highSeverityCount={exposure.highSeverityCount}
+              top={topByExposure?.exceptions ?? []}
+              runQ={runQ}
+            />
+          )}
+
           {activeFilters.length > 0 && (
             <div className={styles.activeFilters}>
               <span className="label">Filtered by</span>

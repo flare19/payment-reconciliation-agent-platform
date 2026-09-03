@@ -79,6 +79,8 @@ This screen *is* the product. Build it first, and give it the most attention.
 
 **Layout:** left rail of facet filters (category, severity, status, resolvability, source), main table, no infinite scroll — paginated at 50 with the total always visible. A judge needs to see "65 exceptions" as a bounded, countable set. Each **category** facet carries its measured precision/recall beneath the label, same figure and same absent-not-zero rule as block 3 on the dashboard (ADR-165); severity and status do not — there is no ground-truth precision for "high".
 
+**The main column leads with money, not the taxonomy (ADR-167).** Above the filter chips and the table sits a one-line exposure band: the run-wide amount at risk (`engine.exceptions.amountAtRisk`, `provenance: engine`, summed server-side over the whole run per ADR-164), the high-severity subtotal, and the three largest single lines — each a link into its own exception. Run-wide, not scoped to the active filter, matching the facet counts. It renders only when the run's metrics carry the block; a run scored before ADR-164 shows the table without it.
+
 **Default sort: severity DESC, then `amountAtRiskPaise` DESC.** A finance controller triages by money at risk, which is why severity is computed from amount (ADR-044) rather than fixed per category. A default sort that buries a ₹5,00,000 mismatch under nine ₹5 ones would waste the whole feature.
 
 **Columns:** severity · category (+ secondary flags as small chips) · source and external id · amount · date · amount at risk · best candidate score · resolvability · explanation (truncated to one line).
