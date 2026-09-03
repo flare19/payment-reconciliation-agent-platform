@@ -1942,3 +1942,34 @@ Verified functionally in the live page, not just by reading the source: checked 
 **Same `.field` idiom as `ResolveActions` and `ReviewCard`, not a fourth look for one input.**
 
 **Verified functionally through the real API path, not the UI** — the interactive click-through needed the pane to hydrate this specific dashboard page, which streams and therefore hits ADR-127's already-documented limitation (confirmed directly: the button's DOM node carried no React fiber at all — `reactKeys: []` — meaning the pane never completed hydration, not that the button doesn't work). So verification went one layer down, to the exact request `startRun` sends: `POST /api/runs` with a custom `label`, waited for real completion, and confirmed the dashboard's `RUN` field shows the custom name verbatim, unmodified, with the run otherwise byte-identical to any other holdout run. That is the stronger test of the two — it proves the whole path from submission to display, not just that a button opens a panel.
+
+---
+
+### ADR-156 · "How the Engine Works" — a narrative section, with a real number on every stage
+
+**A judge arrives knowing the match rate and the exception list, and has no picture of the machine between them.** That story existed only in `matching-engine.md`, which nobody visiting a live URL will read. Fourteen stages, grouped into four phases — Read, Match, Account, Report — now sit on the dashboard between the tier bar and the Analyst.
+
+**The design question was whether it should be a new tab, and the answer was no.** Nav already carries seven items, one past the limit this project set for itself when it kept `/set-aside` out of the nav ("six screens is already the limit for a judge with thirty seconds"). More importantly, a standalone descriptive page would have had no data on it — and this site's one consistent rule, applied across F13's tile labels, F14's disclosures and F16's quoted model voice, is that a claim appears beside the evidence for it. **A static "how it works" panel would have been the first thing here to break that**, and it would read as marketing on a page whose entire argument is that it does not market.
+
+**So every stage carries a real figure from the run being viewed.** 920 rows read, 37 set aside, 9 duplicates, 203 exact pairs, 0 alias (this run is cold), 9 identity verdicts, 277 fuzzy, 25 batch, 242 implied, 212 exceptions collapsing to 21 shapes, and the rate itself. Where a stage publishes a count it shows the count; where it publishes only a measured time it shows the time. Every figure is the engine's own account, so none of it wears the `measured` accent (ADR-041, ADR-098) — the basis disclosure says so outright rather than leaving a reader to infer it.
+
+**Four things were caught during the build, each one before it shipped:**
+
+1. **The match rate rendered at one decimal (65.6%) against the headline tile's two (65.56%).** Two different numbers for the same quantity, on the same page, is exactly the kind of thing a sceptical reader finds and cannot un-see. Now uses `pct`, the same formatter the tile uses.
+2. **A timing broke the column of counts mid-number.** `1 ms` at figure size read as a rendering glitch beside `203`, `277`, `242`. The unit now carries "ms" and the figure stays a bare numeral.
+3. **The Audit card had no published figure behind it.** `runs.metrics` carries no audit-entry total, and inventing one for the single stage whose entire purpose is provable honesty would have been the worst available place to do it. The audit chain moved into that phase's purpose line, and the card now shows the denominator — 219 proposals held out of the rate — which is the figure that actually explains the number above it.
+4. **`874 records` was typed into the Block description as literal prose**, which `page.tsx`'s own rule forbids in as many words: *"every count in the copy is derived, never typed — a figure written into prose is a figure that stops being true the next time the engine runs."* It would have silently gone stale on the demo dataset's 876. Now derived.
+
+---
+
+### ADR-157 · The dashboard kept a private copy of run resolution, so ADR-151's fix never reached it
+
+**Found by the regression check for ADR-156, not by looking for it.** `/?run=<phase4-free>` rendered `holdout-judge-demo` instead — the wrong run's numbers, with nothing on screen saying a substitution had occurred.
+
+**ADR-151 fixed this exact bug three commits earlier** — a requested `?run=` that has aged off `listRuns()`'s 25-run page being treated as "does not exist" and silently replaced by the newest completed run — **but it fixed `resolveRun`, the shared helper the other six screens use. The dashboard never used it.** It carried `pickRun`, a private copy of the same logic, and kept the bug on the one page every visitor lands on first. It resurfaced the moment this database passed 31 runs.
+
+**The duplicate is deleted, not patched.** Two copies of one rule is precisely what produced a fix that landed on only one of them; patching the copy would have preserved the condition that caused it. The dashboard now calls `resolveRun` like every other screen, and its dead `listRuns` / `RunSummary` imports went with it.
+
+> **The pattern, and it is one this repo has now hit from three directions.** ADR-151 was a paginated list mistaken for a lookup table. ADR-149 was an error classifier that could not recognise the error it was classifying. This is the same family: **a rule that exists in two places, fixed in one.** The tell in all three is that the code was correct in isolation and wrong in composition — and none of them was findable by reading the diff that introduced them. All three were found by exercising the running product against a known expectation.
+
+Verified across all three resolution paths: an explicit `?run=` for a run off page one resolves correctly (7/7 category links carrying `run=`), the no-param default still lands on the newest completed run with clean URLs, and a nonexistent run id falls back gracefully with `200` rather than `500`.

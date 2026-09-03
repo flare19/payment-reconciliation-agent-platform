@@ -1,0 +1,137 @@
+/* The engine, stage by stage.
+   Reads as an engineering diagram, not an infographic: no icons, no
+   gradients, no shadows, no illustration (ADR-100 — this design spends its
+   whole budget on restraint, and a decorated panel here would be the first
+   thing on the site to break that). Structure carries the meaning: a phase
+   rule in the ordinal tier colour, numbered stages, one real figure each. */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s6);
+}
+
+/* ── a phase ──────────────────────────────────────────────────────────────── */
+
+.phase {
+  display: grid;
+  grid-template-columns: minmax(0, 14rem) minmax(0, 1fr);
+  gap: var(--s5);
+  align-items: start;
+}
+
+@media (max-width: 60rem) {
+  .phase { grid-template-columns: minmax(0, 1fr); gap: var(--s3); }
+}
+
+.phaseHead {
+  display: grid;
+  grid-template-columns: 2px minmax(0, 1fr);
+  gap: var(--s3);
+  align-items: start;
+  position: sticky;
+  top: var(--s4);
+}
+
+@media (max-width: 60rem) {
+  .phaseHead { position: static; }
+}
+
+/* The one piece of colour, and it is the ordinal ramp the tier bar already
+   uses — not a new palette invented for this section. */
+.phaseRule {
+  grid-row: 1 / span 2;
+  align-self: stretch;
+  min-height: 100%;
+  border-radius: 1px;
+}
+
+.phaseTitle {
+  font-size: var(--t-lead);
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  color: var(--ink);
+}
+
+.phasePurpose {
+  grid-column: 2;
+  font-size: var(--t-micro);
+  line-height: 1.6;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+/* ── the stages inside it ─────────────────────────────────────────────────── */
+
+.stages {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: var(--s3);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  min-width: 0;
+  padding: var(--s4);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+.stageHead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+
+.stageCode {
+  flex: none;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: var(--t-micro);
+  color: var(--ink-4);
+}
+
+.stageName {
+  font-size: var(--t-meta);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.stageWhat {
+  flex: 1;
+  font-size: var(--t-micro);
+  line-height: 1.6;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+/* The figure sits at the bottom of every card regardless of how far the
+   description wraps, so the numbers line up across a row and can be read
+   across rather than hunted for. */
+.stageFigure {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  margin-top: auto;
+  padding-top: var(--s2);
+  border-top: 1px solid var(--rule);
+  font-size: var(--t-figure-sm);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  /* Plain ink, never --verified: every figure here is the engine's own
+     account of itself, not a measurement (ADR-041, ADR-098). */
+  color: var(--ink);
+}
+
+.stageUnit {
+  font-size: var(--t-micro);
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--ink-3);
+}
