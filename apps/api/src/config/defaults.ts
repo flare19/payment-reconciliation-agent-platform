@@ -171,7 +171,13 @@ export const AGENT_DEFAULTS = {
    * corroboration.
    */
   corroborate: { maxSteps: 6, maxToolCalls: 8 },
-  qa: { maxSteps: 6, maxToolCalls: 8, maxOutputTokens: 1024 },
+  /**
+   * `maxQuestionChars` is a SPEND bound, not input hygiene. The question is
+   * replayed into every one of up to `maxSteps` turns, so an unbounded string
+   * is unbounded input tokens billed six times over -- from an anonymous
+   * caller, on the one endpoint in this product that accepts free text.
+   */
+  qa: { maxSteps: 6, maxToolCalls: 8, maxOutputTokens: 1024, maxQuestionChars: 500 },
   /** ADR-081. Cut FIRST when the request budget binds — the pre-agreed degradation. */
   maxQueueTriagesPerRun: 15,
   /**

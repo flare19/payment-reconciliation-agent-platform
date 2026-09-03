@@ -348,6 +348,15 @@ function toQuestion(r: QRow): AgentQuestion {
 
 export async function recordQuestion(
   input: {
+    /**
+     * Minted by the CALLER, not defaulted by Postgres (U15 unit 3).
+     *
+     * The audit trail and every tool record are stamped with this id as the
+     * answer happens, which is before this row exists. Letting the column
+     * default would mean the trail cites one id and the row carries another --
+     * and the trail is the half a reader checks.
+     */
+    id?: string;
     runId: string; question: string; answer: string | null; citations: string[];
     steps: number; toolCalls: number; tokensIn: number | null; tokensOut: number | null;
     costUsd: number | null; groundingPassed: boolean;
@@ -356,12 +365,12 @@ export async function recordQuestion(
 ): Promise<AgentQuestion> {
   const { rows } = await (client ?? getPool()).query<QRow>(
     `INSERT INTO agent_questions (
-       run_id, question, answer, citations, steps, tool_calls,
+       id, run_id, question, answer, citations, steps, tool_calls,
        tokens_in, tokens_out, cost_usd, grounding_passed)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     VALUES (COALESCE($1::uuid, gen_random_uuid()),$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
      RETURNING ${Q_COLUMNS}`,
     [
-      input.runId, input.question, input.answer, input.citations,
+      input.id ?? null, input.runId, input.question, input.answer, input.citations,
       input.steps, input.toolCalls, input.tokensIn, input.tokensOut,
       input.costUsd, input.groundingPassed,
     ],
@@ -384,27 +393,6 @@ export async function listQuestions(runId: string, limit: number): Promise<Agent
   return rows.map(toQuestion);
 }
 
-/**
- * SUPERSEDED by `countQuestionsForRun` + `countQuestionsSince` (U15 unit 2).
- *
- * This counts questions for ONE run inside a time window, which is neither
- * bound `agent-design.md` §9 specifies: its per-run ceiling is hard (no window,
- * so spacing questions out must not defeat it) and its hourly bucket is GLOBAL
- * across the deployment (so one run cannot be the unit of measurement). The
- * endpoint-28 stub is its only caller and dies with it in unit 3 — do not add
- * another. Two live definitions of "how many questions has this had" is how a
- * ceiling gets enforced one way and reported another.
- */
-export async function countRecentQuestions(
-  runId: string, withinMinutes: number,
-): Promise<number> {
-  const { rows } = await getPool().query<{ count: number }>(
-    `SELECT count(*)::int AS count FROM agent_questions
-      WHERE run_id = $1 AND asked_at > now() - ($2 || ' minutes')::interval`,
-    [runId, String(withinMinutes)],
-  );
-  return rows[0]!.count;
-}
 
 /**
  * Agent spend in a trailing window, in USD (see #61).

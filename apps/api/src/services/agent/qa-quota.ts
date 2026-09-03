@@ -44,6 +44,7 @@
  */
 
 import type { CostModel } from './agent-client.js';
+import type { ErrorCode } from '../../types/dto.js';
 
 /** Everything the guard needs, read by the caller so this stays pure and testable. */
 export interface QaQuotaInput {
@@ -72,7 +73,10 @@ export interface QaQuotaInput {
 
 export type QaQuotaDecision =
   | { allowed: true; remainingUsd: number }
-  | { allowed: false; status: 429 | 503; code: string; reason: string };
+  // `ErrorCode`, not `string`: `ERROR_CODES` is locked by api-contract.md, so a
+  // refusal that invented a code would be a silent contract break. The compiler
+  // is the check.
+  | { allowed: false; status: 429 | 503; code: ErrorCode; reason: string };
 
 export function checkQaQuota(input: QaQuotaInput): QaQuotaDecision {
   const { limits } = input;

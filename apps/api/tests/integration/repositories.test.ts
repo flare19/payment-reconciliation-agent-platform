@@ -1,5 +1,6 @@
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { runMigrations } from '../../src/db/migrate.js';
 import { createPool, closePool, getPool, withTransaction } from '../../src/db/pool.js';
 import { ENGINE_DEFAULTS } from '../../src/config/defaults.js';
@@ -513,7 +514,8 @@ describe('repositories (integration)', { skip: DB_URL === null ? 'no TEST_DATABA
     assert.equal(retry.status, 'running', 'a failed investigation frees the slot');
   });
 
-  test('agent questions: record, list and the rate-limit count', async () => {
+  test('agent questions: record, list and the two quota counts', async () => {
+    const before = new Date(Date.now() - 60 * 60 * 1000);
     await investigations.recordQuestion({
       runId, question: 'why is row 12 unmatched?', answer: 'no bank credit exists',
       citations: [bkId], steps: 2, toolCalls: 2, tokensIn: 300, tokensOut: 80,
@@ -522,8 +524,26 @@ describe('repositories (integration)', { skip: DB_URL === null ? 'no TEST_DATABA
     const list = await investigations.listQuestions(runId, 10);
     assert.equal(list.length, 1);
     assert.deepEqual(list[0]!.citations, [bkId]);
-    assert.equal(await investigations.countRecentQuestions(runId, 60), 1);
-    assert.equal(await investigations.countRecentQuestions(runId, 0), 0);
+
+    // §9's TWO bounds, and they are different shapes on purpose: the per-run
+    // ceiling is hard (no window, so spacing questions out must not defeat it)
+    // and the hourly bucket is GLOBAL across the deployment.
+    assert.equal(await investigations.countQuestionsForRun(runId), 1);
+    assert.equal(await investigations.countQuestionsSince(before), 1);
+    assert.equal(await investigations.countQuestionsSince(new Date(Date.now() + 60_000)), 0);
+  });
+
+  test('a question row honours a caller-minted id (U15 unit 3)', async () => {
+    // The audit trail is stamped with this id BEFORE the row exists. If the
+    // column defaulted instead, the trail would cite an id the row does not
+    // have -- and the trail is the half a reader checks.
+    const id = randomUUID();
+    const row = await investigations.recordQuestion({
+      id, runId, question: 'which merchant has the most exceptions?', answer: 'acme',
+      citations: [], steps: 1, toolCalls: 1, tokensIn: 100, tokensOut: 20,
+      costUsd: null, groundingPassed: false,
+    });
+    assert.equal(row.id, id);
   });
 
   // ── the TxClient contract ──────────────────────────────────────────────────

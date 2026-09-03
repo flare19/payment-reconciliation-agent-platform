@@ -30,7 +30,9 @@ import { investigationDto, questionDto, paginate } from './serialize.js';
 import { createAgentClient, costModelFor } from '../services/llm-provider.js';
 import { buildGateContext } from '../services/agent/phase-a.js';
 import { createSpendGuard } from '../services/agent/spend-guard.js';
-import { investigateOne } from '../services/agent/phase-a.js';
+import { investigateOne, answerOne } from '../services/agent/phase-a.js';
+import { checkQaQuota } from '../services/agent/qa-quota.js';
+import { AGENT_DEFAULTS } from '../config/defaults.js';
 import { isEligibleCategory } from '../services/agent/triage.js';
 import type { RunConfig } from '../types/engine.js';
 
@@ -204,27 +206,95 @@ export function investigationsRouter(env: Env): Router {
   }));
 
   // 28 · POST /api/runs/:runId/ask
+  //
+  // THE ONLY FREE-TEXT BOX IN THE PRODUCT, ON A PUBLIC UNAUTHENTICATED DEMO.
+  // Every other spending surface needs a human to open a specific exception and
+  // confirm a specific price; this one takes a sentence from a stranger. The
+  // guard is `checkQaQuota` and the order of its four checks is deliberate --
+  // see `qa-quota.ts`. Synchronous, because the contract's response body IS the
+  // answer (§28) and `agent_questions` has no status column to poll.
   r.post('/runs/:runId/ask', handler(async (req, res) => {
     const runId = pathParam(req, 'runId');
-    found(await runsRepo.findRun(runId), 'RUN_NOT_FOUND', `No run exists with id ${runId}`);
-    requireString(req.body ?? {}, 'question');
+    const run = found(await runsRepo.findRun(runId),
+      'RUN_NOT_FOUND', `No run exists with id ${runId}`);
+    const question = requireString(req.body ?? {}, 'question');
+
+    // A length bound is a SPEND bound here, not tidiness: the question is
+    // echoed into every one of up to 6 turns, so an unbounded string is
+    // unbounded input tokens billed six times over, from an anonymous caller.
+    if (question.length > AGENT_DEFAULTS.qa.maxQuestionChars) {
+      throw new ApiError(400, 'INVALID_REQUEST',
+        `question is ${question.length} characters, over the `
+        + `${AGENT_DEFAULTS.qa.maxQuestionChars}-character limit. Ask a shorter question — `
+        + 'the Analyst reads a sentence, not a document.');
+    }
+
+    if (run.status !== 'completed') {
+      // ADR-048, the same rule endpoint 25 enforces: Phase A reads a FINISHED
+      // run. Answering questions about a half-written engine output would
+      // reason over partial results as though they were final.
+      throw new ApiError(409, 'RUN_NOT_COMPLETE',
+        `Run is ${run.status}; the Analyst answers questions about completed runs only.`);
+    }
 
     // Provider-aware, for the same reason health.ts is: testing `geminiApiKey`
     // here reported the Q&A loop unavailable on an Anthropic deploy that had a
     // key (ADR-093 — one switch, both surfaces).
-    if (!env.agentQaEnabled || !llmConfigured(env)) {
-      throw new ApiError(503, 'AGENT_DISABLED',
-        'Q&A is disabled: set AGENT_QA_ENABLED=true and provide ANTHROPIC_API_KEY.');
-    }
-    // ADR-056's rate limit is enforced from stored history, so it holds across
-    // process restarts rather than living in memory.
-    const asked = await invRepo.countRecentQuestions(runId, 60);
-    if (asked >= env.agentQaMaxQuestionsPerRun) {
-      throw new ApiError(429, 'AGENT_QUOTA_EXCEEDED',
-        `This run has used its ${env.agentQaMaxQuestionsPerRun}-question hourly budget.`);
-    }
-    throw new ApiError(503, 'AGENT_DISABLED',
-      'The Q&A loop is not yet implemented in this build (U15).');
+    const enabled = env.agentQaEnabled && llmConfigured(env) && agentClient !== null;
+
+    // Counts and dollars, read from rows already written so they survive a
+    // restart -- a counter in memory is a ceiling an attacker clears by
+    // crashing the process (ADR-095). The hour is trailing.
+    const windowStart = new Date(Date.now() - 60 * 60 * 1000);
+    const cost = costModelFor(env);
+    // Read only when the feature is ON. `checkQaQuota` remains the single
+    // authority on WHICH bound refuses -- these are its inputs, not a second
+    // decision -- but the kill switch is its first check precisely because no
+    // other check's outcome can change it, and doing three queries to discover
+    // that would contradict the ordering.
+    const [questionsThisRun, questionsThisHour, spentThisHourUsd] = enabled
+      ? await Promise.all([
+        invRepo.countQuestionsForRun(runId),
+        invRepo.countQuestionsSince(windowStart),
+        invRepo.agentSpendUsdSince(windowStart),
+      ])
+      : [0, 0, 0];
+
+    const quota = checkQaQuota({
+      enabled,
+      questionsThisRun,
+      questionsThisHour,
+      spentThisHourUsd,
+      limits: {
+        maxQuestionsPerRun: env.agentQaMaxQuestionsPerRun,
+        maxQuestionsPerHour: env.agentQaMaxQuestionsPerHour,
+        maxCostUsdPerHour: env.agentMaxCostUsdPerHour,
+      },
+      cost,
+    });
+    if (!quota.allowed) throw new ApiError(quota.status, quota.code, quota.reason);
+
+    const client = requireAgent();
+    const gateContext = await buildGateContext(runId);
+
+    // AWAITED, unlike endpoint 25. The contract returns the answer in the
+    // response body and there is no poll target for a question.
+    const { question: row } = await answerOne(runId, question, {
+      client,
+      config: run.configSnapshot as RunConfig,
+      cost,
+      promptVersion: env.agentPromptVersion,
+      // Whichever is tighter: what is left in the hour, or one question's own
+      // ceiling. Seeded from the hour's real spend, so the guard enforces the
+      // window rather than restarting at zero for every caller.
+      spendGuard: createSpendGuard({
+        maxUsd: Math.min(quota.remainingUsd, env.agentMaxCostUsdPerRun),
+        cost,
+        maxOutputTokensPerTurn: AGENT_DEFAULTS.qa.maxOutputTokens,
+      }),
+    }, gateContext);
+
+    res.status(200).json(questionDto(row));
   }));
 
   // Read-only history, useful before the loop lands.
