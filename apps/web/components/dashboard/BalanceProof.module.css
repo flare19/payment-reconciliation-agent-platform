@@ -1,0 +1,226 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5);
+  padding: var(--s5);
+  border-left: 2px solid var(--rule-strong);
+  border-radius: 0 4px 4px 0;
+}
+
+.ok  { background: var(--verified-bg); border-left-color: var(--verified); }
+.bad { background: var(--sev-high-bg); border-left-color: var(--sev-high); }
+
+.verdict {
+  font-size: var(--t-figure-sm);
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+.ok  .verdict { color: var(--verified); }
+.bad .verdict { color: var(--sev-high); }
+
+/* ── the flow: 920 − 46 = 874 ───────────────────────────────────────────── */
+.flow {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--s3) var(--s5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+  flex: 1 1 9rem;
+}
+
+/* The denominator is where the arithmetic lands, so it carries the emphasis. */
+.denominator .big { color: var(--ink); }
+.denominator .stepLabel { color: var(--ink); font-weight: 600; }
+
+.arrow {
+  flex: none;
+  align-self: center;
+  padding-top: 0.6rem;
+  font-size: var(--t-lead);
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
+}
+
+.big {
+  font-size: var(--t-figure-sm);
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--ink-2);
+}
+
+.stepLabel {
+  font-size: var(--t-meta);
+  color: var(--ink-2);
+}
+
+.stepNote {
+  font-size: var(--t-micro);
+  line-height: 1.5;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+/* ── the three states ───────────────────────────────────────────────────── */
+.states {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--s4);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--rule);
+}
+
+.state { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+
+.mid {
+  font-size: var(--t-lead);
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+}
+
+.stateLabel { font-size: var(--t-meta); color: var(--ink-2); }
+
+.stateNote {
+  font-size: var(--t-micro);
+  line-height: 1.5;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+.claim {
+  font-size: var(--t-body);
+  line-height: 1.6;
+  color: var(--ink-2);
+  max-width: 62ch;
+  text-wrap: pretty;
+}
+.claim strong { color: var(--ink); font-weight: 600; }
+
+/* ── the exception decomposition ────────────────────────────────────────── */
+.exceptions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--rule);
+}
+
+.exceptionsHead {
+  font-size: var(--t-meta);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.exceptionRows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  margin: 0;
+}
+
+.exceptionRows > div {
+  display: grid;
+  grid-template-columns: 3.5rem 1fr;
+  gap: var(--s3);
+  align-items: baseline;
+}
+
+.exceptionRows dt {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--t-meta);
+  font-weight: 600;
+  color: var(--ink);
+  text-align: right;
+}
+
+.exceptionRows dd {
+  margin: 0;
+  font-size: var(--t-micro);
+  line-height: 1.6;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+.exceptionRows dd em { color: var(--ink-2); font-style: italic; }
+
+/* ── the identity table ─────────────────────────────────────────────────── */
+.checks {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: var(--s4);
+  border-top: 1px solid var(--rule);
+}
+
+.caption {
+  caption-side: top;
+  text-align: left;
+  padding: var(--s4) 0 var(--s3);
+  font-size: var(--t-micro);
+  line-height: 1.6;
+  color: var(--ink-3);
+  max-width: 66ch;
+  text-wrap: pretty;
+}
+
+.checks th {
+  text-align: left;
+  padding: var(--s2) 0;
+  font-size: var(--t-micro);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  border-bottom: 1px solid var(--rule);
+}
+.checks th:last-child { text-align: right; }
+
+.checks td {
+  padding: var(--s3) 0;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+.checks tbody tr:last-child td { border-bottom: none; }
+
+.expr {
+  display: block;
+  font-size: var(--t-micro);
+  line-height: 1.55;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.checkNote {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: var(--t-micro);
+  line-height: 1.55;
+  color: var(--ink-3);
+  max-width: 62ch;
+  text-wrap: pretty;
+}
+
+.holds { text-align: right; white-space: nowrap; padding-left: var(--s4); }
+
+.tick { color: var(--verified); font-size: var(--t-meta); }
+
+.cross { color: var(--sev-high); font-size: var(--t-micro); font-weight: 600; }
+
+.rowBad .expr { color: var(--sev-high); font-weight: 600; }
+
+@media (max-width: 34rem) {
+  .flow { gap: var(--s3); }
+  .arrow { display: none; }
+  .exceptionRows > div { grid-template-columns: 2.75rem 1fr; }
+}

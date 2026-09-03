@@ -99,8 +99,9 @@ against a 240/minute allowance, and a run completes in ~3 s (≈4 polls).
 | 26 | `/api/runs/:runId/investigations` | GET | `?verdict&category&page&pageSize` | `{ investigations: InvestigationSummary[], agentMetrics, pagination }` | Analyst results for a run. |
 | 27 | `/api/investigations/:investigationId` | GET | — | `InvestigationDetail` (reasoning chain, tool trace, citations, proposal) | Drill-down into one investigation. |
 | 28 | `/api/runs/:runId/ask` | POST | `{ question }` | `{ questionId, answer, citations[], steps, toolCalls, tokensIn, tokensOut, costUsd, groundingPassed, askedAt }` — `toolCalls` is a COUNT (ADR-161) | Q&A agent over finalized run results. (ADR-056) |
+| 29 | `/api/runs/:runId/reconciliation` | GET | — | `{ balanced, checks[], population, disposition, exceptionBreakdown, exceptionRows }` | **The books, recomputed from base rows.** Five identities, each able to fail. `409` if run not complete. (ADR-162) |
 
-28 endpoints, all `GET` except nine `POST`s and one `PATCH`. Nothing here needs a `DELETE` — nothing in this system is ever deleted.
+29 endpoints, all `GET` except nine `POST`s and one `PATCH`. Nothing here needs a `DELETE` — nothing in this system is ever deleted.
 
 **Phase A adds no write endpoints.** Accepting an Analyst proposal routes through endpoints that already exist — 21 (manual match), 16 (create alias), 20 (resolve exception) — with `sourceInvestigationId` in the body so the acceptance is attributed (ADR-051). The Analyst proposes into an inbox that already has a confirmation flow, an audit trail and a UI, which is most of why the layer is buildable in the time available.
 

@@ -3,6 +3,7 @@ import { AnalystBlock } from '@/components/dashboard/AnalystBlock';
 import { EnginePerformance } from '@/components/dashboard/EnginePerformance';
 import { EnginePipeline } from '@/components/dashboard/EnginePipeline';
 import { ExceptionBreakdown } from '@/components/dashboard/ExceptionBreakdown';
+import { BalanceProof } from '@/components/dashboard/BalanceProof';
 import { HeadlineRow } from '@/components/dashboard/HeadlineRow';
 import { RunLauncher } from '@/components/dashboard/RunLauncher';
 import { ScoreReportPoller } from '@/components/dashboard/ScoreReportPoller';
@@ -11,6 +12,7 @@ import { TierAttribution } from '@/components/dashboard/TierAttribution';
 import { Section } from '@/components/ui/Section';
 import {
   countPendingReview, getHealth, getInvestigationsIfAny, getMetricsIfComplete,
+  getReconciliationIfComplete,
 } from '@/lib/api-client';
 import { at, count, day, plural } from '@/lib/format';
 import { hrefWith, resolveRun, runParam } from '@/lib/run-context';
@@ -101,9 +103,10 @@ export default async function DashboardPage(
     );
   }
 
-  const [metrics, investigations] = await Promise.all([
+  const [metrics, investigations, recon] = await Promise.all([
     getMetricsIfComplete(run.runId),
     getInvestigationsIfAny(run.runId),
+    getReconciliationIfComplete(run.runId),
   ]);
 
   return (
@@ -209,6 +212,48 @@ export default async function DashboardPage(
             */}
             {!metrics.measured && <ScoreReportPoller runId={run.runId} runQ={runQ} />}
           </section>
+
+          {/*
+            DIRECTLY UNDER THE TILES, BECAUSE IT IS THE REASON TO BELIEVE THEM
+            (ADR-162). The tiles above claim a match rate over a denominator;
+            this recomputes that denominator from the rows and shows every
+            record's disposition. It also answers the arithmetic the page
+            otherwise invites a reader to get wrong — 573 + 216 + 212 = 1001
+            against a population of 874 — which currently reads as
+            double-counting rather than as the legitimate overlap it is.
+            Rendered only when the recompute succeeded; a run still in flight
+            has no books to balance, and an absent proof is shown as absent
+            rather than assumed to hold.
+          */}
+          {recon && (
+            <Section
+              id="balance"
+              title="The Books Balance"
+              standfirst="Every source row accounted for, recomputed from the records."
+              basis={{
+                summary: 'Why this is recomputed rather than reported',
+                body:
+                  'Every figure in this section is counted from the transactions, matches and '
+                  + 'exceptions themselves on each request — never read from the run’s stored '
+                  + 'summary. Checking a summary against itself would restate the number you are '
+                  + 'being asked to trust. The last identity compares the two, so the headline '
+                  + 'above is proven to be what these rows produce. Each identity shows both of '
+                  + 'its sides and is able to disagree; a check that can only report success is '
+                  + 'not a check.',
+              }}
+              aside={
+                <>
+                  <span className="num">
+                    {count(recon.checks.filter((c) => c.holds).length)}
+                  </span>
+                  {' of '}
+                  <span className="num">{count(recon.checks.length)}</span> identities hold
+                </>
+              }
+            >
+              <BalanceProof recon={recon} />
+            </Section>
+          )}
 
           {/*
             F18 (backlog item 13): the bar names throughput, measured accuracy

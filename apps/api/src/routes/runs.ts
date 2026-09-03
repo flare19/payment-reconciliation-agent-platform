@@ -28,6 +28,8 @@ import * as txnRepo from '../repositories/transactions.js';
 import * as matchRepo from '../repositories/matches.js';
 import * as excRepo from '../repositories/exceptions.js';
 import * as scoreRepo from '../repositories/score-reports.js';
+import * as reconRepo from '../repositories/reconciliation.js';
+import { buildReconciliationReport } from '../services/metrics/reconciliation.js';
 import { verifyRunChain } from '../repositories/audit.js';
 import { formatPaise } from '../services/ingestion/money.js';
 import { handler, pageParams, found, enumParam, requireString, uuidParam } from './helpers.js';
@@ -150,6 +152,12 @@ export function aliasSuggestionsFor(
   }];
 }
 
+
+/** A metrics term that may be absent or non-numeric. Absence makes C5 skip, never fail. */
+function numOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
 export function runsRouter(
   env: Env, readSeedDataset: (seed: number | null) => RunSources,
 ): Router {
@@ -243,6 +251,30 @@ export function runsRouter(
   }));
 
   // 5 · GET /api/runs/:runId/metrics
+  // 29 · GET /api/runs/:runId/reconciliation — the books, recomputed (ADR-162).
+  r.get('/:runId/reconciliation', handler(async (req, res) => {
+    const runId = uuidParam(req, 'runId');
+    const run = found(await runsRepo.findRun(runId), 'RUN_NOT_FOUND', `No run exists with id ${runId}`);
+    if (run.status !== 'completed') {
+      throw new ApiError(409, 'RUN_NOT_COMPLETE',
+        `Run is ${run.status}; the books can only be balanced once it completes.`);
+    }
+    const counts = found(await reconRepo.reconciliationCounts(runId),
+      'RUN_NOT_FOUND', `No run exists with id ${runId}`);
+    // The published headline comes from `runs.metrics` and is COMPARED against
+    // the recomputation, never substituted into it (C5). Read defensively: a
+    // metrics blob missing a term makes C5 skip, not fail.
+    const m = (run.metrics ?? {}) as Record<string, Record<string, unknown> | undefined>;
+    res.json({
+      runId,
+      ...buildReconciliationReport(counts, {
+        reconcilable: numOrNull(m['matchRate']?.['reconcilableRecords']),
+        matched: numOrNull(m['matchRate']?.['matchedRecords']),
+        exceptions: numOrNull(m['exceptions']?.['total']),
+      }),
+    });
+  }));
+
   r.get('/:runId/metrics', handler(async (req, res) => {
     const runId = uuidParam(req, 'runId');
     const run = found(await runsRepo.findRun(runId), 'RUN_NOT_FOUND', `No run exists with id ${runId}`);

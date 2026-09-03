@@ -709,3 +709,40 @@ export interface Health {
   datasets: SeedDatasetOption[];
   version: string;
 }
+
+/**
+ * Endpoint 29 — the balance proof (ADR-162).
+ *
+ * Every figure here is recomputed from `transactions` / `matches` /
+ * `match_members` / `exceptions` on each request. None of it is read from
+ * `runs.metrics`; `HEADLINE` is the check that COMPARES the two.
+ */
+export interface BalanceCheck {
+  id: 'DENOMINATOR' | 'DISPOSITION' | 'NO_ORPHANS' | 'EXCEPTIONS' | 'HEADLINE';
+  expression: string;
+  left: number;
+  right: number;
+  holds: boolean;
+  /** `left − right`. Zero when it holds; the size of the problem when it does not. */
+  delta: number;
+  note: string;
+}
+
+export interface ReconciliationResponse {
+  runId: string;
+  balanced: boolean;
+  checks: BalanceCheck[];
+  population: {
+    ingested: number; excluded: number;
+    nonPrimaryDuplicates: number; reconcilable: number;
+  };
+  disposition: {
+    matched: number; matchedByEngine: number; matchedByHuman: number;
+    inReviewQueue: number; neither: number;
+  };
+  exceptionBreakdown: {
+    total: number; inConfirmedMatch: number;
+    inReviewQueue: number; pure: number; outsideDenominator: number;
+  };
+  exceptionRows: number;
+}

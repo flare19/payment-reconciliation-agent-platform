@@ -2143,3 +2143,72 @@ guessing at it would cost the thesis.
   an unbuilt claim is a defect with a documentation-shaped fix.** The doc sweep in
   `adr-060-doc-sweep-guard.test.ts` checks ADR/doc drift; it does not execute the contract, and
   nothing does. A contract-conformance test is the real fix and is not in scope here.
+
+---
+
+### ADR-162 · The books balance, recomputed — a reconciliation of the reconciler
+
+**Context.** The dashboard publishes "573 matched", "216 awaiting review" and "212 exceptions"
+against a population of 874. A reader adds them, gets 1001, and concludes the engine
+double-counts. It does not — the populations legitimately overlap, because a gateway↔bank pair
+that matched but has no ledger entry is genuinely both a match and a `MISSING_IN_LEDGER` finding,
+and a list that hid those would understate the problem rather than overstate it.
+
+The books did balance. They balanced only inside the engine. The strongest evidence this project
+has — that every one of 920 source rows is accounted for — was left as an exercise for a reader
+with thirty seconds and no reason to extend credit, on a page whose entire thesis is that a figure
+must say where it came from.
+
+**Decision.** `GET /api/runs/:runId/reconciliation` (endpoint 29) and a dashboard section
+directly beneath the headline tiles, publishing five identities:
+
+| | Identity | What it proves |
+|---|---|---|
+| C1 | ingested − excluded − duplicates = reconcilable | the denominator every rate divides by |
+| C2 | matched + inReviewQueue + neither = reconcilable | every record is in exactly one state |
+| C3 | unresolved ≡ named on the exception list | **nothing was silently dropped** |
+| C4 | the four exception classes sum to the total | why 212 is not 85 |
+| C5 | published headline = recomputed headline | the tiles above are what these rows produce |
+
+Three properties make it evidence rather than decoration.
+
+- **It reads base tables, never `runs.metrics`.** Checking a summary against itself restates the
+  number the reader is being asked to trust. Every count comes from `transactions`, `matches`,
+  `match_members` and `exceptions`, in one statement so the figures describe one snapshot.
+  `reconcilable` is *counted*, not derived as `ingested − excluded − duplicates` — deriving it
+  would make C1 a tautology that holds because it was computed to hold.
+- **C5 closes the loop.** Without it the panel is a second opinion nobody asked for; with it, the
+  headline at the top of the page is proven to be what the rows beneath it produce.
+- **It can say no**, the same stance as `/audit/verify`. Both sides of every identity are
+  rendered, so a reader checks the claim rather than the tick, and a failure names which identity
+  broke and by how much.
+
+**C3 is the reason to build this.** C1, C2 and C4 are arithmetic — satisfying and mechanical. C3
+is a statement about conduct: every reconcilable record is matched, proposed, or explained. It is
+the property a finance controller actually needs, and the one an engine can violate longest
+without anyone noticing, because **a dropped record makes every other number look better** — it
+sits in the denominator dragging the rate down while appearing on no list a human ever reads.
+
+**Why this is not tuning (ADR-027).** No threshold, window, weight or tolerance moves; no run
+output changes. It is a read-only recomputation of rows the API already serves.
+
+**Consequences — it found things on its first sweep, which is the point.**
+- **All 39 stored runs were checked. Every holdout-seed run balances 5/5.**
+- **A first draft of C5 was wrong, and the sweep is what proved it.** It compared the frozen S14
+  headline against a live recomputation that included human approvals, so a run where a reviewer
+  had approved 24 proposals reported its correct published `570` as mismatched against `640`. A
+  check that fires when the product is used as intended is worse than no check — it teaches a
+  reader to ignore the one panel that must never be ignored. C5 now compares engine-alone to
+  engine-alone and reports the human contribution beside it (ADR-119's split, applied here).
+- **Two genuine orphan defects, both open and both surfaced rather than fixed here.**
+  1. Every dev-seed run (9 of them) has exactly one: bank row 64,
+     `e0gt9CeMqbPHRKbMFVZD4`, ₹4,75,201.95, `IMPS-SETL-FLIPKART INTERNET-BATCH47`, dated
+     **2026-08-27 — the run's own reference date**. Reconcilable, in no match, on no exception
+     list. The date coincidence is the obvious first place to look. The holdout seed is unaffected,
+     so no reported number is wrong; the dev dataset has been carrying an unaccounted ₹4.75 lakh.
+  2. `phase4-free` has three: rejecting a match returns its members to the pool, and no exception
+     names them afterwards. `related_transaction_ids` does not cover them either. Endpoint 11's
+     contract says it creates one, and for a group of three that is one exception for three
+     records.
+- Fixing either changes engine behaviour, so both are left for a deliberate decision rather than
+  taken on the way past. The panel reporting them honestly is the feature working.

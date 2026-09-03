@@ -6,6 +6,8 @@ import { createPool, closePool, getPool } from '../../src/db/pool.js';
 import { ENGINE_DEFAULTS } from '../../src/config/defaults.js';
 import { createRun, findRun } from '../../src/repositories/runs.js';
 import { upsertAlias } from '../../src/repositories/aliases.js';
+import { reconciliationCounts } from '../../src/repositories/reconciliation.js';
+import { buildReconciliationReport } from '../../src/services/metrics/reconciliation.js';
 import { verifyRunChain, readChain } from '../../src/repositories/audit.js';
 import { listTransactions } from '../../src/repositories/transactions.js';
 import { executeRun, hashSource } from '../../src/services/run/orchestrator.js';
@@ -349,6 +351,56 @@ describe('run orchestrator (integration)', { skip: DB_URL === null ? 'no TEST_DA
     assert.equal(out.exceptions, 212);
     assert.equal(out.referenceDate, '2026-08-21');
     assert.equal(out.auditEntries, 612, 'the same inputs must produce the same trail');
+  });
+
+  /**
+   * THE BALANCE PROOF, against a real run rather than a fixture (ADR-162).
+   *
+   * `reconciliation.test.ts` proves the identities can fail; this proves the SQL
+   * that feeds them describes the rows the rest of the API serves. Both are
+   * needed and neither substitutes: a perfect checker over a wrong query
+   * balances wrong books, and the panel would render five confident ticks.
+   */
+  test('the books balance on a real run, computed from the rows themselves', async () => {
+    const counts = await reconciliationCounts(runId);
+    assert.notEqual(counts, null);
+    const run = await findRun(runId);
+    const m = (run!.metrics ?? {}) as Record<string, Record<string, number>>;
+
+    const report = buildReconciliationReport(counts!, {
+      reconcilable: m['matchRate']!['reconcilableRecords']!,
+      matched: m['matchRate']!['matchedRecords']!,
+      exceptions: m['exceptions']!['total']!,
+    });
+
+    assert.equal(report.balanced, true,
+      `failed: ${report.checks.filter((c) => !c.holds).map((c) => c.expression).join(' | ')}`);
+    assert.equal(report.checks.length, 5, 'C5 must run — this run published a headline');
+
+    // The recomputation must reproduce the figures the rest of the API serves,
+    // or the panel is balancing a different run's books.
+    assert.equal(report.population.ingested, 920);
+    assert.equal(report.population.reconcilable, 874);
+    assert.equal(report.exceptionBreakdown.total, 212);
+
+    // 570, not the 573 the dashboard shows against the dev database. This suite
+    // truncates `learned_aliases` in `before`, so this run is COLD — and the
+    // difference is exactly the 3 records the two active aliases are decisive
+    // for (ADR-132's counterfactual, measured rather than estimated). Pinned
+    // with the reason rather than loosened to a range: an assertion that would
+    // pass on both a warm and a cold run cannot notice the alias path breaking.
+    assert.equal(report.disposition.matched, 570);
+    assert.equal(report.disposition.matched, m['matchRate']!['matchedRecords'],
+      'the recomputation must equal what the run published — this is C5, asserted directly');
+
+    // C3 stated as its own assertion, because it is the claim the panel exists
+    // to make: no reconcilable record is unaccounted for on the exception list.
+    // C3, asserted directly: every record the engine gave up on is findable on
+    // the exception list. This is the claim the panel exists to make, and the
+    // dev-seed dataset currently FAILS it by one record (ADR-162) — which is why
+    // it is asserted here on the holdout rather than assumed everywhere.
+    assert.equal(counts!.neither, counts!.neitherCovered,
+      'a record the engine neither matched nor proposed must be named on the exception list');
   });
 
   /**
