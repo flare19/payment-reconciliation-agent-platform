@@ -466,6 +466,39 @@ describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL
     assert.equal(metrics['hallucinatedResolutions'], 0);
   });
 
+  test('28 · every guard that runs BEFORE the model, on a keyless deploy', async () => {
+    // The point of this test is that all of it is reachable with no API key.
+    // These branches are the ones a stranger hits, and they are the ones that
+    // decide whether a public free-text box costs anything at all -- so they
+    // must not need a paid run to be exercised.
+
+    // A question is REQUIRED and must not be blank.
+    for (const body of [{}, { question: '   ' }]) {
+      const bad = await req('POST', `/api/runs/${runId}/ask`, body);
+      assert.equal(bad.status, 400, JSON.stringify(body));
+      assert.equal((bad.json['error'] as Record<string, unknown>)['code'], 'INVALID_REQUEST');
+    }
+
+    // THE LENGTH BOUND IS A SPEND BOUND: the question is replayed into every
+    // turn, so an unbounded string is unbounded input tokens billed six times.
+    const long = await req('POST', `/api/runs/${runId}/ask`, { question: 'x'.repeat(501) });
+    assert.equal(long.status, 400);
+    assert.match(String((long.json['error'] as Record<string, unknown>)['message']), /501 characters/);
+
+    // 500 exactly is accepted by the length check and falls through to the
+    // kill switch -- the boundary is inclusive, and proving that needs the
+    // NEXT refusal to be a different one.
+    const edge = await req('POST', `/api/runs/${runId}/ask`, { question: 'x'.repeat(500) });
+    assert.equal(edge.status, 503);
+    assert.equal((edge.json['error'] as Record<string, unknown>)['code'], 'AGENT_DISABLED');
+
+    // A run that does not exist is a 404 before anything else happens.
+    const missing = await req('POST',
+      '/api/runs/00000000-0000-4000-8000-000000000000/ask', { question: 'why?' });
+    assert.equal(missing.status, 404);
+    assert.equal((missing.json['error'] as Record<string, unknown>)['code'], 'RUN_NOT_FOUND');
+  });
+
   test('25 · a CONCLUDED investigation is returned, a RUNNING one is refused (ADR-109)', async () => {
     // Every branch here runs BEFORE `requireAgent()`, which is the point: the
     // three states are decided without a key, without a model, and without

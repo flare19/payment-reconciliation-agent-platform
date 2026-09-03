@@ -134,6 +134,39 @@ export interface ValidatedCorroboration extends RawCorroboration {
   budgetExhausted: boolean;
 }
 
+/**
+ * A2 Q&A (agent-design.md §9, U15) — the vocabulary of an ANSWER.
+ *
+ * Deliberately NOT a `RawVerdict` with a different enum. An investigation
+ * reaches a VERDICT about one exception; a question gets an ANSWER about a
+ * finished run. The shapes differ in the two places that matter:
+ *
+ *   · there is no `verdict` field, because there is no fixed vocabulary a
+ *     free-text question resolves into — the prose IS the result;
+ *   · there is no `proposedAction`, and the gate REFUSES one if it appears.
+ *     ADR-081 draws this line for corroboration and it is the same line here:
+ *     a Q&A agent reports what the data says. It does not recommend a change,
+ *     and a human confirms every change through the same endpoints they
+ *     always did.
+ *
+ * `answer` carries the same weight `summary` does elsewhere: it is the thing a
+ * reader actually reads, and the gate requires it to be non-empty for the same
+ * reason it requires a reasoning chain — an answer nobody wrote is not an
+ * answer.
+ */
+export interface RawAnswer {
+  answer: string;
+  confidence: AgentConfidence;
+  reasoning: ReasoningStep[];
+  citations: string[];
+}
+
+export interface ValidatedAnswer extends RawAnswer {
+  groundingPassed: boolean;
+  groundingFailure: string | null;
+  budgetExhausted: boolean;
+}
+
 export interface InvestigationInput {
   investigationId: string;
   runId: string;

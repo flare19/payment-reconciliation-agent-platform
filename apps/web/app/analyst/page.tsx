@@ -3,7 +3,8 @@ import { Disclosure } from '@/components/ui/Disclosure';
 import { ActorChip, Chip } from '@/components/ui/Chip';
 import { SegmentBar, type Segment } from '@/components/ui/SegmentBar';
 import table from '@/components/ui/table.module.css';
-import { getInvestigationsIfAny, listExceptions } from '@/lib/api-client';
+import { getInvestigationsIfAny, getQuestionsIfAny, listExceptions } from '@/lib/api-client';
+import { AskAboutRun } from '@/components/analyst/AskAboutRun';
 import { count, oneDp } from '@/lib/format';
 import { hrefWith, resolveRun, runParam } from '@/lib/run-context';
 import { CATEGORY_LABEL, VERDICT_LABEL, label } from '@/lib/taxonomy';
@@ -60,9 +61,10 @@ export default async function AnalystPage(
   const isDefaultRun = run.runId === (runs.find((r) => r.status === 'completed') ?? runs[0])?.runId;
   const runQ = isDefaultRun ? undefined : run.runId;
 
-  const [data, exceptionList] = await Promise.all([
+  const [data, exceptionList, questionData] = await Promise.all([
     getInvestigationsIfAny(run.runId),
     listExceptions(run.runId, { pageSize: 200 }),
+    getQuestionsIfAny(run.runId),
   ]);
 
   const investigations = data?.investigations ?? [];
@@ -71,6 +73,38 @@ export default async function AnalystPage(
   const categoryOf = new Map(
     exceptionList.exceptions.map((e) => [e.exceptionId, e.category]),
   );
+
+  /**
+   * THE FOUR SEEDED QUESTIONS (§9), DERIVED FROM THIS RUN'S OWN DATA.
+   *
+   * §9 asks the UI to seed four, because "a blank text box in a five-minute
+   * pitch is a way to lose thirty seconds and discover a question the agent
+   * answers badly". Its own example names a specific settlement id.
+   *
+   * Hardcoding that id would be a claim that goes stale the moment anyone runs
+   * a different dataset — the same defect as a hardcoded count in prose, and
+   * this page's whole premise is that what it shows is evidence rather than
+   * description. So the concrete one is read out of a real exception on THIS
+   * run, and it is simply absent when no exception carries an external id.
+   */
+  const anchorExample = exceptionList.exceptions
+    .find((e) => e.primaryRecord.externalId !== null)?.primaryRecord.externalId ?? null;
+
+  const categoryCounts = new Map<string, number>();
+  for (const e of exceptionList.exceptions) {
+    categoryCounts.set(e.category, (categoryCounts.get(e.category) ?? 0) + 1);
+  }
+  const topCategory = [...categoryCounts.entries()]
+    .sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+
+  const askExamples = [
+    ...(anchorExample ? [`Why wasn't ${anchorExample} matched?`] : []),
+    'Which merchant has the most unmatched records?',
+    'Show me every exception over ₹10,000.',
+    ...(topCategory
+      ? [`What do the ${label(CATEGORY_LABEL, topCategory)} exceptions have in common?`]
+      : []),
+  ].slice(0, 4);
 
   // Derived from what was actually called, never from the design doc.
   const toolCounts = new Map<string, number>();
@@ -165,6 +199,13 @@ export default async function AnalystPage(
             pass nobody can repeat.</p>
         </div>
       </section>
+
+      {/* ── ask it something (§9, endpoint 28) ───────────────────────────── */}
+      <AskAboutRun
+        runId={run.runId}
+        examples={askExamples}
+        history={questionData?.questions ?? []}
+      />
 
       {investigations.length === 0 ? (
         <section className={styles.empty}>

@@ -297,11 +297,19 @@ export async function resolveException(
   return rows.length === 0 ? null : toException(rows[0]!);
 }
 
-/** Every exception on one record, for the record inspector. */
+/**
+ * Every exception on one record, for the record inspector.
+ *
+ * Takes a `TxClient` since U15: the agent's `find_exception_for_transaction`
+ * tool calls it, and every tool runs inside `withReadOnlyTransaction` so that
+ * read-only is enforced by Postgres rather than declared (ADR-051). A tool
+ * reaching for the pool directly would sit outside that guarantee.
+ */
 export async function listExceptionsForTransaction(
   transactionId: string,
+  client?: TxClient,
 ): Promise<ExceptionRecord[]> {
-  const { rows } = await getPool().query<ExcRow>(
+  const { rows } = await (client ?? getPool()).query<ExcRow>(
     `SELECT ${COLUMNS} FROM exceptions
       WHERE transaction_id = $1 OR $1 = ANY(related_transaction_ids)
       ORDER BY created_at, id`,

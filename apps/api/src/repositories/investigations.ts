@@ -348,6 +348,15 @@ function toQuestion(r: QRow): AgentQuestion {
 
 export async function recordQuestion(
   input: {
+    /**
+     * Minted by the CALLER, not defaulted by Postgres (U15 unit 3).
+     *
+     * The audit trail and every tool record are stamped with this id as the
+     * answer happens, which is before this row exists. Letting the column
+     * default would mean the trail cites one id and the row carries another --
+     * and the trail is the half a reader checks.
+     */
+    id?: string;
     runId: string; question: string; answer: string | null; citations: string[];
     steps: number; toolCalls: number; tokensIn: number | null; tokensOut: number | null;
     costUsd: number | null; groundingPassed: boolean;
@@ -356,12 +365,12 @@ export async function recordQuestion(
 ): Promise<AgentQuestion> {
   const { rows } = await (client ?? getPool()).query<QRow>(
     `INSERT INTO agent_questions (
-       run_id, question, answer, citations, steps, tool_calls,
+       id, run_id, question, answer, citations, steps, tool_calls,
        tokens_in, tokens_out, cost_usd, grounding_passed)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     VALUES (COALESCE($1::uuid, gen_random_uuid()),$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
      RETURNING ${Q_COLUMNS}`,
     [
-      input.runId, input.question, input.answer, input.citations,
+      input.id ?? null, input.runId, input.question, input.answer, input.citations,
       input.steps, input.toolCalls, input.tokensIn, input.tokensOut,
       input.costUsd, input.groundingPassed,
     ],
@@ -384,16 +393,6 @@ export async function listQuestions(runId: string, limit: number): Promise<Agent
   return rows.map(toQuestion);
 }
 
-export async function countRecentQuestions(
-  runId: string, withinMinutes: number,
-): Promise<number> {
-  const { rows } = await getPool().query<{ count: number }>(
-    `SELECT count(*)::int AS count FROM agent_questions
-      WHERE run_id = $1 AND asked_at > now() - ($2 || ' minutes')::interval`,
-    [runId, String(withinMinutes)],
-  );
-  return rows[0]!.count;
-}
 
 /**
  * Agent spend in a trailing window, in USD (see #61).
@@ -418,12 +417,56 @@ export async function agentSpendUsdSince(
   since: Date, client?: TxClient,
 ): Promise<number> {
   const { rows } = await (client ?? getPool()).query<{ usd: string }>(
+    // ── EVERY SPENDER, OR THE CEILING IS NOT A CEILING (U15 unit 2) ──
+    // `agent_questions` joined this sum the moment a third surface could bill
+    // the key. Omitting it would have been worse than an undercount: the Q&A
+    // endpoint seeds its OWN guard from this function, so questions invisible
+    // here are questions invisible to the guard meant to bound them — each
+    // request would start believing nothing had been spent. That is precisely
+    // the "counter an attacker resets" failure this file's header warns about,
+    // arriving through a different door. Its timestamp column is `asked_at`,
+    // not `started_at`: a question is one request, not a phase with a start
+    // and an end.
     `SELECT COALESCE(
         (SELECT sum(cost_usd) FROM agent_investigations WHERE started_at >= $1), 0)
       + COALESCE(
         (SELECT sum(cost_usd) FROM agent_corroborations  WHERE started_at >= $1), 0)
+      + COALESCE(
+        (SELECT sum(cost_usd) FROM agent_questions       WHERE asked_at   >= $1), 0)
       AS usd`,
     [since],
   );
   return Number(rows[0]?.usd ?? 0);
+}
+
+
+/**
+ * Q&A QUOTA READS (agent-design.md §9, U15 unit 2).
+ *
+ * Two counts, deliberately separate from the dollar ceiling above and NOT a
+ * substitute for it. §9 specifies both a per-run and a per-hour question cap,
+ * and they bound a different thing than money does: a count bounds VOLUME — how
+ * hard an anonymous visitor can hammer a public endpoint — while only dollars
+ * bound SPEND, because question cost varies by an order of magnitude with how
+ * many tools a question makes the model reach for. A count cap alone cannot
+ * bound a bill, and a dollar cap alone leaves the endpoint free to be hammered
+ * with cheap questions. Both, or neither is honest.
+ *
+ * Counted from rows already written, like the spend sum, so both survive a
+ * restart. Nothing here is held in memory.
+ */
+export async function countQuestionsForRun(
+  runId: string, client?: TxClient,
+): Promise<number> {
+  const { rows } = await (client ?? getPool()).query<{ n: string }>(
+    `SELECT count(*) AS n FROM agent_questions WHERE run_id = $1`, [runId]);
+  return Number(rows[0]?.n ?? 0);
+}
+
+export async function countQuestionsSince(
+  since: Date, client?: TxClient,
+): Promise<number> {
+  const { rows } = await (client ?? getPool()).query<{ n: string }>(
+    `SELECT count(*) AS n FROM agent_questions WHERE asked_at >= $1`, [since]);
+  return Number(rows[0]?.n ?? 0);
 }

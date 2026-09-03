@@ -188,13 +188,16 @@ Verdicts are persisted to `agent_investigations`. Proposals appear in the UI att
 
 ## 4. The tool registry
 
-Nine tools. **None of them writes.** The registry contains no mutating tool, so the agent is not *trusted* not to write — it is *unable* to.
+Ten tools. **None of them writes.** The registry contains no mutating tool, so the agent is not *trusted* not to write — it is *unable* to.
+
+> The tenth, `find_exception_for_transaction`, was added on 2026-09-03 (ADR-159) after a live question proved the registry had no route from a record to its exception. It is not a design idea; it is a measured gap. See [analyst-baseline-sonnet5.md](./analyst-baseline-sonnet5.md).
 
 ### Evidence retrieval
 
 | Tool | Purpose |
 |---|---|
 | `get_exception(exceptionId)` | The exception, its full `evidence`, the engine's per-candidate `rejectedBecause` strings, severity basis. The starting point of every investigation. |
+| `find_exception_for_transaction(transactionId)` | **The route from a record to its exception**, as subject or related party. Returns a list, because a record can be the subject of one and a related party to others. An empty list is a real answer: the engine matched it, or never classified it. Without this, an agent holding a payment id has no way to reach the exception filed against it — see ADR-159. |
 | `get_transaction(transactionId)` | Normalized fields plus `raw_payload` — the verbatim original row. Lets the agent read what the parser read. |
 | `search_transactions({sourceSystem?, dateRange?, amountRange?, direction?, counterparty?, statusNorm?, limit})` | The workhorse. Bounded at 50 results, always canonically ordered. |
 | `find_by_anchor({value, exact\|near})` | Cross-source anchor lookup, including edit-distance-1 near matches via the existing prefix block (ADR-031). The single most useful tool for `MISSING_IN_*` cases. |

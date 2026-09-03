@@ -144,8 +144,8 @@ describe('agent tool registry (integration)',
     // ── CONSTRUCTION ─────────────────────────────────────────────────────────
 
     describe('createToolRegistry refuses a registry that violates ADR-049/051', () => {
-      test('it builds exactly agent-design §4\'s nine tools, all readOnly', () => {
-        assert.equal(registry.tools.length, 9);
+      test('it builds exactly agent-design §4\'s ten tools, all readOnly', () => {
+        assert.equal(registry.tools.length, 10);
         assert.deepEqual([...registry.tools.map((t) => t.name)].sort(), [...TOOL_NAMES].sort());
         for (const t of registry.tools) assert.equal(t.readOnly, true);
       });
@@ -447,6 +447,57 @@ describe('agent tool registry (integration)',
       });
     });
 
+    // ── find_exception_for_transaction (U15, ADR-159) ────────────────────────
+
+    describe('find_exception_for_transaction closes the record→exception gap', () => {
+      test('a record the engine filed as an exception reports it, with its category', async () => {
+        // THE REGRESSION THIS TOOL EXISTS FOR. On 2026-09-03 a live question
+        // asked why a record was not matched; the agent could not reach the
+        // record's exception with any tool it had, and answered that the record
+        // was not an exception at all. It was. That answer PASSED the grounding
+        // gate, because A3 checks retrieval and not correctness.
+        const excs = (await listExceptions(runId, {}, 'severity', 200, 0)).exceptions;
+        const subject = excs.find((e) => e.transactionId !== null)!;
+        const out = await call('find_exception_for_transaction',
+          { transactionId: subject.transactionId! });
+
+        assert.equal(out.result['found'], true);
+        const list = out.result['exceptions'] as Record<string, unknown>[];
+        const hit = list.find((e) => e['exceptionId'] === subject.id);
+        assert.ok(hit, 'the exception filed against this record must come back');
+        assert.equal(hit['category'], subject.category);
+        assert.equal(hit['isSubject'], true);
+        // Citable: the whole point is that the agent can now name the exception.
+        assert.ok(out.returnedIds.includes(subject.id));
+        assert.ok(out.returnedIds.includes(subject.transactionId!));
+      });
+
+      test('a record with no exception says so, and cites NOTHING', async () => {
+        // An empty list is a true answer and must stay cheap to give. Returning
+        // ids here would let a model cite a record as evidence of an exception
+        // that does not exist.
+        const excs = (await listExceptions(runId, {}, 'severity', 200, 0)).exceptions;
+        const touched = new Set<string>();
+        for (const e of excs) {
+          if (e.transactionId !== null) touched.add(e.transactionId);
+          for (const r of e.relatedTransactionIds) touched.add(r);
+        }
+        const clean = (await listTransactions(runId)).find((t) => !touched.has(t.id))!;
+        assert.ok(clean, 'this run must contain at least one record with no exception');
+        const out = await call('find_exception_for_transaction', { transactionId: clean.id });
+        assert.equal(out.result['found'], false);
+        assert.deepEqual(out.result['exceptions'], []);
+        assert.deepEqual(out.returnedIds, []);
+      });
+
+      test('an id from ANOTHER run returns nothing, not another run\'s exception', async () => {
+        const out = await call('find_exception_for_transaction',
+          { transactionId: '00000000-0000-4000-8000-000000000000' });
+        assert.equal(out.result['found'], false);
+        assert.deepEqual(out.returnedIds, []);
+      });
+    });
+
     // ── check_alias ──────────────────────────────────────────────────────────
 
     describe('check_alias sizes a proposal before a human sees it', () => {
@@ -498,6 +549,7 @@ describe('agent tool registry (integration)',
 
       const everyTool: [string, unknown][] = [
         ['get_exception', { exceptionId: exception.id }],
+        ['find_exception_for_transaction', { transactionId: exception.transactionId ?? gw.id }],
         ['get_transaction', { transactionId: gw.id, includeRawPayload: true }],
         ['search_transactions', { sourceSystem: 'ledger' }],
         ['find_by_anchor', { value: gw.externalId, mode: 'near' }],
@@ -709,14 +761,18 @@ describe('createToolRegistry construction guards', () => {
     runId: 'r', config: { ...ENGINE_DEFAULTS, referenceDate: '2026-08-21', aliasCountAtStart: 0 },
   };
 
-  test('the nine names are exactly agent-design §4\'s, and none reads as a mutation', () => {
+  test('the ten names are exactly agent-design §4\'s, and none reads as a mutation', () => {
     const registry = createToolRegistry(ctx);
     const MUTATING = /^(create|insert|update|delete|write|apply|set|put|confirm|reject|resolve|approve|save|persist|mark|patch)(_|$)/;
     for (const t of registry.tools) {
       assert.doesNotMatch(t.name, MUTATING, `${t.name} reads as a write tool`);
       assert.equal(t.readOnly, true);
     }
-    assert.equal(registry.tools.length, 9);
+    // TEN since U15 (ADR-159): `find_exception_for_transaction` was added because
+    // a live question proved the registry had no route from a record to its
+    // exception. See docs/analyst-baseline-sonnet5.md.
+    assert.equal(registry.tools.length, 10);
+    assert.notEqual(registry.get('find_exception_for_transaction'), undefined);
   });
 
   test('the registry is frozen — a tool cannot be appended after construction', () => {

@@ -576,7 +576,7 @@ export function reasoningChain(
   toolCalls: readonly ToolCallRecord[], verdict: RawVerdict,
 ): ReasoningStep[] {
   const inferenceFor = new Map<string, string>();
-  const key = (tool: string, digest: string): string => `${tool} ${digest}`;
+  const key = (tool: string, digest: string): string => `${tool}\u0000${digest}`;
   for (const r of verdict.reasoning) {
     if (typeof r?.tool === 'string' && typeof r?.resultDigest === 'string'
       && typeof r?.inference === 'string' && r.inference !== '') {

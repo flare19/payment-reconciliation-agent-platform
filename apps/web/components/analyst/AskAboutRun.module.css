@@ -1,0 +1,326 @@
+/* The Q&A box (agent-design.md §9, U15 unit 4).
+   Deliberately built from `AskAnalyst.module.css`'s vocabulary rather than a
+   new one: the two controls are the only two in the product that spend money,
+   and a person who has met one should recognise the other. ADR-141 holds here
+   too — the price is stated in plain ink, never in the severity ramp. */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  align-items: flex-start;
+  padding: var(--s5);
+  background: var(--surface);
+  border: 1px dashed var(--rule-strong);
+  border-radius: 4px;
+}
+
+.note {
+  max-width: 72ch;
+  font-size: var(--t-meta);
+  line-height: 1.65;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+/* ── the four seeds ──────────────────────────────────────────────────────────
+   §9: "A blank text box in a five-minute pitch is a way to lose thirty seconds
+   and discover a question the agent answers badly." These are the demo path. */
+.examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.example {
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  background: var(--surface-sunk);
+  color: var(--ink-2);
+  font-size: var(--t-micro);
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.example:hover:not(:disabled) { background: var(--surface-hover); color: var(--ink); }
+.example:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.label {
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-top: var(--s2);
+}
+
+.box {
+  width: 100%;
+  padding: var(--s3);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--t-meta);
+  line-height: 1.6;
+  resize: vertical;
+}
+.box:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.box:disabled { opacity: 0.6; cursor: progress; }
+
+.count { font-size: var(--t-micro); color: var(--ink-3); }
+
+/* Over the bound is a real refusal the server will make, so it is stated
+   plainly — but it is a COST, not a hazard, so it does not wear severity. */
+.countOver {
+  font-size: var(--t-micro);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.arm {
+  padding: var(--s3) var(--s5);
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: var(--t-meta);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.arm:hover:not(:disabled) { background: var(--ink-2); border-color: var(--ink-2); }
+.arm:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  width: 100%;
+  padding: var(--s3);
+  background: var(--surface-sunk);
+  border-left: 2px solid var(--ink);
+  border-radius: 0 4px 4px 0;
+}
+
+.cost {
+  max-width: 72ch;
+  font-size: var(--t-meta);
+  line-height: 1.65;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+.cost strong { color: var(--ink); font-weight: 600; }
+
+.costThen { display: block; margin-top: var(--s2); color: var(--ink-3); }
+
+.buttons { display: flex; gap: var(--s3); flex-wrap: wrap; }
+
+.go {
+  padding: var(--s2) var(--s4);
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: var(--t-meta);
+  font-weight: 500;
+  cursor: pointer;
+}
+.go:hover:not(:disabled) { filter: brightness(1.1); }
+.go:disabled { opacity: 0.6; cursor: progress; }
+
+.cancel {
+  padding: var(--s2) var(--s4);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--t-meta);
+  cursor: pointer;
+}
+.cancel:hover:not(:disabled) { background: var(--surface-hover); }
+
+/* Up to ~30 s of held-open request. Duration is observable; progress is not,
+   so this reports seconds and never draws a bar it would have to invent. */
+.waiting {
+  font-size: var(--t-meta);
+  line-height: 1.6;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+.error {
+  max-width: 72ch;
+  padding: var(--s3) var(--s4);
+  border-left: 2px solid var(--sev-high);
+  background: var(--sev-high-bg);
+  border-radius: 0 3px 3px 0;
+  font-size: var(--t-meta);
+  line-height: 1.6;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+/* ── the answer ──────────────────────────────────────────────────────────────
+   Grounded and refused are visually distinct at a glance. If they were not, the
+   gate would be decorative — the point of refusing is that a reader can tell.
+
+   NEITHER STATE WEARS `--verified` (ADR-139), and the first draft of this file
+   did. Provenance answers "how far should I trust this NUMBER"; grounding
+   answers "did the model really retrieve what it cited". Both are worth having
+   and they are not degrees of one thing, so a reader who has learned teal as
+   *checked against an answer key* must never meet it on model prose. The
+   distinction here is carried by containment and by the label, and the prose
+   itself is set in `ModelVoice` — quotation and measure, the way print has
+   always marked a change of voice. */
+.answerBlock,
+.refusedBlock {
+  width: 100%;
+  margin-top: var(--s3);
+  padding: var(--s4);
+  border-radius: 0 4px 4px 0;
+  background: var(--surface-sunk);
+}
+
+.answerBlock { border-left: 2px solid var(--rule-strong); }
+
+/* A refusal is withdrawn, not alarmed: the gate firing is the system working.
+   Dashed says "this was held back" without borrowing the severity ramp. */
+.refusedBlock { border-left: 2px dashed var(--rule-strong); }
+
+.answerHead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s3);
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: var(--s3);
+}
+
+/* Interface voice, not provenance: this is OUR sentence about the model's
+   answer, so it is plain ink with weight — never the teal that means measured. */
+.ok {
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.bad {
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.meta { font-size: var(--t-micro); color: var(--ink-3); }
+
+.refusedWhy {
+  max-width: 72ch;
+  margin-bottom: var(--s3);
+  font-size: var(--t-micro);
+  line-height: 1.6;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+.citeLabel {
+  margin-top: var(--s3);
+  font-size: var(--t-micro);
+  color: var(--ink-3);
+}
+
+.cites {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  list-style: none;
+  padding: 0;
+  margin: var(--s2) 0 0;
+}
+
+.cite {
+  display: inline-block;
+  padding: 2px var(--s2);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--paper);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--t-micro);
+  color: var(--ink-2);
+  text-decoration: none;
+}
+.cite:hover { background: var(--surface-hover); color: var(--ink); }
+
+/* ── what has already been asked ─────────────────────────────────────────────
+   Server-rendered and free. On a keyless deploy this is the whole section's
+   evidence: it shows the loop ran, what it retrieved and what it cost, without
+   a button that could only error. */
+.history {
+  width: 100%;
+  margin-top: var(--s5);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--rule);
+}
+
+.historyTitle {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.historyCount { color: var(--ink-2); }
+
+.historyNote {
+  margin-top: var(--s2);
+  font-size: var(--t-micro);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.historyList {
+  list-style: none;
+  padding: 0;
+  margin: var(--s3) 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+.historyItem { display: flex; flex-direction: column; }
+
+/* The question in the reader's voice — it is a person's sentence, not the
+   model's, so it is set as interface text and never in `ModelVoice`. */
+.asked {
+  max-width: 72ch;
+  font-size: var(--t-meta);
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--ink);
+  text-wrap: pretty;
+}
+
+/* A question that produced no answer. Interface voice, never `ModelVoice`:
+   there are no words of the model's to quote, and quoting silence reads as a
+   broken component. */
+.noAnswer {
+  max-width: 72ch;
+  font-size: var(--t-meta);
+  line-height: 1.65;
+  color: var(--ink-3);
+  font-style: italic;
+  text-wrap: pretty;
+}

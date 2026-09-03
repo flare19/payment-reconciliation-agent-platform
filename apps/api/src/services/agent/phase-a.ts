@@ -49,7 +49,9 @@ import {
 } from './corroborate.js';
 import * as corrRepo from '../../repositories/corroborations.js';
 import { buildInvestigationPrompt } from './investigation-prompt.js';
+import { randomUUID } from 'node:crypto';
 import { createToolRegistry } from './tool-registry.js';
+import { answerQuestion, QA_BUDGET } from './qa-loop.js';
 import { triageRun, type TriagePlan, type TriageBudget } from './triage.js';
 import type { AgentLlmClient, AgentUsage, CostModel } from './agent-client.js';
 import type { SpendGuard } from './spend-guard.js';
@@ -640,4 +642,162 @@ export async function runPhaseA(
     costUsd: deps.cost === null ? null : usdFor(usage, deps.cost),
     auditEntries,
   };
+}
+
+/**
+ * Answer ONE question about a finished run (agent-design.md §9, endpoint 28).
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * SYNCHRONOUS, UNLIKE ITS TWO SIBLINGS, AND THE CONTRACT SAYS SO.
+ *
+ * `investigateOne` is 202-then-poll because an investigation is bounded at 60 s
+ * and the caller is a button on an exception. Endpoint 28 returns
+ * `{ answer, citations, toolCalls, steps, costUsd }` in the response body —
+ * there is no poll target in the contract and no `status` column on
+ * `agent_questions` to poll for. So this awaits, and the route awaits it.
+ *
+ * That is a real latency bound, not a detail: at §8's measured 4.8 s/turn a
+ * 6-step question is ~30 s of held-open request. It is affordable HERE and
+ * nowhere else because a question is 6 steps where an investigation is 10, and
+ * because the alternative — inventing a poll protocol — would be a contract
+ * change on the eve of a submission.
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
+ * ── THE ROW IS WRITTEN ONCE, AT THE END, AND THE ID IS MINTED HERE ──
+ * `agent_investigations` is opened `running` and later concluded, because #57
+ * needs a row to move to `failed` and `ux_inv_exc_active` needs one to collide
+ * with. A question has neither: nothing is unique about asking the same
+ * question twice, and there is no state a second caller must be told about. So
+ * `agent_questions` takes a single insert after the loop returns.
+ *
+ * The id is still minted BEFORE the loop, because the audit trail and the tool
+ * records are stamped with it as they happen (§3) and a row id that does not
+ * exist yet cannot stamp anything. Letting Postgres default it would mean the
+ * trail said one id and the row said another.
+ *
+ * ── THE AUDIT SUBJECT IS THE RUN, NOT A NEW SUBJECT TYPE ──
+ * `audit_log.subject_type` is a CHECK list and `question` is not in it.
+ * Corroborations met this and answered by writing `subjectType:
+ * 'investigation'`, admitting in a comment that no corroboration subject type
+ * exists. That compromise is available and I did not take it: a corroboration
+ * really is about one specific match, so borrowing a sibling's noun loses
+ * information, whereas a question's subject genuinely IS the run — it may be
+ * about a settlement, a category, a total, or nothing in particular.
+ *
+ * So the entries are `subjectType: 'run'`, `subjectId: runId`, and the question
+ * id rides in `details`. No migration, no borrowed noun, and the entries land
+ * in the run's own trail where a reader looking at that run will find them.
+ */
+export async function answerOne(
+  runId: string,
+  question: string,
+  deps: PhaseADeps,
+  gateContext: Omit<GateContext, 'investigationId' | 'toolCalls'>,
+): Promise<{ question: Awaited<ReturnType<typeof invRepo.recordQuestion>>; auditEntries: number }> {
+  const promptVersion = deps.promptVersion ?? 'agent-v1';
+  const questionId = randomUUID();
+  let auditEntries = 0;
+
+  const append = async (
+    entry: Parameters<typeof auditRepo.appendAuditEntry>[0],
+  ): Promise<void> => {
+    await withTransaction((c: TxClient) => auditRepo.appendAuditEntry(entry, c));
+    auditEntries += 1;
+  };
+
+  // The question is recorded BEFORE it is answered. A question that crashes the
+  // process still leaves evidence it was asked -- which is the only way to tell
+  // "nobody asked" from "asking broke it", and on a public endpoint that is the
+  // difference between a quiet demo and an unnoticed outage.
+  await append({
+    ...blank, ...ANALYST, runId,
+    eventType: 'QUESTION_ASKED', subjectType: 'run', subjectId: runId,
+    reason: `question asked of run ${runId} using ${deps.client.model}`,
+    details: details({ questionId, question, model: deps.client.model, promptVersion }),
+  });
+
+  const registry = createToolRegistry({ runId, config: deps.config });
+
+  const outcome = await answerQuestion(
+    { questionId, runId, question },
+    {
+      client: deps.client,
+      registry,
+      gateContext,
+      ...(deps.now === undefined ? {} : { now: deps.now }),
+      ...(deps.spendGuard === undefined ? {} : { preflight: deps.spendGuard.preflight }),
+      onToolCall: async (record: ToolCallRecord) => {
+        await append({
+          ...blank, ...ANALYST, runId,
+          eventType: 'AGENT_TOOL_CALLED', subjectType: 'run', subjectId: runId,
+          reason: `question step ${record.step}: called ${record.tool}, which returned `
+            + `${record.returnedIds.length} citable id(s) in ${record.durationMs} ms`,
+          details: details({
+            questionId, step: record.step, tool: record.tool, arguments: record.arguments,
+            returnedIds: record.returnedIds, resultDigest: record.resultDigest,
+            durationMs: record.durationMs,
+          }),
+        });
+      },
+    },
+    deps.budget ?? QA_BUDGET);
+
+  const costUsd = deps.cost === null ? null : usdFor(outcome.usage, deps.cost);
+
+  // An ungrounded answer is PERSISTED, with `groundingPassed: false` and no
+  // citations -- the gate already stripped those. Discarding it would delete the
+  // evidence that the gate fired, and §7 reads that count as the signal the
+  // prompt or the tools need work.
+  const row = await invRepo.recordQuestion({
+    id: questionId,
+    runId,
+    question,
+    answer: outcome.answer.answer,
+    citations: outcome.answer.citations,
+    steps: outcome.steps,
+    toolCalls: outcome.toolCalls.length,
+    tokensIn: outcome.usage.tokensIn,
+    tokensOut: outcome.usage.tokensOut,
+    costUsd,
+    groundingPassed: outcome.answer.groundingPassed,
+  });
+
+  if (!outcome.answer.groundingPassed) {
+    await append({
+      ...blank, ...ANALYST, runId,
+      eventType: 'AGENT_GROUNDING_FAILED', subjectType: 'run', subjectId: runId,
+      reason: `answer rejected by the A3 gate: ${outcome.answer.groundingFailure ?? 'unstated'}`,
+      details: details({ questionId, check: outcome.groundingRejection?.check ?? null,
+        reason: outcome.groundingRejection?.reason ?? null }),
+    });
+  }
+  if (outcome.answer.budgetExhausted) {
+    await append({
+      ...blank, ...ANALYST, runId,
+      eventType: 'AGENT_BUDGET_EXHAUSTED', subjectType: 'run', subjectId: runId,
+      reason: outcome.stopReason,
+      details: details({ questionId, stopCause: outcome.stopCause, steps: outcome.steps,
+        toolCalls: outcome.toolCalls.length, tokensIn: outcome.usage.tokensIn,
+        tokensOut: outcome.usage.tokensOut }),
+    });
+  }
+
+  await append({
+    ...blank, ...ANALYST, runId,
+    eventType: 'QUESTION_ANSWERED', subjectType: 'run', subjectId: runId,
+    // NOT the `confidence` column: that one is numeric and belongs to engine
+    // match confidence. The agent's is a LABEL (§6), so it rides in the reason
+    // and the details, exactly as INVESTIGATION_CONCLUDED does above.
+    reason: `question answered at ${outcome.answer.confidence} confidence in `
+      + `${outcome.steps} step(s) with `
+      + `${outcome.answer.citations.length} citation(s); grounding `
+      + `${outcome.answer.groundingPassed ? 'passed' : 'FAILED'}`,
+    details: details({
+      questionId, confidence: outcome.answer.confidence, steps: outcome.steps,
+      toolCalls: outcome.toolCalls.length,
+      groundingPassed: outcome.answer.groundingPassed, costUsd,
+    }),
+  });
+
+  return { question: row, auditEntries };
 }
