@@ -384,6 +384,17 @@ export async function listQuestions(runId: string, limit: number): Promise<Agent
   return rows.map(toQuestion);
 }
 
+/**
+ * SUPERSEDED by `countQuestionsForRun` + `countQuestionsSince` (U15 unit 2).
+ *
+ * This counts questions for ONE run inside a time window, which is neither
+ * bound `agent-design.md` §9 specifies: its per-run ceiling is hard (no window,
+ * so spacing questions out must not defeat it) and its hourly bucket is GLOBAL
+ * across the deployment (so one run cannot be the unit of measurement). The
+ * endpoint-28 stub is its only caller and dies with it in unit 3 — do not add
+ * another. Two live definitions of "how many questions has this had" is how a
+ * ceiling gets enforced one way and reported another.
+ */
 export async function countRecentQuestions(
   runId: string, withinMinutes: number,
 ): Promise<number> {
@@ -418,12 +429,56 @@ export async function agentSpendUsdSince(
   since: Date, client?: TxClient,
 ): Promise<number> {
   const { rows } = await (client ?? getPool()).query<{ usd: string }>(
+    // ── EVERY SPENDER, OR THE CEILING IS NOT A CEILING (U15 unit 2) ──
+    // `agent_questions` joined this sum the moment a third surface could bill
+    // the key. Omitting it would have been worse than an undercount: the Q&A
+    // endpoint seeds its OWN guard from this function, so questions invisible
+    // here are questions invisible to the guard meant to bound them — each
+    // request would start believing nothing had been spent. That is precisely
+    // the "counter an attacker resets" failure this file's header warns about,
+    // arriving through a different door. Its timestamp column is `asked_at`,
+    // not `started_at`: a question is one request, not a phase with a start
+    // and an end.
     `SELECT COALESCE(
         (SELECT sum(cost_usd) FROM agent_investigations WHERE started_at >= $1), 0)
       + COALESCE(
         (SELECT sum(cost_usd) FROM agent_corroborations  WHERE started_at >= $1), 0)
+      + COALESCE(
+        (SELECT sum(cost_usd) FROM agent_questions       WHERE asked_at   >= $1), 0)
       AS usd`,
     [since],
   );
   return Number(rows[0]?.usd ?? 0);
+}
+
+
+/**
+ * Q&A QUOTA READS (agent-design.md §9, U15 unit 2).
+ *
+ * Two counts, deliberately separate from the dollar ceiling above and NOT a
+ * substitute for it. §9 specifies both a per-run and a per-hour question cap,
+ * and they bound a different thing than money does: a count bounds VOLUME — how
+ * hard an anonymous visitor can hammer a public endpoint — while only dollars
+ * bound SPEND, because question cost varies by an order of magnitude with how
+ * many tools a question makes the model reach for. A count cap alone cannot
+ * bound a bill, and a dollar cap alone leaves the endpoint free to be hammered
+ * with cheap questions. Both, or neither is honest.
+ *
+ * Counted from rows already written, like the spend sum, so both survive a
+ * restart. Nothing here is held in memory.
+ */
+export async function countQuestionsForRun(
+  runId: string, client?: TxClient,
+): Promise<number> {
+  const { rows } = await (client ?? getPool()).query<{ n: string }>(
+    `SELECT count(*) AS n FROM agent_questions WHERE run_id = $1`, [runId]);
+  return Number(rows[0]?.n ?? 0);
+}
+
+export async function countQuestionsSince(
+  since: Date, client?: TxClient,
+): Promise<number> {
+  const { rows } = await (client ?? getPool()).query<{ n: string }>(
+    `SELECT count(*) AS n FROM agent_questions WHERE asked_at >= $1`, [since]);
+  return Number(rows[0]?.n ?? 0);
 }

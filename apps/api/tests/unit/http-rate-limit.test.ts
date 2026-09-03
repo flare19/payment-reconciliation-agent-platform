@@ -34,12 +34,19 @@ test('tierFor files each endpoint under the tier that matches its real cost', ()
   assert.equal(tierFor('POST', '/api/runs/'), 'run');
   assert.equal(tierFor('POST', '/api/exceptions/abc-123/investigate'), 'investigate');
 
+  // `/ask` MOVED from `write` to its own tier when U15 made it real. It was
+  // filed here as an ordinary write while it was an unbuilt contract entry;
+  // now it reaches the model, and a model-calling endpoint metered at the
+  // write tier's 60/hour would carry six times the ceiling it should. The
+  // assertion below still guards this block's original point — that it is not
+  // swallowed by the `run` tier — it just no longer expects `write`.
+  assert.equal(tierFor('POST', '/api/runs/abc/ask'), 'qa');
+
   // NOT the `run` tier: these are ordinary writes that happen to sit under
   // /api/runs. A `startsWith` implementation would file them at 10/hour and
   // break manual matching mid-demo.
   assert.equal(tierFor('POST', '/api/runs/abc/matches'), 'write');
   assert.equal(tierFor('POST', '/api/runs/abc/score-report'), 'write');
-  assert.equal(tierFor('POST', '/api/runs/abc/ask'), 'write');
   assert.equal(tierFor('POST', '/api/matches/abc/approve'), 'write');
   assert.equal(tierFor('PATCH', '/api/aliases/abc'), 'write');
 });

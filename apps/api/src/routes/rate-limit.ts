@@ -58,7 +58,7 @@
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
 
 /** The four cost classes. Named in `api-contract.md` §0 and in the 429 body. */
-export type RateLimitTier = 'read' | 'write' | 'run' | 'investigate';
+export type RateLimitTier = 'read' | 'write' | 'run' | 'investigate' | 'qa';
 
 export interface TierRule {
   /** Requests admitted per window, per client IP. */
@@ -99,12 +99,23 @@ const HOUR = 3_600_000;
  *              IP must not be able to exhaust the wallet alone, or ADR-095's
  *              refusal stops being a wallet protection and becomes a race
  *              between visitors. The gap is the demo's headroom.
+ *  qa          bounded at 6 steps against `investigate`'s 10 and capped at 1024
+ *              output tokens (AGENT_DEFAULTS.qa), so a question is the cheaper
+ *              call of the two — 15/hour per IP sits just above `investigate`
+ *              for that reason and stays, like it, DELIBERATELY BELOW the
+ *              deployment's dollar ceiling. This is the TRANSPORT bound and it
+ *              is not the real one: `qa-quota.ts` holds the per-run count, the
+ *              deployment-wide count and the shared hourly dollar ceiling. Two
+ *              layers because they fail differently — this one survives the
+ *              application being wrong, and that one survives an attacker
+ *              rotating IPs, which is cheap.
  */
 export const RATE_LIMIT_TIERS: Readonly<Record<RateLimitTier, TierRule>> = {
   read: { perIp: 240, global: null, windowMs: MINUTE },
   write: { perIp: 60, global: null, windowMs: HOUR },
   run: { perIp: 10, global: 40, windowMs: HOUR },
   investigate: { perIp: 12, global: null, windowMs: HOUR },
+  qa: { perIp: 15, global: null, windowMs: HOUR },
 };
 
 /** Above this many tracked IPs, the least-recently-seen is evicted. */
@@ -123,6 +134,11 @@ export function tierFor(method: string, path: string): RateLimitTier {
   if (method === 'POST' && /^\/api\/exceptions\/[^/]+\/investigate\/?$/.test(path)) {
     return 'investigate';
   }
+  // `/api/runs/:id/ask` — the OTHER path that reaches the model (U15). Anchored
+  // and checked BEFORE the `/api/runs` rule below, which matches only the bare
+  // collection; without this it would fall through to `write` and be metered at
+  // 60/hour, six times the ceiling a model-calling endpoint should carry.
+  if (method === 'POST' && /^\/api\/runs\/[^/]+\/ask\/?$/.test(path)) return 'qa';
   // `/api/runs` exactly — NOT `/api/runs/:id/...`, which are ordinary writes.
   // Anchored on purpose: `startsWith('/api/runs')` would file the manual-match
   // and score-report endpoints under the tightest tier in the table.
