@@ -64,7 +64,7 @@ export default async function SetAsidePage(
   }
 
   const { run, runs } = ctx;
-  const isDefaultRun = run.runId === (runs.find((r) => r.status === 'completed') ?? runs[0])?.runId;
+  const isDefaultRun = run.runId === ctx.defaultRunId;
   const runQ = isDefaultRun ? undefined : run.runId;
 
   const raw = one(params, 'kind');

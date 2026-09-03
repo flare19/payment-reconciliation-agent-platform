@@ -125,8 +125,9 @@ compatibility.
 | Variable | Example | Required | Notes |
 |---|---|---|---|
 | `NEXT_PUBLIC_API_BASE_URL` | `https://recon-api.up.railway.app/api` | yes | Public by definition — it's a URL the browser calls. |
+| `PINNED_RUN_ID` | `f8ec36d7-a653-4071-a578-fe2fbecc7c24` | no | **The run the dashboard opens on when `?run=` is absent** (ADR-166). Set it on the deployed web so a stray probe run cannot become the headline on panel day. Server-only — read in `lib/run-context.ts`, never `NEXT_PUBLIC_`. Unset → newest completed run, as before. A pinned id that does not exist or has not completed logs once and falls back to that same default. The run picker and every `?run=` link are unaffected. |
 
-**That is the only frontend variable, and it is deliberately the only one.** Anything prefixed `NEXT_PUBLIC_` is compiled into the JavaScript bundle and is readable by anyone who opens devtools. If a secret ever needs to reach the frontend, the design is wrong.
+**`NEXT_PUBLIC_API_BASE_URL` is the only variable compiled into the bundle, and deliberately so.** Anything prefixed `NEXT_PUBLIC_` is readable by anyone who opens devtools. `PINNED_RUN_ID` has no prefix because it is read on the server only; if a secret ever needs to reach the frontend, the design is wrong.
 
 ---
 

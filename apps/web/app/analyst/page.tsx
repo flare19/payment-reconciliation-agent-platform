@@ -61,7 +61,7 @@ export default async function AnalystPage(
   }
 
   const { run, runs } = ctx;
-  const isDefaultRun = run.runId === (runs.find((r) => r.status === 'completed') ?? runs[0])?.runId;
+  const isDefaultRun = run.runId === ctx.defaultRunId;
   const runQ = isDefaultRun ? undefined : run.runId;
 
   const [data, exceptionList, questionData] = await Promise.all([

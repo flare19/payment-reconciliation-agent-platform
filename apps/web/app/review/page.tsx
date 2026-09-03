@@ -40,7 +40,7 @@ export default async function ReviewPage(
   }
 
   const { run, runs } = ctx;
-  const isDefaultRun = run.runId === (runs.find((r) => r.status === 'completed') ?? runs[0])?.runId;
+  const isDefaultRun = run.runId === ctx.defaultRunId;
   const runQ = isDefaultRun ? undefined : run.runId;
   const page = Number(one(params, 'page') ?? '1') || 1;
   const view = one(params, 'view') === 'decided' ? 'decided' : 'queue';

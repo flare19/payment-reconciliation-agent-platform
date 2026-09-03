@@ -2367,3 +2367,35 @@ zero `data-provenance="measured"` anywhere on the page.
   parallel with the two it already made.
 - `STALE_RUN_TIMEOUT_MINUTES` remains the last knob in CLAUDE.md §10's list that is parsed and
   enforced nowhere.
+
+### ADR-166 · The dashboard opens on a pinned run, not whatever ran last
+
+**Context.** During a judge review a throwaway probe run at 26.89% silently became the site's
+headline: the landing page follows the newest completed run, and the page handled the crippled
+run with complete honesty — which is to its credit — but on panel day one stray click puts a
+broken run on the front page with nothing to undo it.
+
+**Decision.** `PINNED_RUN_ID` (server-only web env). When set and it names a run that exists and
+has completed, `resolveRun` returns it as the default whenever `?run=` is absent. Everything else
+is unchanged: the run picker, every `?run=` link, and the "is this the default run?" test that
+decides whether a screen threads `?run=` into its links.
+
+- **A broken pin degrades to today's behaviour, not to a blank page.** A pinned id that does not
+  exist, or a run still in flight, logs once on the server and falls back to the newest completed
+  run. Pinning is a panel-day stability measure; it must not be a new way for the site to break.
+- **The eight-screen private-copy hazard, closed on the way past.** `page.tsx`, `exceptions`,
+  `matches`, `audit`, `review`, `analyst` and `set-aside` each recomputed
+  `runs.find(completed) ?? runs[0]` inline to decide link threading — the exact shape of ADR-157's
+  bug, and with a pinned run it would have diverged on all of them at once. The resolved default
+  is now a field on `RunContext` (`defaultRunId`) and the screens read it.
+
+**Scope.** Frontend only. No API change. Unset locally, so local dev is unchanged; set on the
+deployed web (deployment.md §3).
+
+**Consequences.**
+- One id to update when the canonical demo run is re-generated — a Vercel env var, no deploy of
+  code.
+- `resolveDefaultRun` may make one extra `getRun` call when the pinned id has aged off the
+  200-run list page. Once, on a cache-miss, on the server.
+- `STALE_RUN_TIMEOUT_MINUTES` remains the last knob in CLAUDE.md §10's list that is parsed and
+  enforced nowhere.

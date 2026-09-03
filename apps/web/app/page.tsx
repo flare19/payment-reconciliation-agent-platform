@@ -83,7 +83,7 @@ export default async function DashboardPage(
   const livePendingReview = run === undefined || run === null
     ? null
     : await countPendingReview(run.runId).catch(() => null);
-  const defaultRunId = (runs.find((r) => r.status === 'completed') ?? runs[0])?.runId;
+  const defaultRunId = ctx?.defaultRunId;
   const runQ = run && run.runId !== defaultRunId ? run.runId : undefined;
 
   if (!run) {
