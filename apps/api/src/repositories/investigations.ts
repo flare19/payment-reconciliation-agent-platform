@@ -189,15 +189,33 @@ export async function concludeInvestigation(
   return rows.length === 0 ? null : toInvestigation(rows[0]!);
 }
 
-/** The loop threw. Failure is a state, not an absence. */
+/**
+ * The loop threw. Failure is a state, not an absence.
+ *
+ * `usage` is OPTIONAL but is not decoration: a run that died on a provider
+ * transport failure at step 4 still paid for steps 1–3, and `agentSpendUsdSince`
+ * sums `cost_usd` off these rows to seed the public endpoint's ceiling
+ * (ADR-095). A failed row that leaves `cost_usd` NULL therefore spends real
+ * money the guard cannot see — the same "counter that resets" hole this file
+ * already warns about for `agent_questions`, arriving through the failure path
+ * instead of a missing table. Callers that know what the attempt cost pass it;
+ * `COALESCE` keeps a caller that genuinely has no usage from zeroing a value
+ * some other path already wrote.
+ */
 export async function failInvestigation(
-  investigationId: string, reason: string, client?: TxClient,
+  investigationId: string, reason: string,
+  usage?: { tokensIn: number; tokensOut: number; costUsd: number | null },
+  client?: TxClient,
 ): Promise<void> {
   await (client ?? getPool()).query(
     `UPDATE agent_investigations
-        SET status = 'failed', finished_at = now(), grounding_failure = $2
+        SET status = 'failed', finished_at = now(), grounding_failure = $2,
+            tokens_in = COALESCE($3, tokens_in),
+            tokens_out = COALESCE($4, tokens_out),
+            cost_usd  = COALESCE($5, cost_usd)
       WHERE id = $1 AND status = 'running'`,
-    [investigationId, reason],
+    [investigationId, reason,
+     usage?.tokensIn ?? null, usage?.tokensOut ?? null, usage?.costUsd ?? null],
   );
 }
 

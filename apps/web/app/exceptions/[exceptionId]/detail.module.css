@@ -51,6 +51,22 @@
   text-wrap: pretty;
 }
 
+.idLine {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  font-size: var(--t-micro);
+  color: var(--ink-3);
+}
+.idLine code {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: var(--t-micro);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+  /* One click selects the whole id, for pasting into the Analyst's box. */
+  user-select: all;
+}
+
 .severityBasis { font-size: var(--t-meta); color: var(--ink-3); }
 .severityBasis strong { color: var(--ink); font-weight: 600; }
 

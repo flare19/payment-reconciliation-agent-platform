@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { AGENT_DEFAULTS } from '../../src/config/defaults.js';
 import {
-  investigate, extractVerdict, reasoningChain, systemPrompt,
+  investigate, extractVerdict, reasoningChain, systemPrompt, AgentTransportError,
   type LoopDeps,
 } from '../../src/services/agent/investigation-loop.js';
 import type {
@@ -228,17 +228,42 @@ describe('§8 bounds — each one stops the loop and NAMES itself', () => {
 });
 
 describe('failure is a verdict, never an exception (ADR-048)', () => {
-  test('a transport failure concludes INSUFFICIENT_EVIDENCE with a stated cause', async () => {
-    const out = await investigate(REQUEST, deps({
-      client: fakeClient([{ ok: false, reason: 'transport', detail: '503 upstream',
-        usage: { tokensIn: 50, tokensOut: 0 } }]),
-    }));
-    assert.equal(out.stopCause, 'transport');
-    assert.match(out.stopReason, /503 upstream/);
-    assert.equal(out.verdict.verdict, 'INSUFFICIENT_EVIDENCE');
-    // Not a budget problem — the distinction is reported honestly.
-    assert.equal(out.verdict.budgetExhausted, false);
-    assert.equal(out.usage.tokensIn, 50, 'a failed request that reached the model still cost');
+  test('a transport failure THROWS out of investigate(), with the provider cause stated', async () => {
+    // A provider outage (no model turn ever succeeded) is not a verdict the A3
+    // gate should judge: `runAgentLoop` returns the `{ __missing }` sentinel,
+    // and feeding that to the gate would downgrade it to INSUFFICIENT_EVIDENCE
+    // with a bogus `schema: verdict … got undefined` failure and fire
+    // AGENT_GROUNDING_FAILED — blaming the model, and the §7 grounding-failure
+    // metric, for something on the provider's side. So investigate() re-raises,
+    // and investigateOne records the row as `failed` (re-runnable) instead.
+    await assert.rejects(
+      investigate(REQUEST, deps({
+        client: fakeClient([{ ok: false, reason: 'transport', detail: '503 upstream',
+          usage: { tokensIn: 50, tokensOut: 0 } }]),
+      })),
+      /503 upstream/,
+    );
+  });
+
+  test('the transport error CARRIES the usage — a failed attempt still cost', async () => {
+    // The assertion this replaces lived on the old return value: "a failed
+    // request that reached the model still cost". Throwing must not lose it.
+    // `agentSpendUsdSince` seeds the public endpoint's $2/hour ceiling by
+    // summing `cost_usd` off these rows, so an outage that marks rows failed
+    // with a NULL cost spends money the guard cannot see — and an outage is
+    // precisely the event that takes this path over and over.
+    await assert.rejects(
+      investigate(REQUEST, deps({
+        client: fakeClient([{ ok: false, reason: 'transport', detail: '503 upstream',
+          usage: { tokensIn: 50, tokensOut: 7 } }]),
+      })),
+      (err: unknown) => {
+        assert.ok(err instanceof AgentTransportError, 'must be the typed error');
+        assert.equal(err.usage.tokensIn, 50);
+        assert.equal(err.usage.tokensOut, 7);
+        return true;
+      },
+    );
   });
 
   test('an unknown tool name is a step result, not a crash, and grounds NOTHING', async () => {

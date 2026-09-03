@@ -43,7 +43,9 @@ import * as auditRepo from '../../repositories/audit.js';
 import * as aliasRepo from '../../repositories/aliases.js';
 import * as matchRepo from '../../repositories/matches.js';
 
-import { investigate, reasoningChain, type InvestigationOutcome } from './investigation-loop.js';
+import {
+  investigate, reasoningChain, AgentTransportError, type InvestigationOutcome,
+} from './investigation-loop.js';
 import {
   corroborate, buildCorroborationPrompt, CORROBORATION_BUDGET,
 } from './corroborate.js';
@@ -204,7 +206,22 @@ export async function investigateOne(
     // orphaned row permanently blocks this exception from being investigated
     // again. Failure is a state, not an absence.
     const reason = err instanceof Error ? err.message : String(err);
-    await invRepo.failInvestigation(investigation.id, reason);
+
+    // ── A FAILED ATTEMPT THAT REACHED THE MODEL STILL COST ──
+    // A provider outage mid-investigation has already paid for the turns before
+    // it, and `agentSpendUsdSince` seeds the public endpoint's $2/hour ceiling
+    // (ADR-095) by summing `cost_usd` off these rows. Writing the row with a
+    // NULL cost would spend real money the guard cannot see — and the failure
+    // path is the one an outage takes REPEATEDLY, so the undercount compounds
+    // exactly when the provider is least healthy. Recorded on the row and folded
+    // into the in-process guard, the same two places the success path uses.
+    const spent = err instanceof AgentTransportError ? err.usage : null;
+    await invRepo.failInvestigation(investigation.id, reason,
+      spent === null ? undefined : {
+        tokensIn: spent.tokensIn, tokensOut: spent.tokensOut,
+        costUsd: deps.cost === null ? null : usdFor(spent, deps.cost),
+      });
+    if (spent !== null) deps.spendGuard?.record(spent);
     throw new AgentWorkFailedError('investigation', investigation.id,
       `investigation of exception ${exceptionId} failed: ${reason}`);
   }

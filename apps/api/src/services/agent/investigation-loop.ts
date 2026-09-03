@@ -533,6 +533,19 @@ export async function runAgentLoop(
 }
 
 /**
+ * The provider could not be reached, and the attempt still cost money.
+ *
+ * Separate from a bare `Error` for one reason: `investigateOne` must be able to
+ * persist `usage` onto the failed row. See the throw site below.
+ */
+export class AgentTransportError extends Error {
+  constructor(message: string, readonly usage: AgentUsage) {
+    super(message);
+    this.name = 'AgentTransportError';
+  }
+}
+
+/**
  * Run one INVESTIGATION: the loop, then A3's investigation vocabulary.
  *
  * Even a budget-stopped run goes through the gate — it produced no verdict, so
@@ -545,6 +558,29 @@ export async function investigate(
   budget: InvestigationBudget = AGENT_DEFAULTS.budget,
 ): Promise<InvestigationOutcome> {
   const out = await runAgentLoop(request, deps, budget, SYSTEM_PROMPT);
+
+  // ── A PROVIDER TRANSPORT FAILURE IS NOT A VERDICT THE GATE SHOULD JUDGE ──
+  // `stopCause: 'transport'` means the loop ended on an unreachable model — e.g.
+  // the Anthropic API returning 529 Overloaded. It can fire mid-investigation,
+  // after real tool calls; what it guarantees is that no FINAL turn ever landed,
+  // because the only path that sets `raw` breaks with `stopCause: 'concluded'`.
+  // So `out.raw` is always the `{ __missing }` sentinel here, not model output.
+  // Handing it to A3 downgrades it to
+  // INSUFFICIENT_EVIDENCE with a `schema: verdict … got undefined` failure and
+  // fires AGENT_GROUNDING_FAILED — blaming the model, and the §7
+  // grounding-failure metric, for an outage on the provider's side. Throw
+  // instead: `investigateOne` records the row as `failed` (re-runnable, per
+  // `ux_inv_exc_active`) with the transport cause stated, exactly as it already
+  // does for a loop that throws (#57).
+  //
+  // It throws an error that CARRIES THE USAGE, because the turns before the
+  // outage were billed and `agentSpendUsdSince` sums `cost_usd` off these rows
+  // to seed the public endpoint's ceiling. Throwing a bare Error would mark the
+  // row failed with `cost_usd` NULL and make that spend invisible to the guard.
+  if (out.stopCause === 'transport') {
+    throw new AgentTransportError(out.stopReason, out.usage);
+  }
+
   const gate = validateVerdict(out.raw, {
     ...deps.gateContext, investigationId: request.investigationId,
     toolCalls: out.toolCalls,
