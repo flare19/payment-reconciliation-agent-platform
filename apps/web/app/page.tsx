@@ -312,13 +312,15 @@ export default async function DashboardPage(
           <Section
             id="tiers"
             title="How the Number Was Earned"
-            standfirst="Which rule confirmed each pair the engine matched."
+            standfirst="Which rule assembled each pair the engine grouped."
             basis={{
               summary: 'What a bad version of this bar would look like',
               body:
-                'Every confirmed pair is attributed to the rule that produced it. A bar dominated '
-                + 'by fuzzy matching would be a bad sign — the engine would be reaching a number by '
-                + 'resemblance rather than by proof — so the split is shown rather than summarised.',
+                'Every pair assembled into a group is attributed to the rule that produced it — '
+                + 'the bar counts groups the engine formed, including any still awaiting review, '
+                + 'not only the confirmed ones in the match rate. A bar dominated by fuzzy matching '
+                + 'would be a bad sign — the engine would be reaching a number by resemblance rather '
+                + 'than by proof — so the split is shown rather than summarised.',
             }}
           >
             <TierAttribution engine={metrics.engine} />

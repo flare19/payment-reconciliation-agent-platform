@@ -137,6 +137,22 @@ export default async function ExceptionsPage(
         </form>
       </header>
 
+      {/*
+        Outside `.layout`, so the money leads on every viewport — above both the
+        filter rail and the table, not tucked into the main column after the
+        facets stack on mobile (ADR-167).
+      */}
+      {exposure && (
+        <ExceptionExposureBand
+          totalDisplay={exposure.totalDisplay}
+          totalCount={metrics!.engine.exceptions.total}
+          highSeverityDisplay={exposure.highSeverityDisplay}
+          highSeverityCount={exposure.highSeverityCount}
+          top={topByExposure?.exceptions ?? []}
+          runQ={runQ}
+        />
+      )}
+
       <div className={styles.layout}>
         <FacetRail
           facets={facets}
@@ -148,16 +164,6 @@ export default async function ExceptionsPage(
         />
 
         <div className={styles.main}>
-          {exposure && (
-            <ExceptionExposureBand
-              totalDisplay={exposure.totalDisplay}
-              totalCount={metrics!.engine.exceptions.total}
-              highSeverityDisplay={exposure.highSeverityDisplay}
-              highSeverityCount={exposure.highSeverityCount}
-              top={topByExposure?.exceptions ?? []}
-              runQ={runQ}
-            />
-          )}
 
           {activeFilters.length > 0 && (
             <div className={styles.activeFilters}>
