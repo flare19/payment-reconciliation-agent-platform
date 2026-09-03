@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { CategoryAccuracy } from '@/components/exceptions/CategoryAccuracy';
 import { count } from '@/lib/format';
 import { hrefWith } from '@/lib/run-context';
 import { CATEGORY_LABEL, STATUS_LABEL, label } from '@/lib/taxonomy';
@@ -31,12 +32,19 @@ const GROUPS: Group[] = [
 ];
 
 export function FacetRail(
-  { facets, active, runId, isDefaultRun }:
+  { facets, active, runId, isDefaultRun, accuracy, hasScoreReport }:
   {
     facets: ExceptionFacets;
     active: { category?: string; severity?: string; status?: string };
     runId: string;
     isDefaultRun: boolean;
+    /**
+     * Measured precision/recall per category (`multiLabel.perCategory`), scored
+     * offline (ADR-041). `null` when the run has no score report — the accuracy
+     * line then renders as absent beside each category, never as a zero.
+     */
+    accuracy: Record<string, { precision: number; recall: number }> | null;
+    hasScoreReport: boolean;
   },
 ) {
   const runQ = isDefaultRun ? undefined : runId;
@@ -80,6 +88,16 @@ export function FacetRail(
                       </span>
                       <span className={`${styles.facetCount} num`}>{count(n)}</span>
                     </Link>
+                    {/*
+                      Only the Category group carries a measured accuracy line
+                      (queue item 2). Severity and status are the engine's own
+                      labels — there is no ground-truth precision for "high".
+                    */}
+                    {group.key === 'category' && (
+                      <span className={styles.facetAccuracy}>
+                        <CategoryAccuracy pr={accuracy?.[value]} hasReport={hasScoreReport} />
+                      </span>
+                    )}
                   </li>
                 );
               })}

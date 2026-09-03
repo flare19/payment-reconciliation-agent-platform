@@ -61,6 +61,8 @@ Notes that are not optional:
 
 **Block 3 — exceptions by category**, sorted by count, each a link into a pre-filtered exception list. Severity shown as colour within each bar.
 
+Each category row also carries its **measured precision and recall** (`measured.classification.multiLabel.perCategory`, `provenance: measured`) — the list otherwise looks equally confident about every category, and the scorer knows it is not (on the holdout `MISSING_IN_GATEWAY` is P 0.29, `UNSPLITTABLE_BATCH` is R 0.50). When the run has no score report the line reads *"accuracy not measured"* in muted text; a category the answer key has no true events for reads *"not scored for this category"*. Neither is ever shown as `0.0000` — substituting a zero for an unmeasured category is the ADR-041 failure this project exists to prevent (ADR-165).
+
 **Block 4 — throughput and LLM cost.** Engine and wall-clock rates side by side, the per-stage breakdown behind a disclosure, and the scale-benchmark curve as a small sparkline with a link. LLM cost as `3 API calls · 53 cache hits · 22 distinct shapes` — a line that tells an engineer more about the design than a paragraph would.
 
 **Block 4.5 — the Analyst.** Investigations run, verdict distribution as a small stacked bar, and three figures that matter: false-despair recovered, proposal precision as a raw fraction, and **hallucinated resolutions: 0**. That last tile stays on screen even at zero — especially at zero. It is the agent's equivalent of the false-positive tile, and it exists so a viewer can see the agent is held to the same standard as the engine.
@@ -75,7 +77,7 @@ Below it, the **Q&A box** with four pre-seeded example questions. A blank text b
 
 This screen *is* the product. Build it first, and give it the most attention.
 
-**Layout:** left rail of facet filters (category, severity, status, resolvability, source), main table, no infinite scroll — paginated at 50 with the total always visible. A judge needs to see "65 exceptions" as a bounded, countable set.
+**Layout:** left rail of facet filters (category, severity, status, resolvability, source), main table, no infinite scroll — paginated at 50 with the total always visible. A judge needs to see "65 exceptions" as a bounded, countable set. Each **category** facet carries its measured precision/recall beneath the label, same figure and same absent-not-zero rule as block 3 on the dashboard (ADR-165); severity and status do not — there is no ground-truth precision for "high".
 
 **Default sort: severity DESC, then `amountAtRiskPaise` DESC.** A finance controller triages by money at risk, which is why severity is computed from amount (ADR-044) rather than fixed per category. A default sort that buries a ₹5,00,000 mismatch under nine ₹5 ones would waste the whole feature.
 

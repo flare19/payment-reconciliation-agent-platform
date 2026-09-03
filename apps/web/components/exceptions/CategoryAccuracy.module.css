@@ -1,0 +1,51 @@
+/* Measured precision/recall beside a category name (queue item 2).
+
+   The measured accent is the same one `Figure` uses — `--verified`, the colour
+   this stylesheet reserves for "scored against an answer key that existed before
+   the engine ran". The absent state borrows `--ink-4` italic, the stylesheet's
+   established "absent, and said so". Neither is ever a zero. */
+
+.pr,
+.absent {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3em;
+  font-size: var(--t-micro);
+  white-space: nowrap;
+}
+
+.pr {
+  color: var(--verified);
+  font-variant-numeric: tabular-nums;
+}
+
+.tag {
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--verified);
+  opacity: 0.85;
+}
+
+.metric {
+  font-weight: 600;
+}
+
+.sep {
+  opacity: 0.5;
+}
+
+/* Precision under 0.75: the engine over-raises this category. The figure exists
+   to make that visible, so it does not get to look like every other number. */
+.weak .metric {
+  color: var(--sev-high);
+}
+
+.weak .tag {
+  color: var(--sev-high);
+}
+
+.absent {
+  color: var(--ink-4);
+  font-style: italic;
+}

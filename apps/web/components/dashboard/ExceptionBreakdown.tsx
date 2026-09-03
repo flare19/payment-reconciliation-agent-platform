@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { CategoryAccuracy } from '@/components/exceptions/CategoryAccuracy';
 import { SegmentBar, type Segment } from '@/components/ui/SegmentBar';
 import { count, oneDp } from '@/lib/format';
 import { hrefWith } from '@/lib/run-context';
@@ -50,7 +51,17 @@ const SEVERITY_ORDER = ['high', 'medium', 'low'] as const;
  * `undefined` for the default run so the common case keeps a clean URL.
  */
 export function ExceptionBreakdown(
-  { engine, runQ }: { engine: EngineMetrics; runQ: string | undefined },
+  { engine, runQ, accuracy, hasScoreReport }: {
+    engine: EngineMetrics;
+    runQ: string | undefined;
+    /**
+     * `measured.classification.multiLabel.perCategory` — precision/recall per
+     * category, scored offline (ADR-041). `null` when no report exists; a
+     * category absent from the map has no true events in the key.
+     */
+    accuracy: Record<string, { precision: number; recall: number }> | null;
+    hasScoreReport: boolean;
+  },
 ) {
   const { exceptions } = engine;
 
@@ -107,7 +118,10 @@ export function ExceptionBreakdown(
                     style={{ width: `${largest > 0 ? (n / largest) * 100 : 0}%` }}
                   />
                 </span>
-                {GLOSS[category] && <span className={styles.gloss}>{GLOSS[category]}</span>}
+                <span className={styles.meta}>
+                  {GLOSS[category] && <span className={styles.gloss}>{GLOSS[category]}</span>}
+                  <CategoryAccuracy pr={accuracy?.[category]} hasReport={hasScoreReport} />
+                </span>
               </Link>
             </li>
           ))}

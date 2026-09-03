@@ -88,7 +88,19 @@
   background: var(--tier-3);
 }
 
+/* Gloss and measured accuracy share a line: prose left, the P/R figure trailing.
+   `space-between` keeps the figure at the row's right edge where the eye scans a
+   column of them. Wraps to two lines below the narrow breakpoint. */
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 0.75rem;
+}
+
 .gloss {
+  flex: 1 1 12rem;
   font-size: var(--t-micro);
   line-height: 1.5;
   color: var(--ink-3);

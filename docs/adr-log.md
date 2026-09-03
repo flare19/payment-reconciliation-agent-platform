@@ -2330,3 +2330,40 @@ balance proof on the holdout are byte-identical before and after.
   frontend renders the tile as absent in that case rather than a zero.
 - `STALE_RUN_TIMEOUT_MINUTES` remains the last knob in CLAUDE.md §10's list that is parsed and
   enforced nowhere.
+
+### ADR-165 · Measured precision/recall beside each exception category
+
+**Context.** The exception list and its category breakdown looked equally confident about every
+category. The scorer already knows they should not be: on the holdout `MISSING_IN_GATEWAY` is
+**P 0.2857** — the engine over-raises it — `MISSING_IN_LEDGER` is P 0.5385, and
+`UNSPLITTABLE_BATCH` is **R 0.5000**. That is the one place the UI currently over-claims, and the
+figure that would fix it — `measured.classification.multiLabel.perCategory` — was already served
+by endpoint 5 and rendered nowhere.
+
+**Decision.** Render per-category precision/recall from `multiLabel.perCategory` next to each
+category name, in two places: the dashboard's `ExceptionBreakdown` rows and the `/exceptions`
+facet rail's Category group. One shared component, `CategoryAccuracy`.
+
+- `provenance="measured"` — the same `--verified` accent `Figure` uses. These come from
+  `score_reports`, scored offline against a key the API never reads (ADR-041).
+- **Two absences, both drawn as absences, never as a zero:**
+  - no score report on the run → *"accuracy not measured"*, muted italic (`--ink-4`).
+  - a report exists but the answer key holds no true events of this category → *"not scored for
+    this category"*.
+  Substituting `0.0000` for either reads as "the engine is wrong about all of them" when the
+  truth is "nobody measured this" — the exact ADR-041 failure the project is built around.
+- Precision below 0.75 is drawn in the high-severity colour rather than left to sit in a row of
+  identical-looking numbers — flagging over-raising is the whole reason the figure is on screen.
+- Severity and status facets carry **no** accuracy line. There is no ground-truth precision for
+  "high"; multi-label P/R is a claim about category assignment only.
+
+**Scope.** Frontend only. No API change — the data was already on the wire. `apps/web` has no
+test runner (testing-strategy.md), so both states were verified against the running instance:
+a scored run shows the measured figures, a fresh unscored run shows "accuracy not measured" with
+zero `data-provenance="measured"` anywhere on the page.
+
+**Consequences.**
+- `/exceptions/page.tsx` now also fetches endpoint 5. One extra read on the primary screen,
+  parallel with the two it already made.
+- `STALE_RUN_TIMEOUT_MINUTES` remains the last knob in CLAUDE.md §10's list that is parsed and
+  enforced nowhere.

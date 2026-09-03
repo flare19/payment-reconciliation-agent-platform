@@ -3,7 +3,7 @@ import { Disclosure } from '@/components/ui/Disclosure';
 import { ExceptionTable } from '@/components/exceptions/ExceptionTable';
 import { FacetRail } from '@/components/exceptions/FacetRail';
 import { Paginate } from '@/components/ui/Paginate';
-import { getInvestigationsIfAny, listExceptions } from '@/lib/api-client';
+import { getInvestigationsIfAny, getMetricsIfComplete, listExceptions } from '@/lib/api-client';
 import { count } from '@/lib/format';
 import { hrefWith, one, resolveRun, runParam } from '@/lib/run-context';
 import { CATEGORY_LABEL, STATUS_LABEL, label } from '@/lib/taxonomy';
@@ -60,11 +60,17 @@ export default async function ExceptionsPage(
 
   // Which of these has the Analyst already looked at? One extra read, so the
   // agent is visible where the work is rather than only on its own screen.
-  const [data, agent] = await Promise.all([
+  // Metrics comes along too: the facet rail shows measured precision/recall per
+  // category (queue item 2), which lives in `measured.classification` — absent,
+  // never zero, when no score report exists (ADR-041).
+  const [data, agent, metrics] = await Promise.all([
     listExceptions(run.runId, { ...active, sort, page }),
     getInvestigationsIfAny(run.runId),
+    getMetricsIfComplete(run.runId),
   ]);
   const { exceptions, facets, pagination } = data;
+  const categoryAccuracy = metrics?.measured?.classification.multiLabel.perCategory ?? null;
+  const hasScoreReport = (metrics?.measured ?? null) !== null;
 
   /**
    * THE RUN'S TOTAL AND WHAT IS STILL OPEN ARE TWO FIGURES (ADR-123, and the
@@ -131,6 +137,8 @@ export default async function ExceptionsPage(
           active={active}
           runId={run.runId}
           isDefaultRun={isDefaultRun}
+          accuracy={categoryAccuracy}
+          hasScoreReport={hasScoreReport}
         />
 
         <div className={styles.main}>

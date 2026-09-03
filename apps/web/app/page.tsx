@@ -285,7 +285,12 @@ export default async function DashboardPage(
               </>
             }
           >
-            <ExceptionBreakdown engine={metrics.engine} runQ={runQ} />
+            <ExceptionBreakdown
+              engine={metrics.engine}
+              runQ={runQ}
+              accuracy={metrics.measured?.classification.multiLabel.perCategory ?? null}
+              hasScoreReport={metrics.measured !== null}
+            />
           </Section>
 
           <Section
