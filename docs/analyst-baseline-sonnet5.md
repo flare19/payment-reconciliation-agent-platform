@@ -2,9 +2,9 @@
 
 **Recorded 2026-09-01 · `claude-sonnet-5`, `AGENT_EFFORT=low` · holdout run `771829ef-a78b-4efd-89c2-e4d51c3d322f`**
 
-Supersedes [`analyst-baseline.md`](./analyst-baseline.md) (`gemini-3.1-flash-lite`) as the current
-provider's record. That file stays: it is the "before", and its withdrawn DEFECT 3 is a lesson
-worth keeping.
+Supersedes the earlier `gemini-3.1-flash-lite` baseline as the current provider's record.
+The machine-readable "before" ledger is committed at
+[`data/baselines/analyst-gemini-3.1-flash-lite.json`](../data/baselines/analyst-gemini-3.1-flash-lite.json).
 
 ---
 
