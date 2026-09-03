@@ -2042,3 +2042,50 @@ reference to any score: the engine's own data contained the answer and no tool c
 - So the agent went from denying a true premise to explaining the engine's actual search, and it
   did no arithmetic to get there (ADR-049). n=1 on the re-ask; that is the claim, and nothing
   broader.
+
+---
+
+### ADR-160 · The Q&A citation list resolves its ids, the same way the exception panel already did
+
+**Context.** The exception-detail Analyst panel learned in an earlier unit that a citation id is
+either a **transaction** or an **exception** — the A3 grounding gate accepts any id that appeared
+in a tool result, and `get_transaction` yields the first kind while `get_exception` /
+`find_similar_exceptions` yield the second. That panel resolves each id server-side
+(`resolveCitation` in `lib/api-client.ts`) and links it to `/records/:id` or `/exceptions/:id`
+accordingly. The comment there records why: the first version linked every citation to
+`/records/:id`, so roughly a third of them led to a not-found page.
+
+The Q&A box (`AskAboutRun`, U15, endpoint 28) shipped later and never adopted that. It rendered
+every citation as `<Link href={`/records/${id}`}>{id.slice(0,8)}</Link>`. Found live 2026-09-03:
+on run `5f2536c8`, the answer to *"what is the largest single amount the engine could not
+match?"* cited exception `0e37d78a` (`MISSING_IN_GATEWAY`, ₹4,06,441.50) and transaction
+`eaa8b2e9`. The exception citation linked to `/records/0e37d78a` and the reader got NOT FOUND —
+on the one control whose entire purpose is letting someone check a claim against the record
+behind it. The id was also missing its `?run=`, so even the correct path would have resolved
+against the default run rather than `5f2536c8` (citation ids are per-run).
+
+**Decision.** Resolve Q&A citations the same way, and prefer server-side.
+
+- `analyst/page.tsx` resolves every distinct citation id across all already-answered questions
+  with `resolveCitation`, one lookup each, and passes the id→`ResolvedCitation` map to
+  `AskAboutRun`. A history answer's citations are now correct links with real labels
+  ("exception · Missing in Gateway · ₹4,06,441.50") in the first server paint — no client
+  waterfall, matching the exception panel.
+- The only ids not in that map belong to an answer the reader just asked in this browser.
+  `CitationList` resolves those few client-side in parallel; until they land they render as
+  plain text, never as the `/records/:id` guess that was the original bug.
+- Every link carries `?run=` via `hrefWith(c.href, { run: runQ })`, so it lands on the run the
+  answer is about. An id that resolves to neither kind renders as `unresolved · <id>`, shown not
+  hidden — a dead citation the gate accepted is a finding, same as on the exception panel.
+
+**Why this is not tuning (ADR-027).** No threshold, window, weight or tolerance moves. It is a
+wiring fix — a later surface adopting a resolution step an earlier surface already had — arguable
+without reference to any score: an exception id linked to the transaction route is wrong on its
+face.
+
+**Consequences.**
+- Verified live on the reported run: the `0e37d78a` citation now links to
+  `/exceptions/0e37d78a-…?run=5f2536c8-…` and lands on the "Missing in Gateway" detail page;
+  `eaa8b2e9` still links to `/records/…` and still resolves. `next build` clean.
+- `resolveCitation` is now called from two pages. If a third surface grows a citation list, it
+  uses this function or it is wrong — the same "one rule, one place" point ADR-157/ADR-158 made.

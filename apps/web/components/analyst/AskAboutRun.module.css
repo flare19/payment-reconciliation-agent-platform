@@ -260,6 +260,15 @@
 }
 .cite:hover { background: var(--surface-hover); color: var(--ink); }
 
+/* An id the grounding gate accepted but nothing could be found for. Shown, not
+   hidden — a dead citation is a finding, the same as on the exception panel. */
+.citeDead {
+  color: var(--ink-3);
+  border-style: dashed;
+  cursor: help;
+}
+.citeDead:hover { background: var(--paper); color: var(--ink-3); }
+
 /* ── what has already been asked ─────────────────────────────────────────────
    Server-rendered and free. On a keyless deploy this is the whole section's
    evidence: it shows the loop ran, what it retrieved and what it cost, without

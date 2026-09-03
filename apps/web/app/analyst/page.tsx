@@ -3,7 +3,10 @@ import { Disclosure } from '@/components/ui/Disclosure';
 import { ActorChip, Chip } from '@/components/ui/Chip';
 import { SegmentBar, type Segment } from '@/components/ui/SegmentBar';
 import table from '@/components/ui/table.module.css';
-import { getInvestigationsIfAny, getQuestionsIfAny, listExceptions } from '@/lib/api-client';
+import {
+  getInvestigationsIfAny, getQuestionsIfAny, listExceptions, resolveCitation,
+} from '@/lib/api-client';
+import type { ResolvedCitation } from '@/lib/api-client';
 import { AskAboutRun } from '@/components/analyst/AskAboutRun';
 import { count, oneDp } from '@/lib/format';
 import { hrefWith, resolveRun, runParam } from '@/lib/run-context';
@@ -69,6 +72,26 @@ export default async function AnalystPage(
 
   const investigations = data?.investigations ?? [];
   const metrics = data?.agentMetrics ?? null;
+
+  /**
+   * Every citation on every already-answered question, resolved to a record or
+   * an exception HERE — one lookup per distinct id, server-side, same as the
+   * exception-detail panel (api-client `resolveCitation`). A citation id can be
+   * either kind; linking them all at `/records/:id` sent the exception ones to
+   * a not-found page (found live 2026-09-03). A failed lookup resolves to an
+   * `unknown` citation rather than throwing, so one dead id cannot blank the
+   * page.
+   */
+  const questions = questionData?.questions ?? [];
+  const distinctCitationIds = [...new Set(questions.flatMap((q) => q.citations))];
+  const resolvedCitations: Record<string, ResolvedCitation> = Object.fromEntries(
+    await Promise.all(
+      distinctCitationIds.map(async (id) =>
+        [id, await resolveCitation(id).catch((): ResolvedCitation => ({
+          id, kind: 'unknown', href: null, label: id.slice(0, 8), detail: null,
+        }))] as const),
+    ),
+  );
 
   const categoryOf = new Map(
     exceptionList.exceptions.map((e) => [e.exceptionId, e.category]),
@@ -203,8 +226,10 @@ export default async function AnalystPage(
       {/* ── ask it something (§9, endpoint 28) ───────────────────────────── */}
       <AskAboutRun
         runId={run.runId}
+        runQ={runQ}
         examples={askExamples}
-        history={questionData?.questions ?? []}
+        history={questions}
+        resolvedCitations={resolvedCitations}
       />
 
       {investigations.length === 0 ? (

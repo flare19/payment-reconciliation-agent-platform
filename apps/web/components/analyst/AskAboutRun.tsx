@@ -3,8 +3,10 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ApiClientError, askQuestion } from '@/lib/api-client';
+import { ApiClientError, askQuestion, resolveCitation } from '@/lib/api-client';
+import type { ResolvedCitation } from '@/lib/api-client';
 import { ModelVoice } from '@/components/ui/ModelVoice';
+import { hrefWith } from '@/lib/run-context';
 import type { RunQuestion } from '@/types/api';
 import styles from './AskAboutRun.module.css';
 
@@ -58,8 +60,21 @@ import styles from './AskAboutRun.module.css';
 const MAX_CHARS = 500;
 
 export function AskAboutRun(
-  { runId, examples, history }: {
+  { runId, runQ, examples, history, resolvedCitations }: {
     runId: string;
+    /**
+     * The `?run=` value to carry onto citation links, or `undefined` when this
+     * is the default run. Citation ids are per-run — a link to `/exceptions/:id`
+     * or `/records/:id` that drops the run lands on the wrong run's data, or
+     * on a not-found page.
+     */
+    runQ: string | undefined;
+    /**
+     * Every citation id across `history`, resolved SERVER-SIDE to a record or an
+     * exception (id → {@link ResolvedCitation}). A freshly asked answer's ids
+     * are not in here — the component resolves those few in the browser.
+     */
+    resolvedCitations: Record<string, ResolvedCitation>;
     examples: readonly string[];
     /**
      * Questions already answered on this run, newest first, server-rendered.
@@ -229,7 +244,7 @@ export function AskAboutRun(
           </p>
         )}
         {error && <p className={styles.error} role="alert">{error}</p>}
-        {answer && <Answer q={answer} />}
+        {answer && <Answer q={answer} runQ={runQ} resolved={resolvedCitations} />}
       </div>
 
       {history.length > 0 && (
@@ -247,7 +262,7 @@ export function AskAboutRun(
             {history.map((h) => (
               <li key={h.questionId} className={styles.historyItem}>
                 <p className={styles.asked}>{h.question}</p>
-                <Answer q={h} />
+                <Answer q={h} runQ={runQ} resolved={resolvedCitations} />
               </li>
             ))}
           </ul>
@@ -265,7 +280,13 @@ export function AskAboutRun(
  * already removed them. Presenting the two states identically would make the
  * gate decorative.
  */
-function Answer({ q }: { q: RunQuestion }) {
+function Answer(
+  { q, runQ, resolved }: {
+    q: RunQuestion;
+    runQ: string | undefined;
+    resolved: Record<string, ResolvedCitation>;
+  },
+) {
   return (
     <article className={q.groundingPassed ? styles.answerBlock : styles.refusedBlock}>
       <p className={styles.answerHead}>
@@ -316,15 +337,90 @@ function Answer({ q }: { q: RunQuestion }) {
           <p className={styles.citeLabel}>
             Cited records &mdash; each one a row a tool actually returned
           </p>
-          <ul className={styles.cites}>
-            {q.citations.map((id) => (
-              <li key={id}>
-                <Link href={`/records/${id}`} className={styles.cite}>{id.slice(0, 8)}</Link>
-              </li>
-            ))}
-          </ul>
+          <CitationList ids={q.citations} runQ={runQ} resolved={resolved} />
         </>
       )}
     </article>
+  );
+}
+
+/**
+ * A citation id can be a TRANSACTION or an EXCEPTION — the grounding gate
+ * accepts any id that appeared in a tool result, and `get_transaction` yields
+ * transaction ids while `get_exception` / `find_similar_exceptions` yield
+ * exception ids. Linking them all at `/records/:id` sent roughly a third of
+ * them to a not-found page (found live, 2026-09-03: an exception citation on a
+ * Q&A history answer). `resolveCitation` looks each id up and returns the right
+ * path.
+ *
+ * EVERY ANSWER ALREADY ON THE PAGE is resolved SERVER-SIDE by `analyst/page.tsx`
+ * and handed down in `resolved` — same as the exception-detail panel, no client
+ * waterfall, real labels in the first paint. The only ids not in that map are
+ * the ones from an answer the reader just asked in this browser; those few are
+ * resolved here, in parallel, and until they land they render as plain text
+ * rather than as the `/records/:id` guess that was wrong before.
+ */
+function CitationList(
+  { ids, runQ, resolved }: {
+    ids: string[];
+    runQ: string | undefined;
+    resolved: Record<string, ResolvedCitation>;
+  },
+) {
+  const distinct = [...new Set(ids)];
+  const missing = distinct.filter((id) => !(id in resolved));
+  const [clientResolved, setClientResolved] = useState<Record<string, ResolvedCitation>>({});
+
+  useEffect(() => {
+    if (missing.length === 0) return;
+    let live = true;
+    Promise.all(
+      missing.map((id) =>
+        resolveCitation(id).catch(
+          (): ResolvedCitation => ({
+            id, kind: 'unknown', href: null, label: id.slice(0, 8), detail: null,
+          }),
+        ),
+      ),
+    ).then((rs) => {
+      if (!live) return;
+      setClientResolved((prev) => {
+        const next = { ...prev };
+        for (const r of rs) next[r.id] = r;
+        return next;
+      });
+    });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [missing.join(',')]);
+
+  return (
+    <ul className={styles.cites}>
+      {distinct.map((id) => {
+        const c = resolved[id] ?? clientResolved[id] ?? null;
+        if (c === null) {
+          // Not yet resolved (a just-asked answer, mid-lookup). Plain text, not
+          // a guessed link.
+          return <li key={id}><span className={styles.cite}>{id.slice(0, 8)}</span></li>;
+        }
+        return (
+        <li key={c.id}>
+          {c.href === null ? (
+            <span
+              className={`${styles.cite} ${styles.citeDead}`}
+              title="No record or exception was found for this id"
+            >
+              unresolved · {c.label}
+            </span>
+          ) : (
+            <Link href={hrefWith(c.href, { run: runQ })} className={styles.cite}>
+              {c.kind === 'transaction' ? 'record' : 'exception'} · {c.label}
+              {c.detail ? ` · ${c.detail}` : ''}
+            </Link>
+          )}
+        </li>
+        );
+      })}
+    </ul>
   );
 }
