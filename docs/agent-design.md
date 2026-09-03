@@ -127,7 +127,7 @@ The verdict is a statement about **evidence**, never about the decision:
 
 ### A2 — Investigate (agentic)
 
-A tool-use loop over one exception. **Gemini function calling via `@google/genai`, `gemini-3.7-flash` (`GEMINI_AGENT_MODEL`), `temperature: 0`** (ADR-080). Google describes that model as *"built for complex coding, agentic workflows, and reliable multi-step execution"*, which is this loop's job description.
+A tool-use loop over one exception. **Anthropic tool use, `claude-sonnet-5` (`LLM_AGENT_MODEL`), reasoning depth set by `output_config.effort` (`AGENT_EFFORT`, default `high`)** (ADR-093, superseding ADR-080's Gemini choice). `temperature: 0` no longer applies — Sonnet 5 removes sampling parameters — so nothing about this loop should be described as deterministic because of temperature; determinism lives in the ENGINE (ADR-048), not here. `LLM_PROVIDER=gemini` restores the prior `gemini-3.7-flash` / `@google/genai` path unchanged, as a manual fallback.
 
 The loop is the Interactions API's tool cycle: the model returns a `function_call` step, the registry executes it against locked engine code, and the result goes back as a `function_result` on the next interaction. **No automatic tool-loop helper is used** — the loop is written out, because §8's step, tool-call, wall-clock and request bounds have to be enforced between turns and a helper that hides the turn boundary hides the place the bounds live.
 
@@ -388,7 +388,7 @@ Deliberately small, because most of it already exists.
 | Piece | Notes |
 |---|---|
 | Tool registry (9 tools) | Thin wrappers over repository functions the engine needs anyway. Built Day 8 alongside the classifier, which needs the same repository queries. |
-| Investigation loop (A2) | One Gemini function-calling loop, written out rather than delegated to a helper — §8's bounds are enforced between turns (ADR-080). |
+| Investigation loop (A2) | One Anthropic tool-use loop (Gemini function-calling under `LLM_PROVIDER=gemini`), written out rather than delegated to a helper — §8's bounds are enforced between turns (ADR-093, ADR-080). |
 | Grounding gate (A3) | Pure functions. The highest-value tests in the suite (testing-strategy §1.6). |
 | Two tables | `agent_investigations`, `agent_questions`. Traces reuse `audit_log` (ADR-052). |
 | Four endpoints | 25–28. **No new write endpoints** — proposals route through 16, 20, 21. |

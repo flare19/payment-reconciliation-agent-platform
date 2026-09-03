@@ -85,7 +85,7 @@ On Claude Pro, Sonnet and Opus share one quota pool and Opus costs 1.7–5× mor
 - **Opus — nuclear button.** Hard debugging dead-ends, wrong matching results with no obvious cause, a structural decision clearly gone wrong.
 - Clear or compact context between unrelated tasks. Don't leave Opus running after a planning pass ends.
 
-**At runtime the application calls Gemini only** — `gemini-3.5-flash` for the explain layer and `gemini-3.7-flash` for the Analyst (ADR-080, superseding ADR-019's model choice). Claude is a build-time tool, never a production dependency.
+**At runtime the application calls Anthropic `claude-sonnet-5`** for both the explain layer and the Analyst, chosen by the single `LLM_PROVIDER` switch (ADR-093, superseding ADR-080's Gemini-only choice). `LLM_PROVIDER=gemini` restores the earlier Gemini path — `gemini-3.5-flash` / `gemini-3.7-flash` — exactly, as a manual fallback if the Anthropic key becomes unavailable; there is no automatic runtime failover between the two. Claude is also the build-time tool for this project, but that is a separate fact from what the deployed application calls.
 
 ---
 
@@ -190,7 +190,7 @@ Architecture that doesn't commit to numbers isn't architecture. Full reasoning f
 | Near-anchor tolerance | Damerau-Levenshtein `≤ 1` on anchors of length `≥ 12`, corroboration required | ADR-031 |
 | Subset-sum bounds (net batch) | pool `≤ 24`, subset size `≤ 8`, 1,000,000-node budget (deterministic); 2 s wall safety valve | ADR-038, ADR-060 |
 | Designed-unresolvable share | 7 % of events (~21) → published ceiling ≈ 93 % | validation-strategy §4 |
-| LLM model | `gemini-3.5-flash` (explain) / `gemini-3.7-flash` (Analyst), `temperature: 0` | ADR-019, ADR-080 |
+| LLM model | `claude-sonnet-5` (explain and Analyst), via `LLM_PROVIDER` (default `anthropic`; `gemini` restores `gemini-3.5-flash` / `gemini-3.7-flash`) | ADR-093, superseding ADR-019/ADR-080 |
 | LLM batching | ≤ 10 signatures per request, hard cap 8 calls per run | ADR-018 |
 | Poll interval | 750 ms | ADR-024 |
 | Max upload size | 10 MB per file | api-contract §0 |
