@@ -1731,7 +1731,7 @@ Every tag is accurate about the paragraph it sits on. **The reading that made th
 
 ---
 
-### ADR-159 · F18 — throughput and the exception list move ahead of "how", not literally into 900 pixels
+### ADR-142 · F18 — throughput and the exception list move ahead of "how", not literally into 900 pixels
 
 **Backlog item 13's complaint was true: throughput sat in block 4 of 5, and the exception list was one link inside the headline row's neighbourhood rather than a section of its own near the top.** Both are now sections 2 and 3, immediately under the headline row and ahead of Tier Attribution:
 
