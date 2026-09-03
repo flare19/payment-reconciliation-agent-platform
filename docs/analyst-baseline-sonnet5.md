@@ -179,3 +179,23 @@ database, one partly and one fully; #1's headline is defensible only under exact
 reading and its count was off by one (17 claimed, 16 actual), and under merchant normalisation
 MAKEMYTRIP leads with 21. There is no precision figure for the Q&A loop and this table is not
 one.
+
+
+### The fix, measured (ADR-159, same day)
+
+`find_exception_for_transaction` was added as a tenth tool and the identical question re-asked:
+
+| | Before | After |
+|---|---|---|
+| Answer | "the underlying premise doesn't appear to hold" | filed as `MISSING_IN_LEDGER`, with the engine's own search |
+| Correct | **no** | **yes, verified field by field** |
+| Grounded | yes | yes |
+| Steps / tools | 5 / 5 | 5 / 3 |
+| Cost | $0.0717 | $0.0485 |
+
+The new answer cites 90 candidates considered, best rival scores **0.5212** and **0.4241** below
+the review threshold, status `explained`, medium severity — every figure verbatim from the
+exception's `evidence` JSON. The agent computed none of them, which is ADR-049 visible in a demo
+rather than asserted in a doc.
+
+Total Q&A spend across U15 unit 5 and this verification: **$0.3808** (n=5).

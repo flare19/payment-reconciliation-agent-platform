@@ -1731,7 +1731,7 @@ Every tag is accurate about the paragraph it sits on. **The reading that made th
 
 ---
 
-### ADR-142 · F18 — throughput and the exception list move ahead of "how", not literally into 900 pixels
+### ADR-159 · F18 — throughput and the exception list move ahead of "how", not literally into 900 pixels
 
 **Backlog item 13's complaint was true: throughput sat in block 4 of 5, and the exception list was one link inside the headline row's neighbourhood rather than a section of its own near the top.** Both are now sections 2 and 3, immediately under the headline row and ahead of Tier Attribution:
 
@@ -1992,3 +1992,53 @@ Verified across all three resolution paths: an explicit `?run=` for a run off pa
 4. **The honest failure mode is provably built, not just assumed away.** If the real total ever exceeds the 200-row fetch ceiling, `showAll` no longer silently claims completeness — a new branch (`showAll && !fetchedEverything`) states plainly that older runs exist beyond what is listed, with a link to the audit trail, which still covers every one regardless of this screen's fetch size.
 
 **Verified against the real count, not assumed:** `pagination.total` from the API is `31`; the rendered `showAll` page has exactly 31 `<tr>` rows, the footer reads *"All 31 runs"*, and the dashboard's own line reads *"31 runs recorded."* The collapsed default view correctly still reads *"Showing 6 of 31"* (5 recent plus the pinned selected run). Full ten-route regression re-run since this touches the shared helper all seven screens use — all still 200, and the alias-demo deep link from earlier tonight (`page=18`, a run off the fetch page) still resolves correctly.
+
+
+---
+
+### ADR-159 · A tenth tool, because a live question proved the ninth could not be reached
+
+**Context.** The registry has held nine tools since it was designed. On 2026-09-03, the first four
+live Q&A questions (U15 unit 5) included §9's own first example — *"why was `pay_oI87KAfBTaYoZI`
+not matched?"* — and the agent answered that the record **is not an exception at all** and that
+"the underlying premise doesn't appear to hold". It is exception `b859a883`, `MISSING_IN_LEDGER`.
+
+The answer **passed the A3 grounding gate while being false.** That is not a gate defect: A3 checks
+that every cited id came back from a tool this investigation actually called. The ids were real.
+Grounding is a retrieval property and was never a correctness property, and this is the first live
+demonstration of the gap between the two.
+
+The audit trail written by `answerOne` recorded all five calls: `find_by_anchor`,
+`get_transaction`, `search_transactions` ×2, `get_audit_trail`. It never called `get_exception` —
+because `get_exception` takes an `exceptionId`, and **no tool produced one from a record.** Every
+path into the exception table required already knowing the answer. The agent behaved reasonably
+with the tools it had.
+
+**Decision.** Add `find_exception_for_transaction(transactionId)` as the tenth tool. Read-only,
+run-scoped like `get_exception`, returning a **list** — a record can be the subject of one
+exception and a related party to others, and collapsing that to "the" exception would invent a
+precedence the taxonomy does not have. An empty list is a real answer and cites nothing, so a
+model cannot cite a record as evidence of an exception that does not exist.
+
+It is **excluded from the corroboration registry**, joining `get_exception` there for that
+exclusion's original measured reason (#59) rather than a new one: a corroboration's subject is a
+`pending_review` match, so its members are records the engine *did* group, and the lookup is a
+guaranteed `found: false`. #59 measured that exact waste — 10 of 10 corroborations opening with a
+pointless `get_exception`. It stays in the Q&A and investigation registries.
+
+**Why this is not tuning (ADR-027).** No threshold, window, weight or tolerance moves. This is a
+structural gap — a question the tool surface could not express — and it is arguable without
+reference to any score: the engine's own data contained the answer and no tool could reach it.
+
+**Consequences.**
+- `TOOL_NAMES` is ten; the construction guard's message now says an *eleventh* tool cannot appear
+  by accident. `agent-design.md` §4 says "Ten tools" and carries the new row.
+- Corroboration drops three of ten rather than two of nine, and still exposes seven.
+- **Measured on a live re-ask the same day, $0.0485.** The identical question now returns: filed as
+  `MISSING_IN_LEDGER`; ₹499.00, MakeMyTrip, 2026-08-07; 90 candidates considered in the ±1-day
+  window; the two closest scored **0.5212** and **0.4241**, below the review threshold; status
+  `explained`, medium severity. Every one of those figures is verbatim from the engine's own
+  `evidence` JSON — checked field by field. Grounded, 5 steps, 3 tool calls, 2 citations.
+- So the agent went from denying a true premise to explaining the engine's actual search, and it
+  did no arithmetic to get there (ADR-049). n=1 on the re-ask; that is the claim, and nothing
+  broader.

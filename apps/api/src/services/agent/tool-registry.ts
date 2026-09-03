@@ -76,6 +76,10 @@ export const SIMILAR_RESULT_CAP = 20;
  */
 export const TOOL_NAMES = [
   'get_exception',
+  'find_exception_for_transaction',
+  // U15 / ADR-159. The route from a record to its exception, added because a
+  // live question proved the registry had none and answered a true question
+  // with a false premise-denial.
   'get_transaction',
   'search_transactions',
   'find_by_anchor',
@@ -220,6 +224,75 @@ function buildTools(ctx: ToolContext): AgentTool[] {
           ...e.evidence.candidates.map((c) => c.transactionId),
         ];
         return { result, returnedIds, digest: digestOf('get_exception', result) };
+      },
+    },
+
+    {
+      /**
+       * THE ROUTE FROM A RECORD TO ITS EXCEPTION (U15, ADR-159).
+       *
+       * Added because its absence was MEASURED, not suspected. On 2026-09-03 a
+       * live question — "why was pay_oI87KAfBTaYoZI not matched?", which is
+       * agent-design §9's own first example and the likeliest thing a judge
+       * types — was answered "the underlying premise doesn't appear to hold".
+       * The record was exception b859a883, MISSING_IN_LEDGER. The answer passed
+       * the A3 gate while being false, because the gate checks retrieval and
+       * not correctness.
+       *
+       * The recorded trail showed why: `find_by_anchor`, `get_transaction`, two
+       * `search_transactions` and a `get_audit_trail`, and never
+       * `get_exception` — which takes an `exceptionId` the agent had no way to
+       * obtain from a payment id. Every other path into the exception table
+       * needs the answer before it can ask the question. The agent behaved
+       * reasonably with the tools it had; the registry was one tool short.
+       *
+       * It returns a LIST because a record can be the subject of one exception
+       * and a related party to others, and collapsing that to "the" exception
+       * would invent a precedence the taxonomy does not have.
+       */
+      name: 'find_exception_for_transaction',
+      description:
+        'Given a transaction id, return the exception(s) filed against that record — as the '
+        + 'subject, or as a related party. Use this when you have a record and need to know '
+        + 'whether the engine filed it as an exception and under what category. An empty list '
+        + 'means the engine matched the record or never classified it, and is a real answer.',
+      inputSchema: {
+        type: 'object',
+        properties: { transactionId: { type: 'string' } },
+        required: ['transactionId'],
+      },
+      readOnly: true,
+      async execute(args: unknown) {
+        const { transactionId } = args as { transactionId: string };
+        const found = await inReadOnlyTx(
+          (c) => excRepo.listExceptionsForTransaction(transactionId, c));
+        // Scoped to THIS run, exactly as `get_exception` is: an agent working
+        // run A must not retrieve — and therefore cite — a record from run B.
+        const mine = found.filter((e) => e.runId === ctx.runId);
+        const result = {
+          found: mine.length > 0,
+          transactionId,
+          exceptions: mine.map((e) => ({
+            exceptionId: e.id,
+            category: e.category,
+            secondaryFlags: e.secondaryFlags,
+            severity: e.severity,
+            status: e.status,
+            isSubject: e.transactionId === transactionId,
+            amountAtRiskPaise: e.amountAtRiskPaise,
+            amountAtRiskDisplay: e.amountAtRiskPaise === null
+              ? null : formatPaise(e.amountAtRiskPaise),
+            detectedByRule: e.detectedByRule,
+            explanationText: e.explanationText,
+          })),
+        };
+        const returnedIds = [
+          ...mine.map((e) => e.id),
+          ...(mine.length > 0 ? [transactionId] : []),
+        ];
+        return {
+          result, returnedIds, digest: digestOf('find_exception_for_transaction', result),
+        };
       },
     },
 
@@ -802,10 +875,10 @@ export function createToolRegistry(ctx: ToolContext): ToolRegistry {
   const actual = [...names].sort();
   if (JSON.stringify(expected) !== JSON.stringify(actual)) {
     throw new Error(
-      `tool registry: the built tools do not match agent-design.md §4's nine. `
+      `tool registry: the built tools do not match agent-design.md §4's ten. `
       + `Missing: [${expected.filter((n) => !actual.includes(n)).join(', ')}]. `
       + `Unexpected: [${actual.filter((n) => !expected.includes(n as ToolName)).join(', ')}]. `
-      + `A tenth tool cannot appear by accident, and a write tool must never appear at all `
+      + `An eleventh tool cannot appear by accident, and a write tool must never appear at all `
       + `(ADR-049, ADR-051).`);
   }
 

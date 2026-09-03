@@ -89,11 +89,15 @@ describe('rerun_subset_search is EXCLUDED from corroboration (§3)', () => {
     assert.ok(trimmed.get('score_pair'));
   });
 
-  test('the real registry loses exactly two of its nine tools', () => {
+  test('the real registry loses exactly three of its ten tools', () => {
     const full = createToolRegistry({
       runId: 'r', config: { ...ENGINE_DEFAULTS, referenceDate: '2026-08-21', aliasCountAtStart: 0 },
     });
-    assert.equal(full.tools.length, 9);
+    assert.equal(full.tools.length, 10);
+    // THREE excluded since U15. `find_exception_for_transaction` joins the list
+    // for #59's measured reason, not a new one: a corroboration's subject is a
+    // match, so its members have no exception to find and the call is a
+    // guaranteed found:false — the identical defect #59 caught on get_exception.
     assert.equal(corroborationRegistry(full).tools.length, 7);
   });
 });

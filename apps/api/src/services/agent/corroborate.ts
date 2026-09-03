@@ -64,7 +64,18 @@ export const CORROBORATION_BUDGET: InvestigationBudget = {
  * only a match id, it can only ever return `found: false`; removing it from
  * the registry is stronger than hoping the model does not reach for it first.
  */
-export const CORROBORATION_EXCLUDED_TOOLS = ['rerun_subset_search', 'get_exception'] as const;
+/**
+ * `find_exception_for_transaction` joins this list for the SAME measured reason
+ * `get_exception` is on it (#59), not a new one: a corroboration's subject is a
+ * `pending_review` MATCH, so its members are by definition records the engine
+ * did group — and a lookup for their exception is a guaranteed `found: false`.
+ * #59 measured exactly that shape: 10 of 10 live corroborations opened with a
+ * pointless call to `get_exception`. Handing the model a second tool with the
+ * same guaranteed-empty answer would re-buy that mistake.
+ */
+export const CORROBORATION_EXCLUDED_TOOLS = [
+  'rerun_subset_search', 'get_exception', 'find_exception_for_transaction',
+] as const;
 
 export function corroborationRegistry(registry: ToolRegistry): ToolRegistry {
   const excluded = new Set<string>(CORROBORATION_EXCLUDED_TOOLS);
