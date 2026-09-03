@@ -10,11 +10,10 @@ import { RunPicker } from '@/components/dashboard/RunPicker';
 import { TierAttribution } from '@/components/dashboard/TierAttribution';
 import { Section } from '@/components/ui/Section';
 import {
-  countPendingReview, getHealth, getInvestigationsIfAny, getMetricsIfComplete, listRuns,
+  countPendingReview, getHealth, getInvestigationsIfAny, getMetricsIfComplete,
 } from '@/lib/api-client';
 import { at, count, day, plural } from '@/lib/format';
-import { hrefWith } from '@/lib/run-context';
-import type { RunSummary } from '@/types/api';
+import { hrefWith, resolveRun, runParam } from '@/lib/run-context';
 import styles from './page.module.css';
 
 /**
@@ -48,24 +47,31 @@ import styles from './page.module.css';
 
 export const dynamic = 'force-dynamic';
 
-function pickRun(runs: RunSummary[], requested: string | undefined): RunSummary | undefined {
-  if (requested) {
-    const asked = runs.find((r) => r.runId === requested);
-    if (asked) return asked;
-  }
-  // A completed run beats a more recent incomplete one: the landing page's job
-  // is to show a result, and the newest run may be one somebody just started.
-  return runs.find((r) => r.status === 'completed') ?? runs[0];
-}
+/**
+ * THIS PAGE USED TO PICK ITS OWN RUN, AND THAT IS WHY ADR-151'S FIX MISSED IT.
+ *
+ * `pickRun` lived here as a private copy of `resolveRun`'s logic — same
+ * preference for a completed run over a merely-recent one, same `.find()` over
+ * `listRuns()`. When ADR-151 fixed the silent-substitution bug (a requested
+ * `?run=` that has aged off `listRuns()`'s 25-run page was treated as "does
+ * not exist" and quietly replaced by the newest completed run), it fixed the
+ * SHARED helper — and this copy kept the bug, on the one page every visitor
+ * lands on first.
+ *
+ * It resurfaced the moment the database passed 31 runs: `?run=<phase4-free>`
+ * on the dashboard rendered `holdout-judge-demo` instead, with nothing on
+ * screen saying so. The duplicate is deleted rather than patched — two copies
+ * of one rule is what produced a fix that only landed on one of them.
+ */
 
 export default async function DashboardPage(
   { searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> },
 ) {
   const params = await searchParams;
-  const requested = typeof params['run'] === 'string' ? params['run'] : undefined;
+  const ctx = await resolveRun(runParam(params));
 
-  const { runs } = await listRuns();
-  const run = pickRun(runs, requested);
+  const runs = ctx?.runs ?? [];
+  const run = ctx?.run;
   // ONE boolean for both LLM surfaces (ADR-093). The launcher disables the
   // explain option rather than offering a spend that would silently no-op.
   const health = await getHealth().catch(() => null);
