@@ -18,24 +18,31 @@ import type { RunSummary } from '@/types/api';
 export interface RunContext {
   run: RunSummary;
   runs: RunSummary[];
+  /**
+   * The TRUE total, from `pagination.total` — not `runs.length`. `runs` is
+   * capped at `RUN_LIST_FETCH_SIZE`; a screen that reports "all N runs" using
+   * `runs.length` instead of this is making the same false-completeness claim
+   * "Show all" made before this field existed (found live, 2026-09-03: it
+   * read "All 25 runs" with 31 in the database).
+   */
+  runsTotal: number;
 }
 
 /**
  * WAS SILENTLY WRONG THE MOMENT A 26TH RUN EXISTED (found live, 2026-09-03).
  *
- * `listRuns()` is a PAGINATED CONVENIENCE LIST — its default page holds the
- * 25 most recent runs, nothing more. This function used to look for the
- * requested run ONLY inside that page: `runs.find((r) => r.runId ===
- * requested)`. The moment a 26th run existed, any older run named by an
- * explicit `?run=` — a bookmarked link, a memorized URL for a demo — fell
- * off page 1, `find` returned `undefined`, and the function fell back to
- * "most recently completed" with NO error, no banner, nothing on screen to
- * say the requested run had been swapped out. A reader would see a
- * different run's numbers with full confidence they were the ones asked
- * for. `verify`, the one run this project's own rehearsal notes name for a
- * live alias-teaching demo, was the run that fell off — silently replaced
- * by a demo-dataset run with a different queue, different counterparties,
- * different everything.
+ * `listRuns()` is a PAGINATED CONVENIENCE LIST. This function used to look
+ * for the requested run ONLY inside its default page (then 25 rows): `runs
+ * .find((r) => r.runId === requested)`. The moment a 26th run existed, any
+ * older run named by an explicit `?run=` — a bookmarked link, a memorized
+ * URL for a demo — fell off the page, `find` returned `undefined`, and the
+ * function fell back to "most recently completed" with NO error, no banner,
+ * nothing on screen to say the requested run had been swapped out. A reader
+ * would see a different run's numbers with full confidence they were the
+ * ones asked for. `verify`, the one run this project's own rehearsal notes
+ * name for a live alias-teaching demo, was the run that fell off — silently
+ * replaced by a demo-dataset run with a different queue, different
+ * counterparties, different everything.
  *
  * Fixed by treating `listRuns()` as what it is — a list for browsing, not
  * a lookup table — and asking for a SPECIFIC id the way `getRun` (endpoint
@@ -43,32 +50,45 @@ export interface RunContext {
  * default-selection fallback (newest completed) is unchanged; it now only
  * fires when nothing was explicitly requested, or when the id genuinely
  * does not exist.
+ *
+ * RUN_LIST_FETCH_SIZE IS `MAX_PAGE_SIZE`, THE API'S OWN CEILING (found live,
+ * 2026-09-03) — not a second guess at how many runs might exist. The
+ * dashboard's "Show all" reused this same `runs` array and, with the old
+ * 25-row default, said "All 25 runs" while 31 existed: a false completeness
+ * claim, on the one screen whose entire design exists to never make one.
+ * `runsTotal` (from `pagination.total`, not `runs.length`) lets a caller
+ * state the true count even in the run this ceiling itself is eventually
+ * exceeded by — the honest failure mode is "showing 200 of 340", never a
+ * silent "All".
  */
+const RUN_LIST_FETCH_SIZE = 200;
+
 export async function resolveRun(requested: string | undefined): Promise<RunContext | null> {
-  const { runs } = await listRuns();
+  const { runs, pagination } = await listRuns(RUN_LIST_FETCH_SIZE);
   if (runs.length === 0) return null;
+  const runsTotal = pagination.total;
 
   if (requested) {
     const asked = runs.find((r) => r.runId === requested);
-    if (asked) return { run: asked, runs };
+    if (asked) return { run: asked, runs, runsTotal };
 
-    // Not on the default page. Ask for it directly rather than concluding
+    // Not on the fetched page. Ask for it directly rather than concluding
     // it does not exist — `runs` is a recency-ordered sample, not the truth
     // about which ids are valid.
     try {
       const run = await getRun(requested);
-      return { run, runs };
+      return { run, runs, runsTotal };
     } catch (err) {
       // A GENUINE 404 (or the API being unreachable for this one call)
       // falls through to the same default this function has always used.
       // `runs` is never re-fetched here — a second `listRuns()` call would
-      // not change which ids are on page 1.
+      // not change which ids are on the fetched page.
       if (!(err instanceof ApiClientError)) throw err;
     }
   }
 
   const run = runs.find((r) => r.status === 'completed') ?? runs[0];
-  return run ? { run, runs } : null;
+  return run ? { run, runs, runsTotal } : null;
 }
 
 /** Reads `?run=` out of Next's resolved search params. */

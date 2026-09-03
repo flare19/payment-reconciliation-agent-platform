@@ -34,8 +34,18 @@ import styles from './RunPicker.module.css';
 const DEFAULT_VISIBLE = 5;
 
 export function RunPicker(
-  { runs, selectedRunId, showAll, runQ }: {
+  { runs, runsTotal, selectedRunId, showAll, runQ }: {
     runs: RunSummary[];
+    /**
+     * The TRUE total (`pagination.total`), not `runs.length`. `runs` is
+     * capped at `resolveRun`'s fetch size — currently the API's own ceiling,
+     * 200 — so on a database this footer's "All N runs" claim would be false
+     * the moment total exceeds that, and `runs.length` has no way to know
+     * it. This is what "Show all" actually said "All 25 runs" against
+     * before this field existed, while 31 were real (found live,
+     * 2026-09-03).
+     */
+    runsTotal: number;
     selectedRunId: string;
     showAll: boolean;
     runQ: string | undefined;
@@ -47,7 +57,13 @@ export function RunPicker(
   const visible = showAll || (selected !== undefined && head.includes(selected))
     ? (showAll ? runs : head)
     : [...head, ...(selected === undefined ? [] : [selected])];
-  const hidden = runs.length - visible.length;
+  // Against runsTotal, not runs.length — the true count of runs NOT shown,
+  // including any beyond what was even fetched.
+  const hidden = runsTotal - visible.length;
+  // True only when every run that exists was actually fetched. Beyond the
+  // fetch ceiling this is false even in showAll mode, and the footer below
+  // says so rather than claiming completeness it does not have.
+  const fetchedEverything = runs.length === runsTotal;
 
   return (
     <>
@@ -123,14 +139,22 @@ export function RunPicker(
       {hidden > 0 && (
         <p className={styles.more}>
           Showing <span className="num">{visible.length}</span> of{' '}
-          <span className="num">{runs.length}</span> runs.{' '}
+          <span className="num">{runsTotal}</span> runs.{' '}
           <Link href={hrefWith('/', { run: runQ, runs: 'all' })}>Show all</Link> — every run ever
           started is kept, because the audit log is append-only and its history cannot be deleted.
         </p>
       )}
-      {showAll && (
+      {showAll && fetchedEverything && (
         <p className={styles.more}>
-          All <span className="num">{runs.length}</span> runs.{' '}
+          All <span className="num">{runsTotal}</span> runs.{' '}
+          <Link href={hrefWith('/', { run: runQ })}>Show recent only</Link>.
+        </p>
+      )}
+      {showAll && !fetchedEverything && (
+        <p className={styles.more}>
+          Showing the most recent <span className="num">{runs.length}</span> of{' '}
+          <span className="num">{runsTotal}</span> runs — older ones exist and are not listed
+          here; the <Link href="/audit">audit trail</Link> still covers every one.{' '}
           <Link href={hrefWith('/', { run: runQ })}>Show recent only</Link>.
         </p>
       )}

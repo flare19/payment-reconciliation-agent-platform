@@ -1973,3 +1973,22 @@ Verified functionally in the live page, not just by reading the source: checked 
 > **The pattern, and it is one this repo has now hit from three directions.** ADR-151 was a paginated list mistaken for a lookup table. ADR-149 was an error classifier that could not recognise the error it was classifying. This is the same family: **a rule that exists in two places, fixed in one.** The tell in all three is that the code was correct in isolation and wrong in composition — and none of them was findable by reading the diff that introduced them. All three were found by exercising the running product against a known expectation.
 
 Verified across all three resolution paths: an explicit `?run=` for a run off page one resolves correctly (7/7 category links carrying `run=`), the no-param default still lands on the newest completed run with clean URLs, and a nonexistent run id falls back gracefully with `200` rather than `500`.
+
+---
+
+### ADR-158 · "Show all" said "All 25 runs" while 31 existed — the same false-completeness bug, twice on one page
+
+**Tejas's report: the Runs table only shows 25 entries.** It was worse than a display cap — `resolveRun` fetches `listRuns()` with no `pageSize`, defaulting to 25, and `RunPicker`'s "Show all" mode renders whatever it was given (`runs.length`) and calls that "**All** N runs." With 31 runs in the database, the footer read **"All 25 runs"** — a false claim of completeness, on the one screen this entire project is built around never making one.
+
+**The identical bug existed a second time, three lines below the first**, in the dashboard's own `runs recorded` line — also reading `runs.length` instead of the API's real count.
+
+**Root cause is the same family as ADR-151 and ADR-157, now a third instance**: something treated a paginated convenience list as if its length were the truth. `resolveRun`'s `runs` array was never meant to be authoritative beyond "the recent ones a screen might want to glance at" — using its `.length` as a completeness claim is a category error, not a display limit.
+
+**Fixed at the source, not by raising the visible cap:**
+
+1. `resolveRun` now fetches `RUN_LIST_FETCH_SIZE = 200` — the API's own documented ceiling (`MAX_PAGE_SIZE`), not a second arbitrary guess sitting beside the first.
+2. `RunContext` now carries `runsTotal`, read from `pagination.total` — the API's own count — never derived from `runs.length`.
+3. `RunPicker`'s footer and the dashboard's `runs recorded` line both read `runsTotal`.
+4. **The honest failure mode is provably built, not just assumed away.** If the real total ever exceeds the 200-row fetch ceiling, `showAll` no longer silently claims completeness — a new branch (`showAll && !fetchedEverything`) states plainly that older runs exist beyond what is listed, with a link to the audit trail, which still covers every one regardless of this screen's fetch size.
+
+**Verified against the real count, not assumed:** `pagination.total` from the API is `31`; the rendered `showAll` page has exactly 31 `<tr>` rows, the footer reads *"All 31 runs"*, and the dashboard's own line reads *"31 runs recorded."* The collapsed default view correctly still reads *"Showing 6 of 31"* (5 recent plus the pinned selected run). Full ten-route regression re-run since this touches the shared helper all seven screens use — all still 200, and the alias-demo deep link from earlier tonight (`page=18`, a run off the fetch page) still resolves correctly.

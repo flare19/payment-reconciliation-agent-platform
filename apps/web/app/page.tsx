@@ -71,6 +71,7 @@ export default async function DashboardPage(
   const ctx = await resolveRun(runParam(params));
 
   const runs = ctx?.runs ?? [];
+  const runsTotal = ctx?.runsTotal ?? runs.length;
   const run = ctx?.run;
   // ONE boolean for both LLM surfaces (ADR-093). The launcher disables the
   // explain option rather than offering a spend that would silently no-op.
@@ -363,13 +364,23 @@ export default async function DashboardPage(
       >
         <RunPicker
           runs={runs}
+          runsTotal={runsTotal}
           selectedRunId={run.runId}
           showAll={params['runs'] === 'all'}
           runQ={runQ}
         />
+        {/*
+          THE SAME BUG, A SECOND TIME, THREE LINES BELOW THE FIRST (found in
+          the same pass, 2026-09-03). `runs.length` was capped at whatever
+          `resolveRun` happened to fetch — this line would have said
+          "31 runs recorded" the moment the database held 231, silently
+          wrong for the same reason RunPicker's footer was. `runsTotal` comes
+          from `pagination.total`, the API's own count, not a client-side
+          array length.
+        */}
         <p className={styles.runsNote}>
-          <span className="num">{count(runs.length)}</span>{' '}
-          {plural(runs.length, 'run', 'runs')} recorded.
+          <span className="num">{count(runsTotal)}</span>{' '}
+          {plural(runsTotal, 'run', 'runs')} recorded.
         </p>
       </Section>
     </main>
