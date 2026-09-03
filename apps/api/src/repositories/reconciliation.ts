@@ -75,6 +75,14 @@ export interface ReconciliationCounts {
    * is the count of records that fell off the books entirely.
    */
   neitherCovered: number;
+  /**
+   * Unresolved, no exception — and S12 said why: every settlement window this
+   * record could be missing from is still open at the reference date. A real
+   * state the engine chose, now named instead of invisible (ADR-163).
+   */
+  neitherNotYetDue: number;
+  /** Unresolved because a human rejected their group; awaiting the next run's S12. */
+  neitherAwaitingReclassification: number;
 
   /** Distinct records carrying an exception. */
   exceptionRecords: number;
@@ -104,7 +112,7 @@ export async function reconciliationCounts(
 ): Promise<ReconciliationCounts | null> {
   const { rows } = await (client ?? getPool()).query<Record<string, string>>(
     `WITH t AS (
-       SELECT id, status_norm, duplicate_of_transaction_id
+       SELECT id, status_norm, duplicate_of_transaction_id, deferred_reason
          FROM transactions WHERE run_id = $1
      ),
      recon AS (
@@ -130,6 +138,16 @@ export async function reconciliationCounts(
        SELECT DISTINCT mm.transaction_id AS id
          FROM match_members mm JOIN matches m ON m.id = mm.match_id
         WHERE m.run_id = $1 AND m.status = 'pending_review'
+     ),
+     -- Members of a group a HUMAN rejected. Endpoint 11 returns them to the
+     -- pool and deliberately raises no exception -- re-classifying is S12's job
+     -- on the next run, not something a route improvises. So they are genuinely
+     -- unresolved and genuinely accounted for: awaiting re-classification, which
+     -- is a state, not a disappearance (ADR-163).
+     rejected AS (
+       SELECT DISTINCT mm.transaction_id AS id
+         FROM match_members mm JOIN matches m ON m.id = mm.match_id
+        WHERE m.run_id = $1 AND m.status = 'human_rejected'
      ),
      -- TWO SETS, DELIBERATELY, because they answer different questions.
      --
@@ -172,6 +190,19 @@ export async function reconciliationCounts(
          WHERE NOT EXISTS (SELECT 1 FROM conf c WHERE c.id = r.id)
            AND NOT EXISTS (SELECT 1 FROM rev  v WHERE v.id = r.id)
            AND EXISTS     (SELECT 1 FROM exc_cov x WHERE x.id = r.id)) AS neither_covered,
+       -- S12 declined to call it missing because every window it could be
+       -- missing from is still open at the reference date.
+       (SELECT count(*) FROM recon r
+         JOIN t ON t.id = r.id
+         WHERE NOT EXISTS (SELECT 1 FROM conf c WHERE c.id = r.id)
+           AND NOT EXISTS (SELECT 1 FROM rev  v WHERE v.id = r.id)
+           AND NOT EXISTS (SELECT 1 FROM exc_cov x WHERE x.id = r.id)
+           AND t.deferred_reason IS NOT NULL)                       AS neither_not_yet_due,
+       (SELECT count(*) FROM recon r
+         WHERE NOT EXISTS (SELECT 1 FROM conf c WHERE c.id = r.id)
+           AND NOT EXISTS (SELECT 1 FROM rev  v WHERE v.id = r.id)
+           AND NOT EXISTS (SELECT 1 FROM exc_cov x WHERE x.id = r.id)
+           AND EXISTS     (SELECT 1 FROM rejected j WHERE j.id = r.id)) AS neither_awaiting_reclassification,
 
        (SELECT count(*) FROM exc)                                 AS exception_records,
        (SELECT count(*) FROM exc e
@@ -204,6 +235,8 @@ export async function reconciliationCounts(
     inReviewQueue: n('in_review_queue'),
     neither: n('neither'),
     neitherCovered: n('neither_covered'),
+    neitherNotYetDue: n('neither_not_yet_due'),
+    neitherAwaitingReclassification: n('neither_awaiting_reclassification'),
     exceptionRecords: n('exception_records'),
     exceptionsInConfirmedMatch: n('exceptions_in_confirmed_match'),
     exceptionsInReviewQueue: n('exceptions_in_review_queue'),

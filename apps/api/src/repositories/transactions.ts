@@ -274,6 +274,27 @@ export async function markDuplicates(
   );
 }
 
+/**
+ * S12 records WHY a record carries no exception despite being unmatched.
+ *
+ * Only ever set for a record whose every open settlement window is still in
+ * flight at the reference date (ADR-163). NULL means "not deferred", which is
+ * every other row, so this writes nothing on a run that defers nothing.
+ */
+export async function markDeferred(
+  deferrals: readonly { transactionId: string; reason: string }[],
+  client?: TxClient,
+): Promise<void> {
+  if (deferrals.length === 0) return;
+  await (client ?? getPool()).query(
+    `UPDATE transactions AS t
+        SET deferred_reason = d.reason
+       FROM unnest($1::uuid[], $2::text[]) AS d(txn_id, reason)
+      WHERE t.id = d.txn_id`,
+    [deferrals.map((d) => d.transactionId), deferrals.map((d) => d.reason)],
+  );
+}
+
 /** S7 populates `counterparty_key` on every pooled record (NULL until Tier 1.5 runs). */
 export async function setCounterpartyKeys(
   updates: readonly { transactionId: string; counterpartyKey: string | null }[],

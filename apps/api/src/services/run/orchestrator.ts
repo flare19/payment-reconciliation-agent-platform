@@ -61,7 +61,8 @@ import {
   assembleGroups, fromTier1, fromTier2, type GroupPair, type RefusedPair,
 } from '../matching/group-assembly.js';
 import { runBatchStage } from '../matching/batch-stage.js';
-import { runClassification } from '../classification/collect.js';
+import { buildClassificationInput } from '../classification/collect.js';
+import { classify, deferredRecords } from '../classification/classify.js';
 import { computeRunMetrics, type StageTimings } from '../metrics/run-metrics.js';
 import {
   auditEventFor, planSignatures, resolveExplanations,
@@ -542,7 +543,7 @@ async function runPhases(
   // ── S12 CLASSIFY ───────────────────────────────────────────────────────────
   await runsRepo.setRunStatus(runId, 'classifying');
 
-  const exceptions = stage.time('classify', () => runClassification({
+  const classificationInput = buildClassificationInput({
     pool: t15.pool, duplicates: deduped.findings, identity, tier2,
     // Every credit S10 examined, verdict included (§11 entry 3). `decomposed`
     // outcomes are skipped by the classifier — they became groups above; the
@@ -550,11 +551,27 @@ async function runPhases(
     // AMBIGUOUS_MATCH, carrying the bound that stopped the search (ADR-038).
     batches: batch.batches,
     groups: assembled.matches, refused: assembled.refused, config,
-  }));
+  });
+  const exceptions = stage.time('classify', () => classify(classificationInput));
+
+  /**
+   * WHAT S12 DECLINED TO CALL MISSING, AND WHY (ADR-163).
+   *
+   * Derived from the same input and the same `settlementDue` the presence rule
+   * uses, so there is one definition of "not yet due" rather than a second one
+   * that could drift. Raises no exception and moves no number — it names a state
+   * a record was already in, so the run can account for every record instead of
+   * losing one between "not matched" and "not a problem yet".
+   */
+  const deferrals = deferredRecords(classificationInput, exceptions);
 
   await withTransaction(async (c) => {
     const audit = new PhaseAudit(c, runId);
     await excRepo.insertExceptions(runId, exceptions, c);
+    // Persisted in the SAME transaction as the exceptions: they are two halves
+    // of one statement about what happened to every record, and a crash between
+    // them would leave books that do not balance (ADR-162's C3).
+    await txnRepo.markDeferred(deferrals, c);
     for (const e of exceptions) {
       await audit.write({
         ...blank, transactionId: e.transactionId,

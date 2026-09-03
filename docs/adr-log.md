@@ -2212,3 +2212,73 @@ output changes. It is a read-only recomputation of rows the API already serves.
      records.
 - Fixing either changes engine behaviour, so both are left for a deliberate decision rather than
   taken on the way past. The panel reporting them honestly is the feature working.
+
+---
+
+### ADR-163 · Two records the engine accounted for silently, and now accounts for out loud
+
+**Context.** The balance proof (ADR-162) failed C3 on two populations, and both turned out to be
+the same defect wearing different clothes: **a decision the engine made correctly and left no
+trace of.**
+
+1. **Every dev-seed run, in all nine of them.** Bank row 64, `e0gt9CeMqbPHRKbMFVZD4`,
+   ₹4,75,201.95, dated 2026-08-27 — the run's own reference date. S12's presence rule contains
+   `const due = settlementDue(record, target, config); if (!due.overdue) continue;`. A bank credit
+   that landed on the reference date has not had time to reach the ledger, so raising
+   `MISSING_IN_LEDGER` would be a **false exception** — the confident wrong answer this engine
+   exists to refuse. The decision is right. But a record where *every* open target is still in
+   flight acquires no signal at all, stays in the match-rate denominator dragging the rate down,
+   and appears on no screen a human reads.
+2. **`phase4-free`, three records.** Endpoint 11 returns a rejected match's members to the pool
+   and raises nothing, with a comment that re-classifying is S12's job on the next run rather than
+   something a route improvises. That reasoning holds — an exception invented in a route would
+   carry no precedence. But the records sit unaccounted-for until someone re-runs.
+
+Neither is a wrong answer. Both are **states the product never named**, which is why no instrument
+caught them: the offline scorer, the published ceiling and the false-despair rate all read the
+engine's *output* and none asks whether the output covers its input.
+
+**Decision.** Name the states rather than change the answers.
+
+- Migration 014 adds `transactions.deferred_reason`, NULL for every row that is not deferred.
+  S12 writes it, in the **same transaction as the exceptions**, for a record that is unmatched,
+  unproposed, carries no exception, and every settlement window it could be missing from is still
+  open.
+- `deferredRecords()` computes that set from the same `ClassificationInput` and the same
+  `settlementDue` the skip uses, so there is one definition of "not yet due" rather than a second
+  one in SQL that could drift.
+- Endpoint 29 counts two further dispositions — `notYetDue` from the column, and
+  `awaitingReclassification` from `matches.status = 'human_rejected'`, which needs no re-run.
+- **C3 becomes an accounting identity with three legitimate ends** — named on the exception list,
+  knowingly not yet due, or awaiting re-classification — and still fails on a record in none of
+  them.
+- api-contract endpoint 11 now states that `exceptionCreated` is always `null`, which it always
+  was.
+
+**The risk this ADR has to answer: is this defining the problem away?** No, and the tests are the
+argument. C3 compares the two sides for **equality**, not coverage, so a deferral cannot absorb
+more than the unresolved population — a run claiming 90 deferred out of 85 unresolved fails.
+A record on no list, not deferred and not awaiting re-classification is exactly as unaccounted-for
+as it was yesterday and still fails. What changed is that the check can now tell a record nobody
+accounted for from one the engine accounted for silently, which is a distinction it could not draw
+before and needed to.
+
+**Why this is not tuning (ADR-027).** No threshold, window, weight or tolerance moves. The dev
+seed before and after: match rate **64.61%**, 198 exceptions, 876 reconcilable — identical. The
+holdout is untouched. This adds a column and a count; it changes no answer.
+
+**The alternative, and why not.** Excluding not-yet-due records from the denominator would also
+balance the books and would raise the match rate. That is the direction ADR-027 exists to be
+suspicious of, and the record genuinely *is* reconcilable — it just is not due. Keeping it in the
+denominator leaves the rate slightly pessimistic, which is the right way for this project to be
+wrong.
+
+**Consequences.**
+- Dev seed balances 5/5, reporting `79 unresolved = 78 on the exception list + 1 not yet due`.
+- `phase4-free` balances 5/5, reporting `88 = 85 + 0 + 3 awaiting re-classification`.
+- **Runs created before migration 014 are not retroactively fixed** — `deferred_reason` is written
+  at classify time, so the nine historical dev-seed runs still show the orphan. That is correct:
+  the column records what S12 decided, and S12 did not run again. Re-run the dataset to get a
+  balanced row.
+- `STALE_RUN_TIMEOUT_MINUTES` remains the last knob in CLAUDE.md §10's list that is parsed and
+  enforced nowhere.

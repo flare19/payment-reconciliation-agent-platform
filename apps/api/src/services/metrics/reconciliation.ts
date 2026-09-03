@@ -69,6 +69,10 @@ export interface ReconciliationReport {
     matchedByHuman: number;
     inReviewQueue: number;
     neither: number;
+    /** How the unresolved population is accounted for. Sums to `neither` (C3). */
+    unresolvedNamedOnList: number;
+    unresolvedNotYetDue: number;
+    unresolvedAwaitingReclassification: number;
   };
   exceptionBreakdown: {
     total: number;
@@ -121,12 +125,34 @@ export function buildReconciliationReport(
       'Every reconcilable record is in exactly one of three states. A proposal is '
       + 'held out of the match rate rather than counted toward it (ADR-040).'),
 
+    /**
+     * C3 NOW ADMITS THREE ANSWERS, AND STILL HAS TEETH.
+     *
+     * The first version asked only "is it on the exception list", and on the dev
+     * dataset it correctly failed — one bank credit was in no match and on no
+     * list. Chasing that down found the engine had made a RIGHT decision and
+     * left no trace of it: the record was dated on the reference date, so every
+     * settlement window it could be missing from was still open, and S12
+     * declined to call it missing because doing so would be a false finding.
+     *
+     * So an unresolved record has three legitimate ends — named on the list,
+     * knowingly not yet due, or returned to the pool by a human rejection and
+     * awaiting the next run's S12. What has NO legitimate end is a record in
+     * none of them, and that is still a failure here. The check did not get
+     * weaker; it learned the difference between a record nobody accounted for
+     * and one the engine accounted for silently (ADR-163).
+     */
     check('NO_ORPHANS',
-      `${c.neither} unresolved records ≡ ${c.neitherCovered} named on the exception list`,
-      c.neither, c.neitherCovered,
+      `${c.neither} unresolved = ${c.neitherCovered} on the exception list `
+      + `+ ${c.neitherNotYetDue} not yet due `
+      + `+ ${c.neitherAwaitingReclassification} awaiting re-classification`,
+      c.neither,
+      c.neitherCovered + c.neitherNotYetDue + c.neitherAwaitingReclassification,
       'The one that is not arithmetic. Every record the engine could neither match '
-      + 'nor propose is named on the exception list — nothing was silently dropped. '
-      + 'A dropped record would make every other number on this page look better.'),
+      + 'nor propose ends somewhere a reader can find it — on the exception list, or '
+      + 'with a stated reason it is not one yet. A record in none of these would be '
+      + 'silently dropped, and a dropped record makes every other number on this page '
+      + 'look better, which is why this is the check that matters.'),
 
     check('EXCEPTIONS',
       `${c.exceptionsInConfirmedMatch} in a confirmed group + ${c.exceptionsInReviewQueue} in a proposal `
@@ -193,6 +219,9 @@ export function buildReconciliationReport(
       matchedByHuman: c.matchedByHuman,
       inReviewQueue: c.inReviewQueue,
       neither: c.neither,
+      unresolvedNamedOnList: c.neitherCovered,
+      unresolvedNotYetDue: c.neitherNotYetDue,
+      unresolvedAwaitingReclassification: c.neitherAwaitingReclassification,
     },
     exceptionBreakdown: {
       total: c.exceptionRecords,

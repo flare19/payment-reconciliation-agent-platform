@@ -105,7 +105,27 @@ export function BalanceProof({ recon }: { recon: ReconciliationResponse }) {
           <span className={`num ${styles.mid}`}>{count(d.neither)}</span>
           <span className={styles.stateLabel}>unresolved</span>
           <span className={styles.stateNote}>
-            and all {count(e.pure)} are named on the exception list
+            {/*
+              Three legitimate ends, and the page names whichever ones this run
+              has. A record in none of them is an orphan and C3 fails — the
+              deferred states are an account of where a record went, never a
+              place to put one nobody can explain (ADR-163).
+            */}
+            <span className="num">{count(d.unresolvedNamedOnList)}</span> named on the
+            exception list
+            {d.unresolvedNotYetDue > 0 && (
+              <>
+                , <span className="num">{count(d.unresolvedNotYetDue)}</span> not yet due —
+                every settlement window they could be missing from is still open, so calling
+                them missing would be a false finding
+              </>
+            )}
+            {d.unresolvedAwaitingReclassification > 0 && (
+              <>
+                , <span className="num">{count(d.unresolvedAwaitingReclassification)}</span>{' '}
+                returned to the pool by a rejection and awaiting the next run
+              </>
+            )}
           </span>
         </div>
       </div>

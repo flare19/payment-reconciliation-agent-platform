@@ -739,6 +739,8 @@ export interface ReconciliationResponse {
   disposition: {
     matched: number; matchedByEngine: number; matchedByHuman: number;
     inReviewQueue: number; neither: number;
+    unresolvedNamedOnList: number; unresolvedNotYetDue: number;
+    unresolvedAwaitingReclassification: number;
   };
   exceptionBreakdown: {
     total: number; inConfirmedMatch: number;

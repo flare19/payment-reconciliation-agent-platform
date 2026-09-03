@@ -29,6 +29,8 @@ const BALANCED: ReconciliationCounts = {
   inReviewQueue: 216,
   neither: 85,
   neitherCovered: 85,
+  neitherNotYetDue: 0,
+  neitherAwaitingReclassification: 0,
 
   exceptionRecords: 212,
   exceptionsInConfirmedMatch: 99,
@@ -144,7 +146,7 @@ describe('the decomposition the panel renders', () => {
     const zero: ReconciliationCounts = {
       ingested: 0, excluded: 0, nonPrimaryDuplicates: 0, reconcilable: 0,
       matched: 0, matchedByEngine: 0, matchedByHuman: 0, inReviewQueue: 0,
-      neither: 0, neitherCovered: 0,
+      neither: 0, neitherCovered: 0, neitherNotYetDue: 0, neitherAwaitingReclassification: 0,
       exceptionRecords: 0, exceptionsInConfirmedMatch: 0, exceptionsInReviewQueue: 0,
       exceptionsPure: 0, exceptionsOutsideDenominator: 0, exceptionRows: 0,
     };
@@ -191,5 +193,47 @@ describe('a reviewer doing their job does NOT unbalance the books', () => {
     const r = buildReconciliationReport(REVIEWED, { ...PUBLISHED, matched: 571 });
     assert.equal(r.balanced, false);
     assert.deepEqual(idsOf(r), ['HEADLINE']);
+  });
+});
+
+describe('the three ends an unresolved record can have (ADR-163)', () => {
+  /**
+   * The first C3 asked only "is it on the exception list", and on the dev seed
+   * it correctly failed. Chasing that down found the engine had made a RIGHT
+   * decision and left no trace: a bank credit dated on the reference date, every
+   * settlement window still open, so S12 declined to call it missing because
+   * doing so would be a false finding. The record was real, the state was real,
+   * and nothing in the product named it.
+   */
+  test('a not-yet-due record is accounted for, not an orphan', () => {
+    const r = buildReconciliationReport(
+      { ...BALANCED, neitherCovered: 84, neitherNotYetDue: 1 }, PUBLISHED);
+    assert.equal(r.balanced, true, idsOf(r).join(', '));
+    assert.equal(r.disposition.unresolvedNotYetDue, 1);
+  });
+
+  test('a record returned by a human rejection is accounted for too', () => {
+    const r = buildReconciliationReport(
+      { ...BALANCED, neitherCovered: 82, neitherAwaitingReclassification: 3 }, PUBLISHED);
+    assert.equal(r.balanced, true, idsOf(r).join(', '));
+    assert.equal(r.disposition.unresolvedAwaitingReclassification, 3);
+  });
+
+  test('C3 STILL FAILS on a record with no end at all — the teeth are intact', () => {
+    // The whole risk of ADR-163 is defining the problem away. It does not: a
+    // record that is on no list, not deferred and not awaiting re-classification
+    // is exactly as unaccounted-for as it was before, and still fails here.
+    const r = buildReconciliationReport({ ...BALANCED, neitherCovered: 84 }, PUBLISHED);
+    assert.equal(r.balanced, false);
+    assert.deepEqual(idsOf(r), ['NO_ORPHANS']);
+    assert.equal(r.checks.find((c) => c.id === 'NO_ORPHANS')!.delta, 1);
+  });
+
+  test('and a deferred state cannot absorb MORE than the unresolved population', () => {
+    // Over-counting a deferral would let a bad run claim to balance. left/right
+    // are compared for equality, not "covered >= unresolved", so it cannot.
+    const r = buildReconciliationReport({ ...BALANCED, neitherNotYetDue: 5 }, PUBLISHED);
+    assert.equal(r.balanced, false, 'covering 90 of 85 must not read as balanced');
+    assert.deepEqual(idsOf(r), ['NO_ORPHANS']);
   });
 });

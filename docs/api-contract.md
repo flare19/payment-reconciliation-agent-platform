@@ -81,7 +81,7 @@ against a 240/minute allowance, and a run completes in ~3 s (≈4 polls).
 | 8 | `/api/runs/:runId/matches` | GET | `?tier&status&page&pageSize` | `{ matches: MatchSummary[], pagination }` | Browse what *did* match, per tier. |
 | 9 | `/api/runs/:runId/review-queue` | GET | `?page&pageSize` | `{ items: ReviewItem[], pagination }` | Fuzzy matches awaiting human approval. |
 | 10 | `/api/matches/:matchId/approve` | POST | `{ reviewedBy, note?, aliasProposals?[] }` | `{ match, aliasesCreated[], auditEntryIds[] }` | Approve a flagged match, optionally teaching an alias. |
-| 11 | `/api/matches/:matchId/reject` | POST | `{ reviewedBy, reason }` | `{ match, exceptionCreated, auditEntryIds[] }` | Reject; members return to the exception pool. |
+| 11 | `/api/matches/:matchId/reject` | POST | `{ reviewedBy, reason }` | `{ match, exceptionCreated, auditEntryIds[] }` — `exceptionCreated` is **always `null`** (ADR-163) | Reject; members return to the pool and are reported as *awaiting re-classification* until the next run's S12. |
 | 12 | `/api/transactions/:transactionId` | GET | — | `TransactionDetail` (normalized + `rawPayload`) | Record inspector. |
 | 13 | `/api/transactions/:transactionId/audit` | GET | `?page&pageSize` | `{ entries: AuditEntry[], pagination }` | **Audit trail per transaction.** |
 | 14 | `/api/runs/:runId/audit` | GET | `?eventType&actorType&page&pageSize` | `{ entries: AuditEntry[], pagination }` | Whole-run trail. |
