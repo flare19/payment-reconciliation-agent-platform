@@ -109,3 +109,73 @@ npm run analyst -- --run <id> --out report.json
 
 Total spend producing this document, including four engine runs and two discarded Analyst runs:
 **$2.83**.
+
+
+---
+
+## The Q&A loop (U15), measured 2026-09-03
+
+Four live questions against run `55b43a7f` on `claude-sonnet-5`. **Total $0.3323.**
+
+| # | Question | Steps | Tools | Grounded | Verified against the DB | Cost |
+|---|---|---|---|---|---|---|
+| 1 | Which merchant has the most unmatched records? | 3 | 3 | yes | **partly wrong** | $0.1023 |
+| 2 | *(same question, repeated)* | 2 | 8 | no — empty | gate refused it | $0.0466 |
+| 3 | Why was `pay_oI87KAfBTaYoZI` not matched? | 5 | 5 | yes | **WRONG** | $0.0717 |
+| 4 | Largest unmatched amount, and why did it fail? | 4 | 3 | yes | **correct** | $0.1117 |
+
+Cost: min $0.0466 · max $0.1117 · mean **$0.0831** over n=4. The UI's confirm step now says
+"about $0.08" on this basis. Latency 10–30 s, inside the synchronous contract.
+
+### GROUNDED IS NOT CORRECT, AND #3 IS THE PROOF
+
+Question 3 asked why a record was not matched. The agent answered that the record *is not an
+exception at all* and that "the underlying premise doesn't appear to hold". The record is
+exception `b859a883`, category `MISSING_IN_LEDGER`. **The answer passed the A3 gate while being
+false.**
+
+That is not a gate failure. A3 checks that every cited id came back from a tool this
+investigation really called — it is a retrieval check, and it did its job: the ids were real.
+Nothing in the design ever claimed the gate validates conclusions, and this is the first live
+demonstration of the difference. Any claim that grounding implies correctness is unsupported by
+this run, and #4 — grounded *and* verified correct — does not license it either.
+
+### THE CAUSE IS A TOOL GAP, AND THE AUDIT TRAIL NAMES IT
+
+The trail written by `answerOne` (U15 unit 3) records exactly five calls for #3:
+
+```
+1 find_by_anchor      {"value":"pay_oI87KAfBTaYoZI"}      -> found the transaction
+2 get_transaction     {"transactionId":"01a2a8ad-..."}    -> read it
+3 search_transactions {"counterparty":"MAKEMYTRIP",...}   -> did not surface it
+4 get_audit_trail     {"subjectType":"transaction",...}   -> zero entries
+5 search_transactions {"amountMinPaise":49900,...}        -> did not surface it
+```
+
+It never called `get_exception`, because **no tool maps a transaction to its exception.**
+`get_exception` takes an `exceptionId`, and there is no path from a payment id to one. So the
+agent did the reasonable thing with the tools it had, found nothing, and concluded the record was
+not an exception.
+
+*"Why wasn't X matched?"* is §9's own first example question and the single most likely thing a
+judge will type. The gap is one tool wide.
+
+Question 4 met the same gap and handled it honestly — it stated what `anchorStrength: none`
+supported and said plainly it could not retrieve the engine's own categorised reason. Same
+missing tool, two different outcomes, which is what an unbounded natural-language surface does.
+
+### The other failure: a tool budget spent without an answer
+
+Question 2 issued **8 tool calls across 2 steps** and returned an empty answer for $0.0466. The
+budget is 6 steps and 8 tool calls (§9); the model batches several calls per turn, so the
+tool-call ceiling binds first and can bind before anything is written. The gate correctly refused
+the empty result. The same question succeeded at 3 calls minutes earlier — the behaviour is not
+deterministic, and both outcomes are in the table above rather than only the flattering one.
+
+### What this does NOT establish
+
+n=4, one run, one model, questions chosen by the author. Two answers were verified against the
+database, one partly and one fully; #1's headline is defensible only under exact-counterparty
+reading and its count was off by one (17 claimed, 16 actual), and under merchant normalisation
+MAKEMYTRIP leads with 21. There is no precision figure for the Q&A loop and this table is not
+one.

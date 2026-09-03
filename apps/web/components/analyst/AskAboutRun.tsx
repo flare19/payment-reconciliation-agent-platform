@@ -198,8 +198,8 @@ export function AskAboutRun(
       ) : (
         <div className={styles.confirm}>
           <p className={styles.cost}>
-            One question costs roughly <strong className="num">$0.10</strong> of live model credit
-            and is answered in up to six bounded steps.
+            One question costs about <strong className="num">$0.08</strong> of live model credit —
+            a measured figure, not an estimate — and is answered in up to six bounded steps.
             <span className={styles.costThen}>
               It is saved with its cost and its citations when it lands, so the answer stays on
               this page for anyone after you — and the bill is visible rather than inferred.
@@ -291,11 +291,25 @@ function Answer({ q }: { q: RunQuestion }) {
         </p>
       )}
 
-      <ModelVoice attribution={<>the Analyst, after <span className="num">{q.toolCalls}</span>{' '}
-        tool call{q.toolCalls === 1 ? '' : 's'} against this run</>}
-      >
-        {q.answer}
-      </ModelVoice>
+      {/* AN EMPTY ANSWER IS A REAL OUTCOME, and it must not render as an empty
+          quotation. A question that exhausts its tool-call budget before
+          writing anything returns `answer: ""` -- measured, not hypothetical:
+          one of the four live questions did exactly that, spending $0.0466 and
+          producing nothing. `ModelVoice` would set that as an open quote around
+          silence, which reads as a broken component rather than as what it is. */}
+      {q.answer !== null && q.answer.trim() !== '' ? (
+        <ModelVoice attribution={<>the Analyst, after <span className="num">{q.toolCalls}</span>{' '}
+          tool call{q.toolCalls === 1 ? '' : 's'} against this run</>}
+        >
+          {q.answer}
+        </ModelVoice>
+      ) : (
+        <p className={styles.noAnswer}>
+          It spent its <span className="num">{q.toolCalls}</span>-call tool budget without
+          reaching an answer, so there is nothing to show. The cost above was still incurred —
+          which is the honest thing to display rather than a retry that hides it.
+        </p>
+      )}
 
       {q.citations.length > 0 && (
         <>
