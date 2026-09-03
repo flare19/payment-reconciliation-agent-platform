@@ -24,8 +24,10 @@ Companion docs: [adr-log.md](./adr-log.md) (ADR-005, ADR-026, ADR-046) · [api-c
                                               │ HTTPS, server-side only
                                               ▼
                                    ┌──────────────────────┐
-                                   │  Gemini API          │
-                                   │  3.5-flash · 3.7-flash│
+                                   │  Anthropic API        │
+                                   │  claude-sonnet-5      │
+                                   │  (LLM_PROVIDER=gemini │
+                                   │   restores Gemini)    │
                                    └──────────────────────┘
 ```
 
@@ -38,7 +40,7 @@ Companion docs: [adr-log.md](./adr-log.md) (ADR-005, ADR-026, ADR-046) · [api-c
 | Frontend | **Vercel** | Next.js's first-party host. Push-to-deploy, automatic HTTPS, preview URLs per branch, zero config. Free tier is far beyond what a demo needs. |
 | API | **Railway** | Deploys a Node service straight from the repo with no Dockerfile. Build/start commands are two text fields. |
 | Database | **Railway PostgreSQL 16** | Provisioned inside the *same* project as the API, so `DATABASE_URL` is injected as a reference variable over the private network. No connection strings copied by hand, no public database port, no VPC configuration. **Pin the major version to 16 when provisioning** — see §2.1. |
-| LLM | **Gemini API** (free tier, ADR-080) | Called only from the API service. |
+| LLM | **Anthropic API**, `claude-sonnet-5` (ADR-093; `LLM_PROVIDER=gemini` restores the free-tier Gemini path of ADR-080 as a manual fallback) | Called only from the API service. |
 
 **Why Railway over Render** (the closest alternative): Render is a fine fallback and would need no architectural change, but Railway's service-to-database variable referencing means the API's `DATABASE_URL` is never typed anywhere — it's a reference the platform resolves. One fewer secret in play, one fewer thing to leak. Recorded as ADR-026.
 
@@ -88,10 +90,13 @@ compatibility.
 | `NODE_ENV` | `production` | yes | |
 | `PORT` | `8080` | yes | Railway injects this. **Bind to `process.env.PORT`, never a hardcoded port** — the single most common first-deploy failure. |
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` | yes | Railway reference variable, not a literal. Requires `?sslmode=require` in production. |
-| `GEMINI_API_KEY` | `AIza…` | no* | *Absent → explain layer degrades to templates, Phase A returns 503, and the run still completes (ADR-017, ADR-080). One key serves BOTH layers. |
-| `GEMINI_EXPLAIN_MODEL` | `gemini-3.5-flash` | no | Defaults in code. Overridable without a deploy; a change invalidates `explanation_cache` by design (ADR-018). |
-| `GEMINI_AGENT_MODEL` | `gemini-3.7-flash` | no | Defaults in code. Phase A only. |
-| `AGENT_MAX_LLM_REQUESTS_PER_RUN` | `220` | no | **The bound that binds on a free-tier key** — there is no bill to cap and the scarce resource is requests per day (ADR-080). |
+| `LLM_PROVIDER` | `anthropic` | no | `anthropic` \| `gemini`, default `anthropic` (ADR-093). Selects the provider for BOTH LLM surfaces at once — never set per-surface; see `services/llm-provider.ts`'s header comment for why. |
+| `ANTHROPIC_API_KEY` | `sk-ant-…` | no* | *Absent under the default provider → explain layer degrades to templates, Phase A returns 503, and the run still completes (ADR-017, ADR-093). One key serves BOTH layers. |
+| `GEMINI_API_KEY` | `AIza…` | no | Only read when `LLM_PROVIDER=gemini` — a manual fallback path, not automatic failover if the Anthropic key stops working mid-run. Restores the Day 12 Gemini path exactly (ADR-093). |
+| `LLM_EXPLAIN_MODEL` | `claude-sonnet-5` | no | Defaults in code, following `LLM_PROVIDER`. Overridable without a deploy; a change invalidates `explanation_cache` by design (ADR-018). Under `LLM_PROVIDER=gemini`, `GEMINI_EXPLAIN_MODEL` (default `gemini-3.5-flash`) is read instead. |
+| `LLM_AGENT_MODEL` | `claude-sonnet-5` | no | Defaults in code, following `LLM_PROVIDER`. Phase A only. Under `LLM_PROVIDER=gemini`, `GEMINI_AGENT_MODEL` (default `gemini-3.7-flash`) is read instead. |
+| `AGENT_EFFORT` | `high` | no | Anthropic reasoning depth (`output_config.effort`) — the ADR-093 replacement for the `temperature: 0` Gemini used. No effect under `LLM_PROVIDER=gemini`. |
+| `AGENT_MAX_LLM_REQUESTS_PER_RUN` | `220` | no | **The bound that binds on a free-tier key** — matters most under `LLM_PROVIDER=gemini`, where there is no bill to cap and the scarce resource is requests per day (ADR-080). Under Anthropic, `AGENT_MAX_COST_USD_PER_RUN` below is the binding bound. |
 | `LLM_EXPLAIN_ENABLED` | `true` | no | Kill switch. Default `true`. |
 | `LLM_MAX_CALLS_PER_RUN` | `8` | no | Hard cost cap per run (ADR-018). Default `8`. |
 | `PROMPT_VERSION` | `v1` | no | Bumping it invalidates `explanation_cache`. Default `v1`. |
@@ -135,14 +140,15 @@ The rule, stated plainly: **`GEMINI_API_KEY` exists in exactly two places — th
 2. `.env.example` **is** committed, with every variable name and empty values, so a future session knows what's needed without knowing any value:
    ```
    DATABASE_URL=
-   GEMINI_API_KEY=
+   ANTHROPIC_API_KEY=
    CORS_ORIGIN=http://localhost:3000
    ```
+   (`GEMINI_API_KEY` joins this list only if `LLM_PROVIDER=gemini` is set — see §3.)
 3. In production the value is set only through Railway's variables UI. It is never in the repo, never in a build arg, never in `vercel.json`, never in a commit message, never pasted into a chat or a doc.
-4. All Gemini calls originate in `apps/api`. There is **no** proxy route that forwards a client-supplied key, and no endpoint accepts a key in a request body or header.
-5. The key is never logged. The Gemini client is constructed once at startup; log lines reference `GEMINI_EXPLAIN_MODEL` / `GEMINI_AGENT_MODEL`, never the key, and error handlers must not dump the client's config object.
+4. All LLM calls originate in `apps/api`. There is **no** proxy route that forwards a client-supplied key, and no endpoint accepts a key in a request body or header.
+5. The key is never logged. The provider's client is constructed once at startup, chosen by `LLM_PROVIDER`; log lines reference `LLM_EXPLAIN_MODEL` / `LLM_AGENT_MODEL`, never the key, and error handlers must not dump the client's config object.
 6. `GET /api/health` reports `llmConfigured: true|false` — a **boolean**, never a prefix, never a masked fragment. Enough to debug a deploy, useless to an attacker.
-7. **If a key is ever committed:** rotate it in Google AI Studio first, then worry about git history. Rewriting history without rotating is theatre — the key is already public.
+7. **If a key is ever committed:** rotate it at the provider (Anthropic Console, or Google AI Studio for `GEMINI_API_KEY`) first, then worry about git history. Rewriting history without rotating is theatre — the key is already public.
 
 **Cost containment** is part of secrets hygiene here, because an exposed-or-not key with an unbounded loop behind it is the actual financial risk: `LLM_MAX_CALLS_PER_RUN` caps calls per run (ADR-018), the signature cache makes repeat runs nearly free, and `AGENT_MAX_COST_USD_PER_RUN` bounds Phase A. **Since ADR-056 there *is* a user-facing "ask the AI" box** (endpoint 28), so an anonymous visitor can spend tokens — which matters, because the app has no auth (ARCHITECTURE §5). That path is bounded by the Q&A quotas below rather than by its absence.
 
@@ -211,7 +217,7 @@ for a static frontend, which has no in-flight work to lose.
 
 ### 5.4 Pre-submission checklist (Day 13)
 
-- [ ] `/api/health` returns `dbConnected: true` and `llmConfigured: true` (provider-aware since Day 15 — it reads the key belonging to `LLM_PROVIDER`, not always Gemini)
+- [ ] `/api/health` returns `dbConnected: true` and `llmConfigured: true` (provider-aware since Day 15 — it reads the key belonging to `LLM_PROVIDER`, `ANTHROPIC_API_KEY` by default, not always Gemini)
 - [ ] `TRUST_PROXY_HOPS=1` is set, and two different clients get independent rate-limit budgets (ADR-096)
 - [ ] Production Postgres major version matches the one the migrations were validated against (§2.1)
 - [ ] Dashboard loads the demo run with no interaction

@@ -737,7 +737,7 @@ CREATE TABLE audit_log (
   transaction_id UUID REFERENCES transactions(id),     -- denormalized; NULL for alias/run-level events
 
   actor_type     TEXT NOT NULL CHECK (actor_type IN ('engine','human','llm','agent')),
-  actor_id       TEXT NOT NULL,                        -- 'matching-engine@v1', 'reviewer', 'gemini-3.7-flash'
+  actor_id       TEXT NOT NULL,                        -- 'matching-engine@v1', 'reviewer', 'claude-sonnet-5'
 
   tier           TEXT,        -- NULL for non-matching events
   rule_id        TEXT,        -- NULL for non-rule-driven events
@@ -837,7 +837,7 @@ Instead, each exception is reduced to a **signature**: the structural shape of t
 ```
 signature = sha256(join('|', [
   prompt_version,            // 'v1'
-  model,                     // 'gemini-3.5-flash' — a model change must invalidate the cache
+  model,                     // 'claude-sonnet-5' — a model change must invalidate the cache
   category,                  // 'AMOUNT_MISMATCH'
   amount_delta_bucket,       // 'none' | 'lt_1pct' | '1_to_3pct' | '3_to_10pct' | 'gt_10pct' | 'sign_flip'
   date_delta_bucket,         // 'same_day' | 'within_window' | 'plus_1_3d' | 'plus_4_7d' | 'gt_7d' | 'negative'
@@ -857,7 +857,7 @@ The `model` name is part of the hashed input alongside `prompt_version` — swit
 CREATE TABLE explanation_cache (
   signature_hash   CHAR(64) PRIMARY KEY,
   prompt_version   TEXT NOT NULL,
-  model            TEXT NOT NULL,          -- 'gemini-3.5-flash'
+  model            TEXT NOT NULL,          -- 'claude-sonnet-5'
   category         TEXT NOT NULL,
   signature_input  JSONB NOT NULL,         -- the pre-hash components, for debugging and for the UI
   explanation_text TEXT NOT NULL,
@@ -881,9 +881,9 @@ Cache invalidation is by `prompt_version` — bump it and every signature re-res
 
 Why 10 per request: the output is ~90 tokens per signature, so 10 keeps the response near 1K output tokens — comfortably inside a single response with no truncation risk, while cutting request count 10×. Larger batches raise the cost of a single malformed-JSON retry.
 
-Model: **`gemini-3.5-flash`** (`GEMINI_EXPLAIN_MODEL`), `temperature: 0`, structured output via `response_format: { type: 'text', mime_type: 'application/json', schema }` (ADR-080). This is a bounded, schema-constrained generation task and the model is chosen for prose quality at a volume of ≤8 requests per run, not for throughput.
+Model: **`claude-sonnet-5`** (`LLM_EXPLAIN_MODEL`), structured JSON output, chosen via `LLM_PROVIDER` (default `anthropic`) (ADR-093, superseding ADR-080). `LLM_PROVIDER=gemini` restores `gemini-3.5-flash` (`GEMINI_EXPLAIN_MODEL`), `temperature: 0`, as a manual fallback path — there is no automatic runtime failover between providers. Either way this is a bounded, schema-constrained generation task and the model is chosen for prose quality at a volume of ≤8 requests per run, not for throughput.
 
-**The economy here is ADR-018's signature collapse, not any provider's prompt caching.** ~75 exceptions become 15–30 distinct signatures become ≤8 requests; that is a property of the batching and it holds on any provider. Earlier drafts of this section leaned on an Anthropic-specific cacheable prefix — **no design may depend on that now** (ADR-080 consequence 4). The static system prompt is still sent once per batch and is still small; it is simply not assumed to be discounted.
+**The economy here is ADR-018's signature collapse, not any provider's prompt caching.** ~75 exceptions become 15–30 distinct signatures become ≤8 requests; that is a property of the batching and it holds on any provider. No design may depend on a provider-specific cacheable prefix. The static system prompt is still sent once per batch and is still small; it is simply not assumed to be discounted.
 
 ### 10.4 Prompt design
 
