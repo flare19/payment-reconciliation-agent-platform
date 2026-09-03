@@ -2282,3 +2282,51 @@ wrong.
   balanced row.
 - `STALE_RUN_TIMEOUT_MINUTES` remains the last knob in CLAUDE.md §10's list that is parsed and
   enforced nowhere.
+
+### ADR-164 · The landing screen opened in records and percentages, never in rupees
+
+**Context.** This is the **AI Finance Controller** track and the dashboard's first screen answered
+every question except the one a finance controller asks first: *how much is unaccounted for?* The
+figure existed — `amountAtRiskPaise` / `amountAtRiskDisplay` is on every exception from endpoint 6,
+drives severity (ADR-044) and is the exception list's default secondary sort — but it appeared
+**nowhere on the landing screen**, and a total across the whole population appeared nowhere at all.
+
+Summing it in a component was not an option. Endpoint 6 is paginated at `pageSize` ≤ 200
+(api-contract §0) and a run can carry more exceptions than that — the canonical holdout has 212 —
+so a component adding up the list it was handed would silently total one page and under-report the
+exposure. The arithmetic has to happen where the whole population is in scope: the engine.
+
+**Decision.** `computeRunMetrics` (S14) sums money at risk over **every** classified exception and
+publishes it under `runs.metrics.exceptions.amountAtRisk`, formatted server-side by `formatPaise`
+— the one money formatter in the system (api-contract §0) — so the wire carries both `*Paise` and
+`*Display` and the frontend never does currency arithmetic or formatting.
+
+The block carries:
+- `totalPaise` / `totalDisplay` — summed over exceptions that carry an amount.
+- `withAmount` / `withoutAmount` — a group-level exception with no single figure is counted as an
+  absence, never folded in as a zero.
+- `highSeverityPaise` / `highSeverityDisplay` / `highSeverityCount` — the subtotal a triage starts
+  from.
+- `largestSingle` — the single worst line (`amountPaise`, `amountDisplay`, `category`,
+  `transactionId`), or `null` when no exception carries an amount.
+
+`provenance: engine`. This is the engine's own account of what it could not place, not a
+measurement against the answer key — it never wears the measured accent, and ADR-041's grep in
+`run-metrics.test.ts` confirms no ground-truth-shaped key rode in with it.
+
+The frontend renders one tile in the headline row (`HeadlineRow.tsx`), `provenance="engine"`, with
+the high-severity subtotal and the largest line in its note and basis. A unit test asserts the
+three published totals against the holdout fixture so a wrong sum cannot ship quietly.
+
+**Why this is not tuning (ADR-027).** No threshold, window, weight or tolerance moves. S14 reads
+`ClassifiedException.amountAtRiskPaise` values the classifier already computed and adds them up;
+no answer changes, no record moves between populations, and the match rate, exception count and
+balance proof on the holdout are byte-identical before and after.
+
+**Consequences.**
+- `runs.metrics` schema is unchanged in version — the object gains a key, and a reader that does
+  not know about it is unaffected. schema.md §11.1 documents the new block.
+- Runs scored before this change still return their stored `runs.metrics` without the block; the
+  frontend renders the tile as absent in that case rather than a zero.
+- `STALE_RUN_TIMEOUT_MINUTES` remains the last knob in CLAUDE.md §10's list that is parsed and
+  enforced nowhere.

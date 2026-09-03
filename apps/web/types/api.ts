@@ -95,6 +95,27 @@ export interface EngineMetrics {
     candidateCapHits: number;
     batchSearchExhausted: number;
     batchSearchBoundExceeded: number;
+    /**
+     * Money exposed by the unmatched population (ADR-164), summed by S14 over
+     * EVERY exception — not the paginated list endpoint 6 returns. `provenance:
+     * engine`. `undefined` on runs whose `runs.metrics` was written before this
+     * block existed — rendered as absent, never a zero.
+     */
+    amountAtRisk?: {
+      totalPaise: number;
+      totalDisplay: string;
+      withAmount: number;
+      withoutAmount: number;
+      highSeverityPaise: number;
+      highSeverityDisplay: string;
+      highSeverityCount: number;
+      largestSingle: {
+        amountPaise: number;
+        amountDisplay: string;
+        category: string;
+        transactionId: string | null;
+      } | null;
+    };
   };
   population: {
     gateway: number; bank: number; ledger: number;

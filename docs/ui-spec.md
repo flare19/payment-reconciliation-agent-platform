@@ -41,13 +41,12 @@ Seven screens. Each maps to endpoints already in the contract; none needs an end
 
 Vertical order, top to bottom. This ordering is the argument the project is making, rendered.
 
-**Block 1 — the honest headline.** One row, four figures, equal visual weight:
+**Block 1 — the honest headline.** One row, five figures, equal visual weight:
 
 ```
-  MATCH RATE          FALSE POSITIVES     COLD START          CEILING
-  82.4%               5                   74.1%               93.0%
-  670 / 813 records   measured vs key     no learned aliases  21 events unresolvable
-                                                              by design
+  MATCH RATE        FALSE POSITIVES   COLD START         CEILING              MONEY AT RISK
+  82.4%             5                 74.1%              93.0%                ₹33,07,074.91
+  670 / 813 records measured vs key   no learned aliases 21 events unresolv.  across 212 exceptions
 ```
 
 Notes that are not optional:
@@ -56,6 +55,7 @@ Notes that are not optional:
 - **The ceiling is displayed as a peer of the match rate**, not a footnote. It reframes 82.4 % from "not great" to "82.4 against a known maximum of 93" — which is the honest reading and the stronger one.
 - **Match rate's denominator is on hover** (`engine.matchRate.denominatorNote`). A percentage whose denominator is not inspectable is not a measurement.
 - **If `measured` is `null`** (uploaded files, or the scorer hasn't run), the false-positive tile reads *"not measured against ground truth"* in muted text. It never falls back to an engine figure. A fabricated accuracy number is worse than an absent one.
+- **Money at risk (ADR-164)** is the fifth tile: `engine.exceptions.amountAtRisk.totalDisplay`, summed server-side over every exception, `provenance: engine`. This is the AI Finance Controller track and "how much is unaccounted for?" is the first question a controller asks; the four figures to its left are about the engine, this one is about the money. It is the engine's own sum, never scored against a key, and reads as absent (not zero) on a run whose metrics predate the block. The high-severity subtotal and the single largest line sit in its note and basis.
 
 **Block 2 — tier attribution.** A single horizontal stacked bar: exact / alias / identity / fuzzy / near-anchor / batch / manual / unmatched. This is the "how did it earn the number" answer in one glance, and it is where a sceptical panelist looks second. A bar dominated by fuzzy would be a bad sign, and the chart is honest enough to show it.
 

@@ -320,6 +320,51 @@ describe('computeRunMetrics against the holdout', () => {
     assert.equal(m.exceptions.total, 234);
   });
 
+  test('money at risk is summed over the WHOLE population, not one page (ADR-164)', () => {
+    // The reason this lives in S14 and not a component: endpoint 6 paginates at
+    // 200, this run has more exceptions than that, and a frontend summing the
+    // list it was handed would under-report the exposure on the one screen this
+    // project cannot afford to under-report it on.
+    const ar = m.exceptions.amountAtRisk;
+
+    // Independent re-derivation from the exception list this block describes.
+    const withAmount = exceptions.filter((e) => e.amountAtRiskPaise !== null);
+    const expectedTotal = withAmount.reduce((s, e) => s + e.amountAtRiskPaise!, 0);
+    const expectedHigh = withAmount
+      .filter((e) => e.severity === 'high')
+      .reduce((s, e) => s + e.amountAtRiskPaise!, 0);
+    const expectedMax = Math.max(...withAmount.map((e) => e.amountAtRiskPaise!));
+
+    assert.equal(ar.totalPaise, expectedTotal);
+    assert.equal(ar.withAmount, withAmount.length);
+    assert.equal(ar.withoutAmount, exceptions.length - withAmount.length);
+    assert.equal(ar.withAmount + ar.withoutAmount, m.exceptions.total);
+    assert.equal(ar.highSeverityPaise, expectedHigh);
+    assert.equal(
+      ar.highSeverityCount,
+      withAmount.filter((e) => e.severity === 'high').length,
+    );
+    assert.equal(ar.largestSingle?.amountPaise, expectedMax);
+
+    // A group-level exception with no single figure is an absence, not a zero.
+    assert.ok(ar.withoutAmount > 0, 'the holdout has group-level exceptions with no amount');
+
+    // Formatted server-side by the one money formatter, both forms on the wire.
+    assert.match(ar.totalDisplay, /^₹[\d,]+\.\d{2}$/);
+    assert.equal(ar.largestSingle?.amountDisplay.startsWith('₹'), true);
+
+    // The frozen figures for the committed holdout — a wrong sum cannot ship past this.
+    assert.equal(ar.totalPaise, 343_414_482);
+    assert.equal(ar.totalDisplay, '₹34,34,144.82');
+    assert.equal(ar.withAmount, 225);
+    assert.equal(ar.withoutAmount, 9);
+    assert.equal(ar.highSeverityPaise, 301_437_797);
+    assert.equal(ar.highSeverityDisplay, '₹30,14,377.97');
+    assert.equal(ar.highSeverityCount, 96);
+    assert.equal(ar.largestSingle?.amountPaise, 40_644_150);
+    assert.equal(ar.largestSingle?.category, 'MISSING_IN_GATEWAY');
+  });
+
   test('no ground-truth-derived figure appears anywhere (ADR-041)', () => {
     // The structural guarantee. `runs.metrics` is the engine's account of its own
     // work; precision, recall and false positives are a MEASUREMENT and live in

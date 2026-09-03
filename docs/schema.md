@@ -971,7 +971,15 @@ Metrics are therefore two separate things in two separate tables, and the separa
     "by_category": { "AMOUNT_MISMATCH": 18, "MISSING_IN_BANK": 21, "…": 0 },
     "by_severity": { "high": 45, "medium": 15, "low": 5 },
     "candidate_cap_hits": 3,
-    "batch_search_exhausted": 5, "batch_search_bound_exceeded": 2
+    "batch_search_exhausted": 5, "batch_search_bound_exceeded": 2,
+    "amount_at_risk": {
+      "total_paise": 33070749100, "total_display": "₹3,30,70,749.10",
+      "with_amount": 203, "without_amount": 9,
+      "high_severity_paise": 29481470100, "high_severity_display": "₹2,94,81,470.10",
+      "high_severity_count": 101,
+      "largest_single": { "amount_paise": 40644150, "amount_display": "₹4,06,441.50",
+                          "category": "MISSING_IN_GATEWAY", "transaction_id": "63cb087b-…" }
+    }
   },
   "population": { "ingested": 850, "excluded": 27, "rejected_rows": 1, "non_primary_duplicates": 9, "reconcilable": 813 },
   "throughput": {
@@ -985,6 +993,8 @@ Metrics are therefore two separate things in two separate tables, and the separa
 ```
 
 `stage_ms` is new and earns its place: throughput is a judged axis, and a per-stage breakdown turns "412 rec/s" into a claim about *where the time goes* — which is also how the scale benchmark (ADR-045) shows that the blocking strategy works.
+
+`exceptions.amount_at_risk` (ADR-164) is summed by S14 over **every** classified exception, not the paginated list endpoint 6 returns, and formatted server-side by `formatPaise` so the wire carries both `*_paise` and `*_display`. It is the engine's own account of what it could not place — `provenance: engine`, never measured. `without_amount` counts group-level exceptions with no single figure as an absence; they are not folded in as a zero. `largest_single` is `null` only when no exception on the run carries an amount. On the wire the keys are camelCase (`amountAtRisk`, `totalPaise`, …); `runs.metrics` is returned verbatim by endpoint 5 with no repository casing boundary (§11.1 wire-shape note above).
 
 ### 11.2 `score_reports` — measured against ground truth
 
