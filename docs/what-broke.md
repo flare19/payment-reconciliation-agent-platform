@@ -7,7 +7,103 @@ An empty day gets an explicit `—`. A missing day is worse than a boring one.
 
 ---
 
-## Day 16 (2026-09-02), latest — the auto-refresh never fired, twice, for two different reasons
+## Day 18 (2026-09-04) — I handed the live deploy to an adversarial judge, and it found five things
+
+The engine survived. The copy around it did not.
+
+Before the doc freeze I gave the deployed instance — not localhost — to an outside reviewer with one
+instruction: assume nothing, reproduce every claim or mark it unproven, and actively try to break the
+strong ones. They triggered four runs, scored two datasets from their own machine against their own
+copies of the answer keys, and re-walked the audit chain by hand rather than trusting `/audit/verify`.
+
+**Every accuracy claim held.** Precision `1.0000` with `FP 0` reproduced on *both* seeds. Two
+separately triggered live runs produced byte-identical score reports. Their independent walk of the
+644-entry chain found 0 linkage breaks and computed the same head the server reports, before *and*
+after their own agent activity appended to it. Scorer exit 0 throughout.
+
+**Five defects, and not one of them is in the measurement path.** That distinction is the finding.
+
+### 1 · Deep links to runs created after the last web build hang forever
+
+`/?run=<id>` cold-loads correctly for runs that existed when Vercel built, and sits on the
+*"Loading the run…"* skeleton indefinitely for runs created since — while `curl` receives the
+complete 167 KB page from the same URL in about a second. So the server render is fine and something
+client-side never resolves. Isolated cleanly: two pre-build runs load, three post-build runs do not,
+reproduced across two browser tabs.
+
+The pinned dashboard and the in-page *"Run It Again"* flow both work, because both reach the run by
+client-side navigation. What breaks is a refresh, a bookmark, or a shared link.
+
+> **Not fixed before submission, and that is a judgement call rather than an oversight.** The fix is a
+> frontend change and a redeploy against a Vercel build that is currently serving a correct dashboard.
+> Shipping an untested build in the last hours to fix a path the demo does not use is the larger risk.
+> It is listed in the README's *What is not done* instead.
+
+### 2 · An investigation burned $0.10 and returned nothing, at a token ceiling
+
+A live investigation on an `AMBIGUOUS_MATCH` with two related records hit the **2,048-token output
+ceiling** — thinking tokens count against it — so the reply was truncated before a verdict existed.
+Cost `$0.1045` for no result.
+
+**It failed correctly, which is the only reason this is a defect and not a disaster.** Status `failed`,
+verdict `null`, `groundingPassed: false`, and an error message naming the actual cause rather than a
+generic one. It did not invent a verdict to fill the gap. But 1 of the 3 live investigations on the
+demo run is a failure, and the harder the exception the likelier it is — which is exactly backwards
+from what you want.
+
+### 3 · A transport failure renders identically to a grounding-gate rejection
+
+The failed investigation above appears in the Analyst table with **Grounding: Rejected** — visually
+identical to a verdict the gate actually threw out. The summary line directly beneath it correctly
+reads *"0 of 3 verdicts were rejected by the grounding gate."*
+
+Both statements are defensible alone. Together they contradict, and a reader scanning the table
+concludes the gate fired when it never did. **The gate's credibility is the entire point of A3**, so a
+column that reports "the model call died" and "the model lied" with the same word is worse here than
+it would be almost anywhere else.
+
+### 4 · `llmConfigured` tests that a key exists, not that it works
+
+`/api/health` reported `llmConfigured: true` for a window in which every explain call was coming back
+`401 invalid x-api-key`. Day 15 fixed this field once already — that was two files disagreeing about
+the definition. This is narrower and still wrong in effect: the check is for *presence*, and a present
+key that a provider rejects reads as configured.
+
+The degradation underneath it was flawless — the run completed, all 212 exceptions fell back to
+templates, `explanationSource` said `template` on every one, and the dashboard said so in plain
+English. The health endpoint was the only thing lying.
+
+### 5 · Three pieces of copy had drifted behind the code
+
+- The Analyst page says *"the same nine read-only tools."* There are **eleven** — ADR-159 added the
+  tenth and ADR-171 the eleventh, both within the last two days. The reviewer proved the eleventh is
+  live by asking a question only `find_agent_investigations` could answer.
+- The run modal says *"costs nothing… explanations are deterministic templates."* True when the
+  deployed key was a placeholder. A cold-cache run now spends real tokens against a real model.
+- The README's headline block quoted a **warm** local run (`65.56%`, `TP 438`, recall `0.6117`) while
+  the deployment has no aliases taught and can only ever produce the cold one.
+
+**Only the third was fixable at freeze**, and it is fixed: the README is now re-based entirely on the
+live holdout run (ADR-173), so every number in it resolves to a URL a judge can open. The first two are
+web copy and would need the same redeploy as defect 1.
+
+### What this actually cost, and the rule out of it
+
+> **THE ENGINE IS AUDITED CONTINUOUSLY AND THE PROSE AROUND IT IS NOT.** Every number in this project
+> is guarded — by the scorer, by exit codes, by honesty gates, by a required `provenance` prop that
+> makes an unlabelled figure fail to render. The *sentences* have no such guard. All three drifts in
+> defect 5 are the same shape: a true statement about the system on the day it was written, left
+> standing after the system moved. `datasetSeed`, `aliasLearningEnabled` and
+> `AGENT_MAX_COST_USD_PER_RUN` were this bug in config; this is the same bug in English.
+
+The counted numbers on the dashboard already have the answer — every count in the copy is *derived,
+never typed* (Day 15). What has no equivalent is a sentence like "nine read-only tools", which no test
+can see. The honest close: **I found these by handing the thing to someone whose job was to disbelieve
+it, three days before submission, and that should have happened three times before it did.**
+
+---
+
+## Day 16 (2026-09-02) — the auto-refresh never fired, twice, for two different reasons
 
 Reported: an investigation finished but the page sat on "Investigating now" until it was reloaded by hand.
 
@@ -1368,7 +1464,7 @@ The obvious test for #55 — *"at the engine's own bounds the tool reproduces th
 
 - **2026-08-31** — **Day 12, later: the Analyst ran end to end for the first time, and three defects appeared that 741 passing tests could not see. Every one of them lived in a number nobody had measured.**
 
-  Full Phase A over the holdout on `gemini-3.1-flash-lite` — 20 investigations, 10 corroborations, 216 requests, 18.7 minutes. The complete account is in [analyst-baseline.md](analyst-baseline.md); the ledger is committed at `data/baselines/`. **The engine did not move: 284 matches, 212 exceptions, 65.22%, identical to before (ADR-048).**
+  Full Phase A over the holdout on `gemini-3.1-flash-lite` — 20 investigations, 10 corroborations, 216 requests, 18.7 minutes. The complete account is in [analyst-baseline.md](analyst-baseline-sonnet5.md); the ledger is committed at `data/baselines/`. **The engine did not move: 284 matches, 212 exceptions, 65.22%, identical to before (ADR-048).**
 
   **What worked, stated first because it is the load-bearing result:** one investigation produced a complete grounded verdict — `CONFIRMED_UNRESOLVABLE`, high confidence, three citations, A3 gate passed. The loop, gate, citation plumbing and persistence work end to end. And the new pacer issued **216 requests with zero retries and zero rate-limit rejections**, paying 51% of the wall clock in deliberate waiting to never be refused.
 

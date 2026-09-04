@@ -2721,3 +2721,59 @@ argue was not made because the number looked bad (ADR-027). Left open, named, an
 
 **Why this is not tuning.** No threshold, window, weight or tolerance moves. It is one sentence of
 UI copy and this entry.
+
+---
+
+## 2026-09-04 — Day 18: the pre-submission judge pass
+
+### ADR-173 · The README's numbers are re-based on the live run, not a local one
+
+**Context.** The README's headline block quoted `readme-canonical`, a **local** run with a populated
+alias set: `65.56%` warm, `TP 438`, recall `0.6117`, 70 review groups over 216 records. The deployed
+instance has **no aliases taught**, so it produces the cold run — `65.22%`, `TP 435`, recall `0.6075`,
+71 groups over 219 records — and cannot reproduce the warm figures at all.
+
+Both sets are honest. But an outside reviewer tried to reproduce the README against the live URL,
+could not, and correctly logged it as drift. A number a judge cannot resolve to a URL is worth less
+than a slightly lower number they can.
+
+**Decision.** The README's canonical run is now `43ca8a11-25ab-418c-a689-282e0e5e66e6` — the live
+`demo-holdout` run on the deployed API. Every figure in the numbers block resolves to an endpoint a
+reader can `curl` without cloning anything. The warm figure survives as one sentence stating what it
+is, why the deployment cannot show it, and that it is therefore not the headline.
+
+**Because.** ADR-020 already requires cold and warm to ship together and forbids reporting warm alone.
+On a deployment with an empty alias table the cold run *is* both, so leading with it costs nothing
+except 0.34 points of headline — and buys the property the whole project is built for: every claim is
+checkable by the person reading it, on infrastructure they do not have to trust me to have configured.
+
+**Rejected — teaching aliases on the deployed instance to make the warm number reproducible.** It
+would raise the headline by populating state by hand shortly before judging. The number would be real
+and the provenance would be indefensible. The demo stays a cold start.
+
+**Revisit if** the upload path ships (ADR-161) and runs stop being seed-bound, at which point
+"the canonical run" needs a different definition entirely.
+
+### ADR-174 · Deployment metrics are published as a measured range, not a best sample
+
+**Context.** ARCHITECTURE §4 promises a scale benchmark at 1k/10k/100k (ADR-045). It was never built,
+and it is not going to be built before submission. Meanwhile the deployment was live and entirely
+unmeasured, and the dashboard was quoting `2,427 records/sec` — the best of three observations that
+ranged from `1,005` to `2,427` on identical input.
+
+**Decision.** Publish what the live deployment actually does, measured with external tools, and label
+the boundary of the claim. `hey` for API load (p50/p90/p95/p99, throughput, status distribution),
+`curl` for frontend delivery timing across all eight routes, Chrome DevTools Navigation Timing for
+browser-side figures. Engine throughput ships as a **range across three runs**, not a maximum. The
+README states plainly that none of it supports any claim above 920 records.
+
+**Because.** "Throughput" is one of the three things this track grades and the project had *no*
+external measurement of its deployed behaviour — only self-reported per-stage timings. A measured
+range with a stated ceiling is a real answer to that criterion; a best-case sample presented as the
+figure is the same species of error as reporting a warm match rate alone (ADR-020).
+
+**Rejected — synthesising a scale curve by extrapolating from 920 records.** Blocking is the stage
+whose cost is expected to grow non-linearly (ARCHITECTURE risk table), so extrapolation would be
+inventing the exact number the benchmark exists to discover. The gap stays named.
+
+**Revisit if** the scale benchmark is built, at which point these figures become its 920-record row.

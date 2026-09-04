@@ -235,21 +235,29 @@ Before merging anything to `main`: `npm run typecheck` and `npm test` in each af
 ### The engine — done, measured, stable
 
 ```
-920 transactions · 284 matches · 212 exceptions · match rate 65.56% warm / 65.22% cold (ceiling 93%)
-pair-level: precision 1.0000 · FP 0 · recall 0.6117 · unresolvable recall 1.0
-audit chain: 614 entries, verifies and is anchored
-S0–S14 all wired; run is byte-reproducible from its inputs
+LIVE (demo-holdout, 43ca8a11, holdout seed 90210) — what the README quotes (ADR-173)
+920 rows · 874 reconcilable · 570 matched · 284 groups · 212 exceptions
+match rate 65.22% cold (ceiling 93%) — no aliases taught, so cold IS the run
+precision 1.0000 · FP 0 · TP 435 · recall 0.6075 · unresolvable 21/21
+audit chain: 612 engine entries, verifies and is anchored
+
+LOCAL (warm, populated alias set) — real, but not reproducible on the deploy
+match rate 65.56% warm · precision 1.0000 · FP 0 · recall 0.6117
 ```
 
-Recall 0.61 is the honest weakness and it lives in the HARD-difficulty band. Precision 1.0000 with zero false positives is the point of the design: the engine claims only what it can stand behind and routes the rest to exceptions or the review queue.
+Quote the LIVE block in anything a judge reads: those numbers resolve to a URL. The local warm figures are honest but unreproducible on the deployment, which is why they are not the headline (ADR-173).
+
+Recall ~0.61 is the honest weakness and it lives in the HARD-difficulty band (0.15 there, vs 0.70 EASY). Precision 1.0000 with zero false positives is the point of the design: the engine claims only what it can stand behind and routes the rest to exceptions or the review queue.
 
 ### S13 explain — done
 
-212 exceptions collapse to 21 signatures; every exception gets a non-null explanation. Verified live against a real model: the score report was byte-identical to a keyless run — the LLM writes prose and moves no number (ADR-017 holding in practice).
+212 exceptions collapse to 21 signatures; every exception gets a non-null explanation, each tagged with its own `explanationSource`. Proven three ways on the live deploy: the same dataset run with the model unreachable (21 templates), live (21 generated) and cached (0 API calls) produced **byte-identical score reports** and the same 212 exceptions — the explain stage moved 63× and no decision moved with it (ADR-017 holding in practice).
 
 ### The Analyst — feature-complete, plumbing-verified, NOT measured
 
-A1 triage → A2 investigate / corroborate → A3 grounding gate → A4 persist. Eleven read-only tools, read-only enforced by Postgres. Runs **on demand** when a human opens an exception (endpoint 25, 202-then-poll) — it does not sweep the queue. On Sonnet 5, 14 of 19 investigations ground cleanly; 5 are downgraded by the gate. One reached RESOLUTION_PROPOSED with a grounded MANUAL_MATCH.
+A1 triage → A2 investigate / corroborate → A3 grounding gate → A4 persist. Eleven read-only tools, read-only enforced by Postgres. Runs **on demand** when a human opens an exception (endpoint 25, 202-then-poll) — it does not sweep the queue. On Sonnet 5 locally, 14 of 19 investigations ground cleanly; 5 are downgraded by the gate. One reached RESOLUTION_PROPOSED with a grounded MANUAL_MATCH.
+
+On the **live deploy** the record is 3 investigations: 2 concluded with grounding passed (one `NEEDS_EXTERNAL_DATA`, one `CONFIRMED_UNRESOLVABLE` after 6 tool calls), 1 **failed** at the 2,048-token output ceiling — thinking tokens count against it — returning no verdict after $0.10. It failed loudly rather than fabricating, which is the designed behaviour, but the ceiling is a real limit on harder exceptions (what-broke Day 18). Note the UI still says "nine read-only tools"; there are eleven, and the copy predates ADR-159/ADR-171.
 
 > **The submission must not describe the Analyst as "working".** `tools/score` does not score it, so proposal precision, false-despair recovered, unresolvable agreement and hallucinated-resolutions (must be 0, ADR-053) do not exist as numbers. "Feature-complete and plumbing-verified" is the honest claim; nothing stronger. Scoring it is now affordable — it is offline work against the persisted verdicts, $0 of API — and is the highest-value open task.
 
@@ -257,15 +265,17 @@ A1 triage → A2 investigate / corroborate → A3 grounding gate → A4 persist.
 
 Ten server-rendered routes: dashboard, `/exceptions` (+ detail), `/review`, `/audit`, `/matches`, `/aliases`, `/records/[id]`, `/analyst`, `/set-aside`. Design principle to preserve: **provenance is a token** — every figure declares `engine` / `measured` / `absent`; `Figure`'s `provenance` prop is required so a number cannot render without saying where it came from. The write path (`resolve`) is verified end to end against a real audit entry.
 
-### Deploy
+### Deploy — both surfaces live
 
-API is **live and verified** on Railway at
-`https://payment-reconciliation-agent-platform-production.up.railway.app` —
-reproduces the local numbers exactly over real HTTPS. Redeploys are **manual, one click**; do not enable auto-deploy before submission (no CI, no stale-run reaper). Root Directory must be the **repo root**, not `apps/api`.
+- **Web** · <https://payment-reconciliation-agent-platfo.vercel.app/> — ten server-rendered routes, `PINNED_RUN_ID` set to the `demo-holdout` run (ADR-166).
+- **API** · <https://payment-reconciliation-agent-platform-production.up.railway.app> — reproduces the local numbers exactly over real HTTPS. Root Directory must be the **repo root**, not `apps/api`.
 
-- `ANTHROPIC_API_KEY` on Railway is a **placeholder** — live investigations fall back to templates (ADR-017 degradation, by design). Replace it when Phase A is wanted on the deployed instance.
-- The deployed database has **no score report**, so the live dashboard shows two headline tiles as "not measured". `npm run score -- --run <deployed-run> --api <railway-url> --post` fixes it.
-- The public API is rate-limited per IP (ADR-096) with a $2/hour Anthropic spend ceiling behind it (ADR-095). `TRUST_PROXY_HOPS` is load-bearing on Railway.
+Redeploys are **manual, one click**; do not enable auto-deploy before submission (no CI, no stale-run reaper).
+
+- `ANTHROPIC_API_KEY` on Railway is **valid and live** — the explain layer generates real signatures and the Analyst runs on the deployed instance. It was a placeholder until Day 18; runs from before the swap show three `401`s and template fallback, which is ADR-017 degradation working and is left in the record deliberately.
+- Scoring on the deployed instance is **automatic** — a watcher posts a score report through endpoint 23 within 1–9 s of a run completing (measured across four live runs), so the live dashboard shows all four headline tiles as measured. The answer key is not reachable over HTTP; only the scorer reads it (ADR-021).
+- The public API is rate-limited to **240 requests per window per IP** (ADR-096), exposed on `x-ratelimit-*`, with a $2/hour Anthropic spend ceiling behind it (ADR-095). `TRUST_PROXY_HOPS` is load-bearing on Railway.
+- Measured deployment figures — latency percentiles, route delivery, run wall clock in three explain states — are in README §*What it costs to run* (ADR-174).
 
 ### Known-incomplete, stated rather than buried
 
@@ -273,10 +283,10 @@ reproduces the local numbers exactly over real HTTPS. Redeploys are **manual, on
 |---|---|
 | Analyst scoring in `tools/score` (validation-strategy §7) | not done — now affordable (offline, $0) |
 | `reapStaleRuns` (ADR-046/097) | **not implemented.** `STALE_RUN_TIMEOUT_MINUTES` is parsed and documented but enforced nowhere — a crashed run polls forever. ~30 min fix, protects the demo. |
-| Web deploy to Vercel (U19) | not done — `PINNED_RUN_ID` must be set on Vercel when it is (ADR-166) |
-| U16 scale benchmark | not done |
+| Web deploy to Vercel (U19) | **done.** Live, with `PINNED_RUN_ID` set (ADR-166). Known defect: `?run=<id>` deep links hang on a cold load for runs created after the last build — see what-broke Day 18. |
+| U16 scale benchmark | **not done** — the largest open gap. Deployment metrics at 920 records are published instead (ADR-174), explicitly labelled as supporting no claim above that size. |
 | U15 Q&A loop (`/api/runs/:runId/ask`) | **shipped.** Cut under the pre-agreed degradation order, then built when the time was there; 11 questions answered, 9 grounded. |
-| AUDIT-4 (final pre-submission audit) + U20 (accuracy report, README, pitch video, build-challenges write-up) | remaining |
+| AUDIT-4 + U20 | **docs done** — external judge pass run against the live deploy, README re-based on the live run (ADR-173), five defects logged (what-broke Day 18). **Pitch video remaining.** |
 
 ### A recurring defect shape to watch for
 

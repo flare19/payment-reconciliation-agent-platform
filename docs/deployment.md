@@ -11,27 +11,28 @@ Companion docs: [adr-log.md](./adr-log.md) (ADR-005, ADR-026, ADR-046) · [api-c
 ## 1. Topology
 
 ```
-┌─────────────────────────┐        ┌──────────────────────────────────────┐
-│  Vercel                 │        │  Railway (one project)               │
-│  ─────────              │        │  ────────────────────                │
-│  apps/web               │  HTTPS │  ┌────────────────┐  ┌────────────┐  │
-│  Next.js (static +      │ ──────►│  │ apps/api       │  │ PostgreSQL │  │
-│  client-side fetch)     │  CORS  │  │ Node 22/Express│─►│ 16 managed │  │
-│                         │        │  └───────┬────────┘  └────────────┘  │
-│  recon-demo.vercel.app  │        │  ┌────────────────┐      │  no public   │
-└─────────────────────────┘        │  │ scorer worker  │──────┘  DB port     │
-                                   │  │ npm run        │  measures each new   │
-                                   │  │ score:watch    │  run, posts endpoint │
-                                   │  └────────────────┘  23 (§5.5)           │
-                                   └──────────┼───────────────────────────┘
-                                              │ HTTPS, server-side only
-                                              ▼
-                                   ┌──────────────────────┐
-                                   │  Anthropic API        │
-                                   │  claude-sonnet-5      │
-                                   │  (LLM_PROVIDER=gemini │
-                                   │   restores Gemini)    │
-                                   └──────────────────────┘
+┌──────────────────────────────┐        ┌──────────────────────────────────────┐
+│  Vercel                      │        │  Railway (one project)               │
+│  ─────────                   │        │  ────────────────────                │
+│  apps/web                    │  HTTPS │  ┌────────────────┐  ┌────────────┐  │
+│  Next.js 15, server          │ ──────►│  │ apps/api       │  │ PostgreSQL │  │
+│  components (no client-side  │  CORS  │  │ Node 22/Express│─►│ 16 managed │  │
+│  data fetch on first paint)  │        │  └───────┬────────┘  └────────────┘  │
+│                              │        │          │           no public port  │
+│  payment-reconciliation-     │        │  ┌───────▼────────┐                  │
+│  agent-platfo.vercel.app     │        │  │ scorer worker  │  measures each   │
+└──────────────────────────────┘        │  │ npm run        │  new run, posts  │
+                                        │  │ score:watch    │  via endpoint 23 │
+                                        │  └────────────────┘  (§5.5)          │
+                                        └──────────┼───────────────────────────┘
+                                                   │ HTTPS, server-side only
+                                                   ▼
+                                        ┌───────────────────────┐
+                                        │  Anthropic API        │
+                                        │  claude-sonnet-5      │
+                                        │  (LLM_PROVIDER=gemini │
+                                        │   restores Gemini)    │
+                                        └───────────────────────┘
 ```
 
 **The browser never talks to the LLM provider and never talks to Postgres.** Both of those are strictly server-side from the API service. That is the whole secrets story in one sentence.
@@ -103,7 +104,7 @@ compatibility.
 | `LLM_EXPLAIN_ENABLED` | `true` | no | Kill switch. Default `true`. |
 | `LLM_MAX_CALLS_PER_RUN` | `8` | no | Hard cost cap per run (ADR-018). Default `8`. |
 | `PROMPT_VERSION` | `v1` | no | Bumping it invalidates `explanation_cache`. Default `v1`. |
-| `CORS_ORIGIN` | `https://recon-demo.vercel.app` | yes | **Exact origin, never `*`.** Comma-separated to add a preview URL. |
+| `CORS_ORIGIN` | `https://payment-reconciliation-agent-platfo.vercel.app` | yes | **Exact origin, never `*`.** Comma-separated to add a preview URL. |
 | `ALIAS_LEARNING_ENABLED` | `true` | no | Global default; per-run override via `configOverrides`. |
 | `DEV_SEED` | `1337` | no | Dataset seed used during development (ADR-027). |
 | `HOLDOUT_SEED` | `90210` | no | Seed for the reported/demo dataset. Never tuned against. |
@@ -127,7 +128,7 @@ compatibility.
 
 | Variable | Example | Required | Notes |
 |---|---|---|---|
-| `NEXT_PUBLIC_API_BASE_URL` | `https://recon-api.up.railway.app/api` | yes | Public by definition — it's a URL the browser calls. |
+| `NEXT_PUBLIC_API_BASE_URL` | `https://payment-reconciliation-agent-platform-production.up.railway.app/api` | yes | Public by definition — it's a URL the browser calls. |
 | `PINNED_RUN_ID` | the run id seeded in §5.2 step 3 | no | **The run the dashboard opens on when `?run=` is absent** (ADR-166). Set it on the deployed web so a stray probe run cannot become the headline on panel day. Server-only — read in `lib/run-context.ts`, never `NEXT_PUBLIC_`. Unset → newest completed run, as before. A pinned id that does not exist or has not completed logs once and falls back to that same default. The run picker and every `?run=` link are unaffected. |
 
 **`NEXT_PUBLIC_API_BASE_URL` is the only variable compiled into the bundle, and deliberately so.** Anything prefixed `NEXT_PUBLIC_` is readable by anyone who opens devtools. `PINNED_RUN_ID` has no prefix because it is read on the server only; if a secret ever needs to reach the frontend, the design is wrong.
@@ -176,7 +177,7 @@ The rule, stated plainly: **`GEMINI_API_KEY` exists in exactly two places — th
 5. Generate a public domain for the API service. Note the URL.
 6. Deploy. Verify:
    ```bash
-   curl -s https://recon-api.up.railway.app/api/health
+   curl -s https://payment-reconciliation-agent-platform-production.up.railway.app/api/health
    ```
    Expect `{"status":"ok","dbConnected":true,"llmConfigured":true,...}`.
 
@@ -196,12 +197,12 @@ The public demo must show a completed run the instant a panelist opens it — ne
 2. Commit the three source files to `data/fixtures/holdout/` so the deployed API can seed itself. Commit the answer key to `data/truth/` (ADR-021 — separate directory, never read by the engine).
 3. Trigger one run against the deployed API:
    ```bash
-   curl -X POST https://recon-api.up.railway.app/api/runs -H 'Content-Type: application/json' -d '{"useSeedDataset":true,"datasetSeed":90210,"label":"demo-holdout"}'
+   curl -X POST https://payment-reconciliation-agent-platform-production.up.railway.app/api/runs -H 'Content-Type: application/json' -d '{"useSeedDataset":true,"datasetSeed":90210,"label":"demo-holdout"}'
    ```
 4. **Score that run and post the report**, or the two measured tiles read "not measured"
    (ADR-041) — the dashboard will not substitute engine figures into a measured slot:
    ```bash
-   npm run score -- --run <runId> --api https://recon-api.up.railway.app --post
+   npm run score -- --run <runId> --api https://payment-reconciliation-agent-platform-production.up.railway.app --post
    ```
    Exit code **0** means every honesty gate passed. Anything else, stop and read it.
 5. **Warm the explanation cache, and understand why this step exists.** The first run against
