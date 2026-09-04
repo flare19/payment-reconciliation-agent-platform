@@ -144,8 +144,8 @@ describe('agent tool registry (integration)',
     // ── CONSTRUCTION ─────────────────────────────────────────────────────────
 
     describe('createToolRegistry refuses a registry that violates ADR-049/051', () => {
-      test('it builds exactly agent-design §4\'s ten tools, all readOnly', () => {
-        assert.equal(registry.tools.length, 10);
+      test('it builds exactly agent-design §4\'s eleven tools, all readOnly', () => {
+        assert.equal(registry.tools.length, 11);
         assert.deepEqual([...registry.tools.map((t) => t.name)].sort(), [...TOOL_NAMES].sort());
         for (const t of registry.tools) assert.equal(t.readOnly, true);
       });
@@ -558,9 +558,17 @@ describe('agent tool registry (integration)',
         ['score_pair', { transactionIdA: gw.id, transactionIdB: bank.id }],
         ['rerun_subset_search', { bankTransactionId: bank.id }],
         ['check_alias', { value: gw.counterpartyNorm ?? 'X' }],
+        // Exercised with a real exception id AND, below, with no argument at
+        // all — the run-wide form is the one a Q&A question about the grounding
+        // gate actually takes, and it must be as inert as the rest (ADR-171).
+        ['find_agent_investigations', { exceptionId: exception.id }],
       ];
       assert.equal(everyTool.length, TOOL_NAMES.length, 'every tool must be exercised here');
       for (const [name, args] of everyTool) await call(name, args);
+      // The no-argument form too: `find_agent_investigations` is the only tool
+      // whose arguments are entirely optional, so the run-wide path would
+      // otherwise never be executed by this guard.
+      await call('find_agent_investigations', {});
 
       const after = await getPool().query<{ t: number; m: number; e: number; a: number }>(
         `SELECT (SELECT count(*)::int FROM transactions WHERE run_id=$1) t,
@@ -761,7 +769,7 @@ describe('createToolRegistry construction guards', () => {
     runId: 'r', config: { ...ENGINE_DEFAULTS, referenceDate: '2026-08-21', aliasCountAtStart: 0 },
   };
 
-  test('the ten names are exactly agent-design §4\'s, and none reads as a mutation', () => {
+  test('the eleven names are exactly agent-design §4\'s, and none reads as a mutation', () => {
     const registry = createToolRegistry(ctx);
     const MUTATING = /^(create|insert|update|delete|write|apply|set|put|confirm|reject|resolve|approve|save|persist|mark|patch)(_|$)/;
     for (const t of registry.tools) {
@@ -771,7 +779,7 @@ describe('createToolRegistry construction guards', () => {
     // TEN since U15 (ADR-159): `find_exception_for_transaction` was added because
     // a live question proved the registry had no route from a record to its
     // exception. See docs/analyst-baseline-sonnet5.md.
-    assert.equal(registry.tools.length, 10);
+    assert.equal(registry.tools.length, 11);
     assert.notEqual(registry.get('find_exception_for_transaction'), undefined);
   });
 

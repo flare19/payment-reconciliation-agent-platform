@@ -276,6 +276,30 @@ export async function findInvestigationForException(
 }
 
 /**
+ * What the Analyst decided, for the AGENT to read (ADR-171).
+ *
+ * Takes a `TxClient` because the tool registry runs every read inside
+ * `withReadOnlyTransaction` — read-only is enforced by Postgres, not by the
+ * function's name (ADR-051), and a repository call that quietly grabs its own
+ * pooled connection would step outside that guarantee.
+ *
+ * Scoped to `runId` even when `exceptionId` is given: an exception belongs to
+ * exactly one run, and passing both means a wrong-run id returns nothing rather
+ * than another run's verdict.
+ */
+export async function findInvestigationsForAgent(
+  runId: string, exceptionId: string | null, limit: number, client?: TxClient,
+): Promise<Investigation[]> {
+  const { rows } = await (client ?? getPool()).query<InvRow>(
+    `SELECT ${COLUMNS} FROM agent_investigations
+      WHERE run_id = $1 AND ($2::uuid IS NULL OR exception_id = $2::uuid)
+      ORDER BY started_at DESC, id DESC LIMIT $3`,
+    [runId, exceptionId, limit],
+  );
+  return rows.map(toInvestigation);
+}
+
+/**
  * Agent metrics for a run (schema.md §11.4).
  *
  * `hallucinatedResolutions` is `grounding_passed = false` among concluded

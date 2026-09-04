@@ -2608,3 +2608,62 @@ precision **1.0000**, FP **0**, scorer exit **0**.
   The accurate residual claim is narrower and stands: no persisted investigation has reached
   `RESOLUTION_PROPOSED`, so the one-click accept path through endpoints 16/20/21 is unexercised.
 - `STALE_RUN_TIMEOUT_MINUTES` remains the last knob parsed and enforced nowhere.
+
+---
+
+### ADR-171 · An eleventh tool, because the agent could not describe its own grounding gate
+
+**Context.** Asked *"why did grounding reject 54f3f1d3… analyst run?"*, the Q&A agent replied that
+it *"could not find anything in this run corresponding to a 'grounding rejection'"* and that
+*"there is no concept of a 'grounding reject of an analyst run' anywhere in the retrieved data"*.
+
+Both sentences were true of what it could reach and wrong about the system.
+`agent_investigations.grounding_failure` holds the exact string, and `audit_log` carries an
+`AGENT_GROUNDING_FAILED` entry reading *"verdict rejected by the A3 gate and downgraded:
+constraint: proposed member … already belongs to a match"*.
+
+The data was reachable; the **path** was not. `get_audit_trail` is keyed on the INVESTIGATION id,
+and a human asking about an exception holds the EXCEPTION id, with nothing in the registry mapping
+one to the other. That is ADR-159's shape exactly — every route into the table needed the answer
+before it could ask the question — and it landed on the worst possible subject: **the grounding
+gate is this project's central safety claim, and the agent was structurally unable to discuss it.**
+The single question a sceptic is most likely to ask produced a confident denial that the mechanism
+exists.
+
+**Decision.** `find_agent_investigations({exceptionId?})` — the eleventh tool. Returns each
+investigation's verdict, confidence, `groundingPassed`, `budgetExhausted`, step and tool-call
+counts, and the gate's own `groundingFailure` sentence. Omit the argument for the whole run.
+Read-only like every other tool, and excluded from the corroboration registry for the third
+instance of the #59 reason: investigations are keyed on an exception, a corroboration's subject is
+a match, so it could only ever return an empty list there.
+
+**The first build of it was wrong, and one live question proved it.** `returnedIds` deliberately
+omitted the ids embedded in a `groundingFailure` string, on the theory that an id appearing only
+in prose has not been "retrieved" and admitting it would let the agent cite a record it never
+looked at. The reasoning sounded right and the test refuted it immediately: the agent answered the
+question **correctly and completely**, naming the constraint and the offending member — and A3
+rejected the answer with `citation 73428029-… appears in no tool result from this investigation`.
+The id had come back from a tool result. It was inside the string this tool returned.
+
+A3's rule is that a citation must appear in a tool result the investigation received, and by that
+rule the id qualifies. Withholding it made the gate reject a true answer drawn from real data —
+the same cry-wolf failure ADR-162's C5 hit hours earlier, and the same lesson: *a check that fires
+on correct behaviour teaches a reader to stop believing it.* The ids are now in `returnedIds`.
+What that does not license is unchanged: the id is grounded, its **attributes** are not, because
+A3 checks ids rather than claims, exactly as for every other tool.
+
+**Why this is not tuning (ADR-027).** No threshold, window, weight or tolerance moves; no engine
+code is touched; `AGENT_ENABLED=false` still produces a byte-identical run (ADR-048).
+
+**Consequences.**
+- Verified live on a real rejection. Before: `groundingPassed: false`, citations `[]`, 2 tool
+  calls, $0.0343. After: **`groundingPassed: true`**, citing the investigation id, **1** tool call,
+  **$0.0199** — and every claim in the answer checked against the row: `budget_exhausted: t`,
+  3 steps, 7 tool calls, schema failure on an undefined verdict. All exact.
+- The registry's construction guard did its job on the way past: adding an eleventh tool broke
+  four tests that pin the count and the exact names, and one that requires **every** tool to be
+  executed inside the "changes nothing" proof. An eleventh tool genuinely cannot appear by
+  accident.
+- Two of the eleven tools now exist because a live question found a gap no amount of design review
+  had. That is the argument for asking the running system real questions rather than reading the
+  registry and agreeing with it.

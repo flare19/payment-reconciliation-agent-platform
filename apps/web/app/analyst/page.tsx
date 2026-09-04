@@ -43,6 +43,8 @@ const TOOL_GLOSS: Record<string, string> = {
   rerun_subset_search: 'Re-run the batch decomposition at wider bounds.',
   get_run_metrics: 'Read the run’s own figures.',
   get_audit_trail: 'Read what has already been decided about a record.',
+  find_agent_investigations:
+    'Read the Analyst\u2019s own verdicts — and whether the grounding gate rejected one, with its reason.',
 };
 
 export default async function AnalystPage(

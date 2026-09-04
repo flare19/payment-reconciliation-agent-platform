@@ -2,7 +2,7 @@
  * U12 — the Analyst's tool registry (agent-design.md §4, ADR-049, ADR-051).
  *
  * ══════════════════════════════════════════════════════════════════════════════
- * NINE TOOLS. NONE OF THEM WRITES — AND THAT IS ENFORCED THREE WAYS, NOT ASSERTED.
+ * ELEVEN TOOLS. NONE OF THEM WRITES — AND THAT IS ENFORCED THREE WAYS, NOT ASSERTED.
  *
  *   1. TYPE.     `AgentTool.readOnly` is the literal `true`. A tool that wanted
  *                to declare otherwise would not compile.
@@ -13,9 +13,9 @@
  *                that was read-only when the tool was written and is not any
  *                more. This is the one that survives future edits.
  *   3. STRUCTURE. `createToolRegistry` refuses to build unless every entry is
- *                readOnly, the names are exactly the nine `agent-design.md` §4
- *                specifies, and none of them reads as a mutation. A tenth tool
- *                cannot appear by accident.
+ *                readOnly, the names are exactly the eleven `agent-design.md`
+ *                §4 specifies, and none of them reads as a mutation. A twelfth
+ *                tool cannot appear by accident.
  *
  * `agent-design.md` §4 promises the agent "is not *trusted* not to write — it is
  * *unable* to." (2) is what makes that sentence true rather than aspirational:
@@ -60,15 +60,17 @@ import * as txnRepo from '../../repositories/transactions.js';
 import * as excRepo from '../../repositories/exceptions.js';
 import * as auditRepo from '../../repositories/audit.js';
 import * as aliasRepo from '../../repositories/aliases.js';
+import * as invRepo from '../../repositories/investigations.js';
 
 /** §4: the workhorse is bounded at 50 results. */
 export const SEARCH_RESULT_CAP = 50;
 /** Trails and similar-exception lookups are bounded too; a trail can be long. */
 export const TRAIL_RESULT_CAP = 40;
 export const SIMILAR_RESULT_CAP = 20;
+export const INVESTIGATION_RESULT_CAP = 20;
 
 /**
- * The nine names, exactly (agent-design.md §4).
+ * The eleven names, exactly (agent-design.md §4).
  *
  * Declared as data so `createToolRegistry` can check the built registry against
  * the spec rather than against itself. A tool added without touching this list
@@ -88,6 +90,7 @@ export const TOOL_NAMES = [
   'score_pair',
   'rerun_subset_search',
   'check_alias',
+  'find_agent_investigations',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -788,6 +791,138 @@ function buildTools(ctx: ToolContext): AgentTool[] {
     },
 
     {
+      /**
+       * THE ELEVENTH TOOL, AND THE SECOND TIME A LIVE QUESTION FOUND THE GAP.
+       *
+       * Asked "why did grounding reject <exception id>?", the agent answered
+       * that it "could not find anything in this run corresponding to a
+       * grounding rejection" and that "there is no concept of a grounding
+       * reject of an analyst run anywhere in the retrieved data". Both
+       * sentences were true of what it could reach, and both were wrong about
+       * the system: `agent_investigations.grounding_failure` holds the exact
+       * string, and `audit_log` carries an `AGENT_GROUNDING_FAILED` entry
+       * whose `reason` reads "verdict rejected by the A3 gate and downgraded:
+       * constraint: proposed member … already belongs to a match".
+       *
+       * The data was reachable. The PATH was not. `get_audit_trail` is keyed on
+       * the INVESTIGATION id, and a human asking about an exception has the
+       * EXCEPTION id — with nothing in the registry mapping one to the other.
+       * Exactly ADR-159's shape: every route into the table needed the answer
+       * before it could ask the question.
+       *
+       * That mattered more than a missing lookup usually would. The grounding
+       * gate is this project's central safety claim, and the agent was
+       * structurally unable to describe its own rejections — so the one
+       * question a sceptic is most likely to ask produced a confident denial
+       * that the mechanism exists.
+       *
+       * `groundingFailure` is returned as the ENGINE'S OWN SENTENCE, and the
+       * ids inside it ARE added to `returnedIds` — see the note at the return,
+       * which records why the first version withheld them and what refuted it.
+       */
+      name: 'find_agent_investigations',
+      description:
+        'Read what the Analyst itself concluded on this run — verdict, confidence, and '
+        + 'whether the A3 grounding gate ACCEPTED or REJECTED the verdict, with the gate\'s '
+        + 'own reason when it rejected one. Pass an exceptionId for one exception, or omit it '
+        + 'for every investigation on this run. Use this for any question about the agent, the '
+        + 'grounding gate, or why a verdict was downgraded — that history is not in the '
+        + 'exception or transaction tables.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          exceptionId: {
+            type: 'string',
+            description: 'Optional. Omit to list every investigation on this run.',
+          },
+        },
+        required: [],
+      },
+      readOnly: true,
+      async execute(args: unknown) {
+        const { exceptionId } = (args ?? {}) as { exceptionId?: string };
+        const wanted = typeof exceptionId === 'string' && exceptionId.trim() !== ''
+          ? exceptionId.trim() : null;
+
+        const rows = await inReadOnlyTx((c) =>
+          invRepo.findInvestigationsForAgent(ctx.runId, wanted, INVESTIGATION_RESULT_CAP, c));
+
+        const result = {
+          runId: ctx.runId,
+          exceptionId: wanted,
+          returned: rows.length,
+          truncated: rows.length === INVESTIGATION_RESULT_CAP,
+          note: rows.length === 0
+            ? (wanted === null
+              ? 'The Analyst has not investigated anything on this run. That is an absence of '
+                + 'investigations, not evidence that the grounding gate does not exist.'
+              : 'No investigation exists for that exception on this run. Nobody has asked the '
+                + 'Analyst about it — which is different from the Analyst having failed on it.')
+            : null,
+          investigations: rows.map((i) => ({
+            investigationId: i.id,
+            exceptionId: i.exceptionId,
+            status: i.status,
+            verdict: i.verdict,
+            confidence: i.confidence,
+            // The two fields this tool exists for.
+            groundingPassed: i.groundingPassed,
+            groundingFailure: i.groundingFailure,
+            budgetExhausted: i.budgetExhausted,
+            steps: i.steps,
+            toolCalls: i.toolCalls,
+            hasProposal: i.proposedAction !== null,
+            model: i.model,
+          })),
+        };
+
+        /**
+         * INCLUDING THE IDS INSIDE THE FAILURE STRING, AND THE FIRST VERSION
+         * WAS WRONG TO WITHHOLD THEM.
+         *
+         * The reasoning for excluding them sounded right: an id that only
+         * appears in prose has not really been "retrieved", so admitting it
+         * would let the agent cite a record it never looked at. The live test
+         * refuted it in one question. Asked why the gate rejected a verdict,
+         * the agent answered correctly and completely — naming the constraint
+         * and the offending member — and A3 then rejected the ANSWER with
+         * `citation 73428029-… appears in no tool result from this
+         * investigation`. The id had come back from a tool result. It was
+         * sitting in the string this tool returned.
+         *
+         * A3's rule is that a cited id must appear in a tool result the
+         * investigation actually received, and by that rule the id qualifies.
+         * Withholding it made the gate reject a true answer sourced from real
+         * data, which is the same cry-wolf failure ADR-162's C5 hit this
+         * morning: a check that fires on correct behaviour teaches a reader to
+         * stop believing it.
+         *
+         * What this does NOT license: the id is grounded, its ATTRIBUTES are
+         * not. A3 checks ids, not claims — as it does for every other tool —
+         * so an agent wanting to say what that record holds must still go and
+         * read it.
+         */
+        const idsInFailures = rows.flatMap((i) =>
+          (i.groundingFailure ?? '').match(
+            /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) ?? []);
+
+        const returnedIds = [
+          ...rows.map((i) => i.id),
+          ...rows.flatMap((i) => (i.exceptionId === null ? [] : [i.exceptionId])),
+          ...idsInFailures,
+        ];
+        return {
+          result,
+          returnedIds,
+          digest: digestOf('find_agent_investigations', {
+            exceptionId: wanted, returned: rows.length,
+            rejected: rows.filter((i) => i.groundingPassed === false).length,
+          }),
+        };
+      },
+    },
+
+    {
       name: 'check_alias',
       description:
         'Look up whether a counterparty value already has a human-confirmed alias, and how '
@@ -875,10 +1010,10 @@ export function createToolRegistry(ctx: ToolContext): ToolRegistry {
   const actual = [...names].sort();
   if (JSON.stringify(expected) !== JSON.stringify(actual)) {
     throw new Error(
-      `tool registry: the built tools do not match agent-design.md §4's ten. `
+      `tool registry: the built tools do not match agent-design.md §4's eleven. `
       + `Missing: [${expected.filter((n) => !actual.includes(n)).join(', ')}]. `
       + `Unexpected: [${actual.filter((n) => !expected.includes(n as ToolName)).join(', ')}]. `
-      + `An eleventh tool cannot appear by accident, and a write tool must never appear at all `
+      + `A twelfth tool cannot appear by accident, and a write tool must never appear at all `
       + `(ADR-049, ADR-051).`);
   }
 
