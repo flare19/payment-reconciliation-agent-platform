@@ -155,7 +155,7 @@ They triggered four runs, scored two datasets from their own machine with their 
 
 Their summary was that the project "claims less than it can prove." Two of the gaps they named are now closed in this document — the proof below, and the [deployment metrics](#what-it-costs-to-run-measured-on-the-live-deploy). The third, the scale curve, is still open and still listed as open.
 
-They also found five defects. All five are logged in [what-broke.md](docs/what-broke.md) with what I did about each.
+They also reported five defects. **Four were real and are logged in [what-broke.md](docs/what-broke.md); the fifth was the reviewer's own measurement error**, retracted there with the method that produced it. Two of the four are fixed, two are named as open.
 
 ### The proof I did not know I had
 
@@ -338,7 +338,6 @@ Publishing this is the same discipline as publishing the ceiling. Each gap is st
 |---|---|
 | **No scale benchmark** | The 1k / 10k / 100k throughput curve specified in [ADR-045](docs/adr-log.md) was never run, so **nothing here supports any claim about behaviour above 920 records** — and blocking degrades non-linearly if it degrades at all. This is the largest open gap and the one an outside reviewer flagged hardest. |
 | **The Analyst is not scored** | Feature-complete and plumbing-verified, but `tools/score` does not grade verdict *quality*, so proposal precision, false-despair-recovered and hallucinated-resolutions do not exist as numbers. **This README therefore does not claim the Analyst works** — only that it runs, is bounded, and cannot write, invent or compute. Where a number is absent, the word used is "unmeasured". |
-| **Deep links to new runs don't survive a refresh** | A cold full-page load of `/?run=<id>` hangs on the loading skeleton for recently created runs, while the same URL returns a complete page to `curl` in about a second — so the server render is fine and something client-side never resolves. The pinned dashboard and the in-page "Run It Again" flow both work, because both reach the run by client-side navigation; a refresh, bookmark or shared link to a fresh run does not. Root cause not yet diagnosed, so this is unfixed rather than deferred. |
 | **`reapStaleRuns` unimplemented** | `STALE_RUN_TIMEOUT_MINUTES` is parsed and documented but enforced nowhere — a crashed run would poll forever. Known, scoped, ~30 minutes. |
 | **`TIMING_DRIFT` has no instances** | 7 of 8 categories fire on these seeds. The rule is wired and unit-tested; no record met its definition. It renders as a zero rather than disappearing, because a bar that is not drawn and a bar of length zero mean different things. |
 | **`llmConfigured` tests presence, not validity** | `/api/health` reported `true` while the key was returning `401`. Narrowly correct by its own definition, misleading in practice. Logged, low severity, unfixed at freeze. |

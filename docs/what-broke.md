@@ -21,25 +21,46 @@ separately triggered live runs produced byte-identical score reports. Their inde
 644-entry chain found 0 linkage breaks and computed the same head the server reports, before *and*
 after their own agent activity appended to it. Scorer exit 0 throughout.
 
-**Five defects, and not one of them is in the measurement path.** That distinction is the finding.
+**Four real defects, and not one of them is in the measurement path.** That distinction is the
+finding. A fifth was reported and turned out to be my own instrument failing — it is kept as item 1
+rather than quietly removed.
 
-### 1 · Deep links to runs created after the last web build hang forever
+### 1 · RETRACTED — the "deep links hang" defect was my own measurement error
 
-`/?run=<id>` cold-loads correctly for runs that existed when Vercel built, and sits on the
-*"Loading the run…"* skeleton indefinitely for runs created since — while `curl` receives the
-complete 167 KB page from the same URL in about a second. So the server render is fine and something
-client-side never resolves. Isolated cleanly: two pre-build runs load, three post-build runs do not,
-reproduced across two browser tabs.
+**This was reported as a defect and it is not one.** Recorded here rather than deleted, because a
+false defect published against your own product is the same class of error as a false number, and
+this log is where those go.
 
-The pinned dashboard and the in-page *"Run It Again"* flow both work, because both reach the run by
-client-side navigation. What breaks is a refresh, a bookmark, or a shared link.
+The claim was that `/?run=<id>` cold-loads fine for runs that existed at the last web build and hangs
+on the *"Loading the run…"* skeleton for runs created since. It was reproduced "cleanly" — two
+pre-build runs rendering, three post-build runs hanging, across two browser tabs — and written into
+the README's open-gaps table.
 
-> **Not fixed, because the root cause is not yet known.** My first hypothesis — that runs existing at
-> build time are prerendered and newer ones are not — is wrong: `next build` reports every route as
-> `ƒ (Dynamic) server-rendered on demand`, so there is no static/ISR boundary to fall off. The server
-> render is demonstrably fine; something in the client never resolves the streamed payload, and no
-> console error is raised. Guessing at a fix for a path the demo does not use, hours before
-> submission, is worse than naming it. It is in the README's *What is not done*.
+**Every one of those observations came from a single call: `document.body.innerText.length`.** It
+returned 1110 characters, the length of the layout shell, and I read that as *"the content never
+arrived."*
+
+It had arrived. `textContent` on the same DOM returned **127,324** characters, the server was sending
+a complete document ending in `$RC("B:0","S:0")` exactly as React's streaming SSR requires, and a
+**screenshot of the same page showed the fully rendered dashboard** — headline, run metadata, all four
+tiles, `MEASURED` badges and all. The two deep links said to be broken, `judge-repro-check` and
+`judge-cache-check`, both render correctly on a cold full page load. So does every other route.
+
+`innerText` is layout-dependent; `textContent` is not. In the automation browser it was returning a
+partial value for content behind a resolved Suspense boundary, and at one point `document.body`
+measured **0 px wide** — a wedged viewport in the tooling, reported to me as a bug in the product.
+
+> **THE INSTRUMENT WAS NEVER CROSS-CHECKED ON THE CASES THAT FAILED.** Screenshots were taken of every
+> page that *worked* and of none that did not, so the one measurement that would have killed the
+> theory in ten seconds was the one never taken. Re-running the same broken instrument across more
+> tabs and more runs produced more agreement and no more truth — "reproduced cleanly" meant only that
+> the error was deterministic.
+>
+> This is the exact failure this project already has a rule against, pointed the other way. Six times
+> a test passed whether or not a bug was present, and the rule from that was *watching it fail is the
+> guard*. Here a measurement failed whether or not a bug was present. **A red result needs its
+> instrument checked as carefully as a green one** — and confessing a defect you do not have costs a
+> reviewer's trust in every other line of the same document.
 
 ### 2 · An investigation burned $0.10 and returned nothing, at a token ceiling
 
@@ -88,7 +109,7 @@ English. The health endpoint was the only thing lying.
 - The README's headline block quoted a **warm** local run (`65.56%`, `TP 438`, recall `0.6117`) while
   the deployment has no aliases taught and can only ever produce the cold one.
 
-**The first and third are fixed.** The README is re-based entirely on the live holdout run (ADR-173),
+**The third is fixed and the first was never real.** The README is re-based entirely on the live holdout run (ADR-173),
 so every number in it resolves to a URL a judge can open. And the tool-count copy is corrected — it now
 reads *"ten of the Analyst's eleven read-only tools… the batch subset search is left out, because a
 question should not spend a two-second compute budget."* Understating the toolset was the worst kind of

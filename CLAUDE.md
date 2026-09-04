@@ -285,7 +285,7 @@ Ten server-rendered routes: dashboard, `/exceptions` (+ detail), `/review`, `/au
 |---|---|
 | Analyst scoring in `tools/score` (validation-strategy §7) | not done — now affordable (offline, $0) |
 | `reapStaleRuns` (ADR-046/097) | **not implemented.** `STALE_RUN_TIMEOUT_MINUTES` is parsed and documented but enforced nowhere — a crashed run polls forever. ~30 min fix, protects the demo. |
-| Web deploy to Vercel (U19) | **done.** Live, with `PINNED_RUN_ID` set (ADR-166). Known defect: `?run=<id>` deep links hang on a cold load for runs created after the last build — see what-broke Day 18. |
+| Web deploy to Vercel (U19) | **done.** Live, with `PINNED_RUN_ID` set (ADR-166). Deep links, refreshes and shared `?run=` URLs all verified rendering by screenshot on 2026-09-04. (A reported hang here was a measurement artefact — what-broke Day 18 item 1.) |
 | U16 scale benchmark | **not done** — the largest open gap. Deployment metrics at 920 records are published instead (ADR-174), explicitly labelled as supporting no claim above that size. |
 | U15 Q&A loop (`/api/runs/:runId/ask`) | **shipped.** Cut under the pre-agreed degradation order, then built when the time was there; 11 questions answered, 9 grounded. |
 | AUDIT-4 + U20 | **docs done** — external judge pass run against the live deploy, README re-based on the live run (ADR-173), five defects logged (what-broke Day 18). **Pitch video remaining.** |
