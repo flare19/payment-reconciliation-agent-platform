@@ -270,7 +270,9 @@ Ten server-rendered routes: dashboard, `/exceptions` (+ detail), `/review`, `/au
 - **Web** · <https://payment-reconciliation-agent-platfo.vercel.app/> — ten server-rendered routes, `PINNED_RUN_ID` set to the `demo-holdout` run (ADR-166).
 - **API** · <https://payment-reconciliation-agent-platform-production.up.railway.app> — reproduces the local numbers exactly over real HTTPS. Root Directory must be the **repo root**, not `apps/api`.
 
-Redeploys are **manual, one click**; do not enable auto-deploy before submission (no CI, no stale-run reaper).
+**Vercel auto-deploys from `main`** — a push to the frontend was live in ~40 s, verified 2026-09-04 by watching the copy change and the chunk hash roll. So a docs-only commit is free, and any `apps/web` commit ships immediately: typecheck and `next build` before pushing, always.
+
+**Railway does not** — API redeploys stay **manual, one click**, and auto-deploy stays off there until after submission (no CI, no stale-run reaper).
 
 - `ANTHROPIC_API_KEY` on Railway is **valid and live** — the explain layer generates real signatures and the Analyst runs on the deployed instance. It was a placeholder until Day 18; runs from before the swap show three `401`s and template fallback, which is ADR-017 degradation working and is left in the record deliberately.
 - Scoring on the deployed instance is **automatic** — a watcher posts a score report through endpoint 23 within 1–9 s of a run completing (measured across four live runs), so the live dashboard shows all four headline tiles as measured. The answer key is not reachable over HTTP; only the scorer reads it (ADR-021).
