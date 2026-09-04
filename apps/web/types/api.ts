@@ -95,6 +95,27 @@ export interface EngineMetrics {
     candidateCapHits: number;
     batchSearchExhausted: number;
     batchSearchBoundExceeded: number;
+    /**
+     * Money exposed by the unmatched population (ADR-164), summed by S14 over
+     * EVERY exception — not the paginated list endpoint 6 returns. `provenance:
+     * engine`. `undefined` on runs whose `runs.metrics` was written before this
+     * block existed — rendered as absent, never a zero.
+     */
+    amountAtRisk?: {
+      totalPaise: number;
+      totalDisplay: string;
+      withAmount: number;
+      withoutAmount: number;
+      highSeverityPaise: number;
+      highSeverityDisplay: string;
+      highSeverityCount: number;
+      largestSingle: {
+        amountPaise: number;
+        amountDisplay: string;
+        category: string;
+        transactionId: string | null;
+      } | null;
+    };
   };
   population: {
     gateway: number; bank: number; ledger: number;
@@ -197,7 +218,10 @@ export interface MeasuredMetrics {
       perCategory: Record<string, { precision: number; recall: number }>;
     };
   };
-  byDifficulty: Record<string, { pairs: number; recall: number; precision: number }>;
+  /** Recall only — precision is not sliceable by difficulty (a false positive
+   *  belongs to no event, so it carries no difficulty label). Scorer 1.5.0
+   *  removed the `precision` key rather than keep it aliased onto recall. */
+  byDifficulty: Record<string, { pairs: number; recall: number }>;
   resolvability: {
     unresolvableDesigned: number;
     unresolvableRecall: number;
@@ -510,6 +534,8 @@ export type ActorType = 'engine' | 'human' | 'llm' | 'agent';
 
 export interface AuditEntry {
   sequenceNo: number;
+  /** `null` for the alias-admin chain. One of the hashed fields (ADR-168). */
+  runId: string | null;
   occurredAt: string;
   eventType: string;
   subjectType: string;
@@ -526,6 +552,14 @@ export interface AuditEntry {
   beforeState: unknown;
   afterState: unknown;
   details: Record<string, unknown> | null;
+  /**
+   * The hash chain (ADR-042, ADR-168). On the wire so a reviewer can recompute
+   * the chain from this endpoint alone — `entryHash ==
+   * sha256(canonicalJson(entry without sequenceNo/prevHash/entryHash) ||
+   * prevHash)`, schema.md §9.0 — rather than trust `/audit/verify`.
+   */
+  prevHash: string;
+  entryHash: string;
 }
 
 export interface AuditListResponse { entries: AuditEntry[]; pagination: Pagination }
@@ -705,4 +739,43 @@ export interface Health {
    *  a seed `POST /api/runs` would refuse (ADR-129). */
   datasets: SeedDatasetOption[];
   version: string;
+}
+
+/**
+ * Endpoint 29 — the balance proof (ADR-162).
+ *
+ * Every figure here is recomputed from `transactions` / `matches` /
+ * `match_members` / `exceptions` on each request. None of it is read from
+ * `runs.metrics`; `HEADLINE` is the check that COMPARES the two.
+ */
+export interface BalanceCheck {
+  id: 'DENOMINATOR' | 'DISPOSITION' | 'NO_ORPHANS' | 'EXCEPTIONS' | 'HEADLINE';
+  expression: string;
+  left: number;
+  right: number;
+  holds: boolean;
+  /** `left − right`. Zero when it holds; the size of the problem when it does not. */
+  delta: number;
+  note: string;
+}
+
+export interface ReconciliationResponse {
+  runId: string;
+  balanced: boolean;
+  checks: BalanceCheck[];
+  population: {
+    ingested: number; excluded: number;
+    nonPrimaryDuplicates: number; reconcilable: number;
+  };
+  disposition: {
+    matched: number; matchedByEngine: number; matchedByHuman: number;
+    inReviewQueue: number; neither: number;
+    unresolvedNamedOnList: number; unresolvedNotYetDue: number;
+    unresolvedAwaitingReclassification: number;
+  };
+  exceptionBreakdown: {
+    total: number; inConfirmedMatch: number;
+    inReviewQueue: number; pure: number; outsideDenominator: number;
+  };
+  exceptionRows: number;
 }

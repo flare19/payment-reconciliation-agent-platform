@@ -38,12 +38,34 @@ export function Footer() {
       <div className={styles.inner}>
         <div className={styles.block}>
           <h2 className="label">Deployed</h2>
+          {/*
+            THE CONDITION IS PART OF THE NUMBER (ADR-170).
+
+            8.24 s is a run whose 21 explanation signatures were already cached.
+            The first run against an empty cache is a different measurement
+            entirely — measured locally on 2026-09-04, the explain stage alone
+            took 33.9 s and wall-clock throughput fell from 377 to 26 records/sec,
+            because the model was writing all 21 shapes from cold. Same engine,
+            same 920 records: Tier 2 was 211 ms either way.
+
+            Stating "8.24 s" without the condition would be the page's only
+            unqualified figure, on a site whose whole argument is that a number
+            says where it came from — and a judge who clicks "Run It Again" on a
+            freshly deployed database would watch it be wrong by 25 seconds.
+          */}
           <p className={styles.text}>
             Live on Railway, always-on. Read endpoints answered in{' '}
             <span className="num">0.35–0.46&nbsp;s</span> and a complete run — 920 records,
             ingestion through the audit chain — finished in{' '}
             <span className="num">8.24&nbsp;s</span> wall clock, measured directly against the
             production API on {at(MEASURED_AT)}.
+          </p>
+          <p className={styles.text}>
+            That run reused cached explanations. The <em>first</em> run against an empty cache
+            spends about <span className="num">30&nbsp;s</span> more, once, while the model
+            writes the 21 distinct shapes — after which every later run reads them for{' '}
+            <span className="num">$0</span>. The matching engine is unaffected either way; only
+            the explain stage moves.
           </p>
           <a
             href="https://payment-reconciliation-agent-platform-production.up.railway.app/api/health"

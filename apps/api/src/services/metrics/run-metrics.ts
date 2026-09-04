@@ -69,6 +69,7 @@ import type {
 import type { Tier2Result } from '../matching/tier2-fuzzy.js';
 import type { IdentityVerdict } from '../matching/identity-resolution.js';
 import { pairKeyOf } from '../matching/tier2-fuzzy.js';
+import { formatPaise } from '../ingestion/money.js';
 
 /** Population terms, in the units ADR-040's sentence requires. */
 export interface PopulationCounts {
@@ -222,6 +223,48 @@ export interface LlmCostMetrics {
   failures: { reason: string; detail: string }[];
 }
 
+/**
+ * Money exposed by the unmatched population (ADR-164).
+ *
+ * Summed HERE, in S14, over every classified exception — never in a component.
+ * Endpoint 6 paginates at `pageSize` ≤ 200 (api-contract §0) and a run can carry
+ * more exceptions than that, so a frontend adding up the list it was handed
+ * would total one page and under-report the exposure on the one screen this
+ * project cannot afford to under-report it on.
+ *
+ * `provenance: engine`. This is the engine's own account of what it could not
+ * place, not a measurement — it never wears the measured accent, and the
+ * ADR-041 grep in `run-metrics.test.ts` covers it.
+ *
+ * Both `*Paise` and `*Display` are on the wire: `formatPaise` is the one money
+ * formatter in the system (api-contract §0), so the frontend does no currency
+ * arithmetic or formatting.
+ */
+export interface AmountAtRiskMetrics {
+  /** Summed over exceptions that carry an amount. */
+  totalPaise: number;
+  totalDisplay: string;
+  /** Exceptions with a single at-risk figure. */
+  withAmount: number;
+  /**
+   * Group-level exceptions with no single amount. Counted as an ABSENCE, never
+   * folded into the total as a zero — the same discipline as `stagesNotRun`.
+   */
+  withoutAmount: number;
+  /** The subtotal a triage starts from. */
+  highSeverityPaise: number;
+  highSeverityDisplay: string;
+  /** High-severity exceptions that carry an amount (the sum's denominator). */
+  highSeverityCount: number;
+  /** The single worst line. `null` only when no exception on the run carries an amount. */
+  largestSingle: {
+    amountPaise: number;
+    amountDisplay: string;
+    category: string;
+    transactionId: string | null;
+  } | null;
+}
+
 export interface RunMetrics {
   [k: string]: unknown;
   schemaVersion: number;
@@ -250,6 +293,7 @@ export interface RunMetrics {
     candidateCapHits: number;
     batchSearchExhausted: number | null;
     batchSearchBoundExceeded: number | null;
+    amountAtRisk: AmountAtRiskMetrics;
   };
   population: {
     ingested: number;
@@ -441,6 +485,40 @@ export function computeRunMetrics(input: MetricsInput): RunMetrics {
     bySeverity[e.severity] += 1;
   }
 
+  // Money at risk (ADR-164), summed over the WHOLE population. `amountAtRiskPaise`
+  // is `null` for a group-level exception with no single figure; those are
+  // counted as `withoutAmount` and never added in as a zero.
+  let atRiskTotalPaise = 0;
+  let atRiskHighPaise = 0;
+  let atRiskHighCount = 0;
+  let atRiskWithAmount = 0;
+  let largest: ClassifiedException | null = null;
+  for (const e of exceptions) {
+    if (e.amountAtRiskPaise === null) continue;
+    atRiskWithAmount += 1;
+    atRiskTotalPaise += e.amountAtRiskPaise;
+    if (e.severity === 'high') {
+      atRiskHighPaise += e.amountAtRiskPaise;
+      atRiskHighCount += 1;
+    }
+    if (largest === null || e.amountAtRiskPaise > largest.amountAtRiskPaise!) largest = e;
+  }
+  const amountAtRisk: AmountAtRiskMetrics = {
+    totalPaise: atRiskTotalPaise,
+    totalDisplay: formatPaise(atRiskTotalPaise),
+    withAmount: atRiskWithAmount,
+    withoutAmount: exceptions.length - atRiskWithAmount,
+    highSeverityPaise: atRiskHighPaise,
+    highSeverityDisplay: formatPaise(atRiskHighPaise),
+    highSeverityCount: atRiskHighCount,
+    largestSingle: largest === null ? null : {
+      amountPaise: largest.amountAtRiskPaise!,
+      amountDisplay: formatPaise(largest.amountAtRiskPaise!),
+      category: largest.category,
+      transactionId: largest.transactionId,
+    },
+  };
+
   // S8 re-derives every pair S6 already claimed and reports `outcome: 'match'`
   // "for completeness". Counting those would claim the identity stage
   // contributed 212 findings on the holdout when it contributed 9 — the
@@ -535,6 +613,7 @@ export function computeRunMetrics(input: MetricsInput): RunMetrics {
       // bounds, not about the data.
       batchSearchExhausted: batchOutcomes.filter((b) => b.stats.exhaustive).length,
       batchSearchBoundExceeded: batchOutcomes.filter((b) => b.stats.boundHit !== null).length,
+      amountAtRisk,
     },
 
     population: {

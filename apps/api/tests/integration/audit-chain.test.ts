@@ -16,7 +16,7 @@ import type { AuditEntryInput } from '../../src/repositories/audit.js';
  * back is the exact case where a naive serializer silently breaks every chain.
  */
 
-const DB_URL = process.env['TEST_DATABASE_URL'] ?? process.env['DATABASE_URL'] ?? null;
+import { TEST_DB_URL as DB_URL, SKIP_REASON } from './test-db.js';
 const RUN = '11111111-1111-1111-1111-111111111111';
 const OTHER_RUN = '99999999-9999-9999-9999-999999999999';
 
@@ -31,7 +31,7 @@ function input(over: Partial<AuditEntryInput> = {}): AuditEntryInput {
   };
 }
 
-describe('audit hash chain (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL' : false }, () => {
+describe('audit hash chain (integration)', { skip: SKIP_REASON }, () => {
   before(async () => {
     createPool({ databaseUrl: DB_URL!, corsOrigins: [] } as never);
     await runMigrations(getPool());

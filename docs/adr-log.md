@@ -2089,3 +2089,635 @@ face.
   `eaa8b2e9` still links to `/records/…` and still resolves. `next build` clean.
 - `resolveCitation` is now called from two pages. If a third surface grows a citation list, it
   uses this function or it is wrong — the same "one rule, one place" point ADR-157/ADR-158 made.
+
+---
+
+### ADR-161 · Two places the API contract described a system we did not build
+
+**Context.** An external review of the localhost instance tested the contract as written rather
+than as intended, and found two endpoints whose documented shape the build does not honour.
+
+1. **`POST /api/runs` Variant A — multipart upload.** §2 documents `gatewayFile` / `bankFile` /
+   `ledgerFile` as the primary way to start a run, and the endpoint table lists `multipart`
+   before the JSON variant. A real `multipart/form-data` request returns
+   `400 MISSING_REQUIRED_FILE — "file upload is not enabled on this build"`. The upload path was
+   cut early under the degradation order and the contract was never walked back.
+2. **Endpoint 28 `toolCalls`.** The contract writes `toolCalls[]`, implying a trace array.
+   `AgentQuestion.toolCalls` is a `number`, and so are the identically named fields on
+   `AgentInvestigation` and `AgentCorroboration`. Every consumer treats it as a count; the
+   reasoning **trace** is a separate field (`reasoning[]` on an investigation).
+
+Both are the same failure, not two: **the contract is binding (CLAUDE.md §3), so where it and the
+code disagree the code is wrong until an ADR says otherwise.** Neither divergence had one, so for
+as long as they stood the repo's own rule declared the build broken. That is the expensive part —
+not the missing feature, but a rule the project leans on for credibility being quietly false in
+two places a reviewer can reach with `curl`.
+
+**Decision.**
+
+- **Variant A is cut, and the contract now says so** rather than describing it in the present
+  tense. §2 marks it `NOT BUILT`, states the actual `400`, and the endpoint table's Request
+  column no longer offers `multipart` as a choice. The system runs on the two registered seed
+  datasets, and the README says that in the same breath as the throughput number.
+- **The contract adopts the code's `toolCalls`**, documented as `toolCalls` (count) with a
+  pointer to `reasoning[]` for the trace. The code is not changed: a count is the right shape
+  here — `POST /ask` is a synchronous answer, and a caller wanting the trace reads the audit log,
+  which already records every call and is the only copy that is hash-chained.
+
+**Why this is not tuning (ADR-027).** No threshold, window, weight or tolerance moves; no run
+output changes. Both edits are documentation reconciling itself with shipped behaviour.
+
+**Why the upload is not simply built instead.** Ingestion is format-declared, never format-guessed
+(schema.md §2) — the three parsers are written against three known layouts. Accepting arbitrary
+CSVs means column mapping, format inference and a failure mode where a mis-mapped upload produces
+a confident wrong reconciliation. That is the exact class of answer this engine exists to refuse,
+and it is not a thing to add in the week before submission. Stating the limit costs a feature;
+guessing at it would cost the thesis.
+
+**Consequences.**
+- A reviewer following the contract now finds the build behind it. The limitation is discoverable
+  in the README instead of at a `400`.
+- If the upload is ever built, this ADR is superseded rather than edited, and §2 goes back to the
+  present tense.
+- The general rule this is the second reminder of: **an endpoint's contract entry is a claim, and
+  an unbuilt claim is a defect with a documentation-shaped fix.** The doc sweep in
+  `adr-060-doc-sweep-guard.test.ts` checks ADR/doc drift; it does not execute the contract, and
+  nothing does. A contract-conformance test is the real fix and is not in scope here.
+
+---
+
+### ADR-162 · The books balance, recomputed — a reconciliation of the reconciler
+
+**Context.** The dashboard publishes "573 matched", "216 awaiting review" and "212 exceptions"
+against a population of 874. A reader adds them, gets 1001, and concludes the engine
+double-counts. It does not — the populations legitimately overlap, because a gateway↔bank pair
+that matched but has no ledger entry is genuinely both a match and a `MISSING_IN_LEDGER` finding,
+and a list that hid those would understate the problem rather than overstate it.
+
+The books did balance. They balanced only inside the engine. The strongest evidence this project
+has — that every one of 920 source rows is accounted for — was left as an exercise for a reader
+with thirty seconds and no reason to extend credit, on a page whose entire thesis is that a figure
+must say where it came from.
+
+**Decision.** `GET /api/runs/:runId/reconciliation` (endpoint 29) and a dashboard section
+directly beneath the headline tiles, publishing five identities:
+
+| | Identity | What it proves |
+|---|---|---|
+| C1 | ingested − excluded − duplicates = reconcilable | the denominator every rate divides by |
+| C2 | matched + inReviewQueue + neither = reconcilable | every record is in exactly one state |
+| C3 | unresolved ≡ named on the exception list | **nothing was silently dropped** |
+| C4 | the four exception classes sum to the total | why 212 is not 85 |
+| C5 | published headline = recomputed headline | the tiles above are what these rows produce |
+
+Three properties make it evidence rather than decoration.
+
+- **It reads base tables, never `runs.metrics`.** Checking a summary against itself restates the
+  number the reader is being asked to trust. Every count comes from `transactions`, `matches`,
+  `match_members` and `exceptions`, in one statement so the figures describe one snapshot.
+  `reconcilable` is *counted*, not derived as `ingested − excluded − duplicates` — deriving it
+  would make C1 a tautology that holds because it was computed to hold.
+- **C5 closes the loop.** Without it the panel is a second opinion nobody asked for; with it, the
+  headline at the top of the page is proven to be what the rows beneath it produce.
+- **It can say no**, the same stance as `/audit/verify`. Both sides of every identity are
+  rendered, so a reader checks the claim rather than the tick, and a failure names which identity
+  broke and by how much.
+
+**C3 is the reason to build this.** C1, C2 and C4 are arithmetic — satisfying and mechanical. C3
+is a statement about conduct: every reconcilable record is matched, proposed, or explained. It is
+the property a finance controller actually needs, and the one an engine can violate longest
+without anyone noticing, because **a dropped record makes every other number look better** — it
+sits in the denominator dragging the rate down while appearing on no list a human ever reads.
+
+**Why this is not tuning (ADR-027).** No threshold, window, weight or tolerance moves; no run
+output changes. It is a read-only recomputation of rows the API already serves.
+
+**Consequences — it found things on its first sweep, which is the point.**
+- **All 39 stored runs were checked. Every holdout-seed run balances 5/5.**
+- **A first draft of C5 was wrong, and the sweep is what proved it.** It compared the frozen S14
+  headline against a live recomputation that included human approvals, so a run where a reviewer
+  had approved 24 proposals reported its correct published `570` as mismatched against `640`. A
+  check that fires when the product is used as intended is worse than no check — it teaches a
+  reader to ignore the one panel that must never be ignored. C5 now compares engine-alone to
+  engine-alone and reports the human contribution beside it (ADR-119's split, applied here).
+- **Two genuine orphan defects, both open and both surfaced rather than fixed here.**
+  1. Every dev-seed run (9 of them) has exactly one: bank row 64,
+     `e0gt9CeMqbPHRKbMFVZD4`, ₹4,75,201.95, `IMPS-SETL-FLIPKART INTERNET-BATCH47`, dated
+     **2026-08-27 — the run's own reference date**. Reconcilable, in no match, on no exception
+     list. The date coincidence is the obvious first place to look. The holdout seed is unaffected,
+     so no reported number is wrong; the dev dataset has been carrying an unaccounted ₹4.75 lakh.
+  2. `phase4-free` has three: rejecting a match returns its members to the pool, and no exception
+     names them afterwards. `related_transaction_ids` does not cover them either. Endpoint 11's
+     contract says it creates one, and for a group of three that is one exception for three
+     records.
+- Fixing either changes engine behaviour, so both are left for a deliberate decision rather than
+  taken on the way past. The panel reporting them honestly is the feature working.
+
+---
+
+### ADR-163 · Two records the engine accounted for silently, and now accounts for out loud
+
+**Context.** The balance proof (ADR-162) failed C3 on two populations, and both turned out to be
+the same defect wearing different clothes: **a decision the engine made correctly and left no
+trace of.**
+
+1. **Every dev-seed run, in all nine of them.** Bank row 64, `e0gt9CeMqbPHRKbMFVZD4`,
+   ₹4,75,201.95, dated 2026-08-27 — the run's own reference date. S12's presence rule contains
+   `const due = settlementDue(record, target, config); if (!due.overdue) continue;`. A bank credit
+   that landed on the reference date has not had time to reach the ledger, so raising
+   `MISSING_IN_LEDGER` would be a **false exception** — the confident wrong answer this engine
+   exists to refuse. The decision is right. But a record where *every* open target is still in
+   flight acquires no signal at all, stays in the match-rate denominator dragging the rate down,
+   and appears on no screen a human reads.
+2. **`phase4-free`, three records.** Endpoint 11 returns a rejected match's members to the pool
+   and raises nothing, with a comment that re-classifying is S12's job on the next run rather than
+   something a route improvises. That reasoning holds — an exception invented in a route would
+   carry no precedence. But the records sit unaccounted-for until someone re-runs.
+
+Neither is a wrong answer. Both are **states the product never named**, which is why no instrument
+caught them: the offline scorer, the published ceiling and the false-despair rate all read the
+engine's *output* and none asks whether the output covers its input.
+
+**Decision.** Name the states rather than change the answers.
+
+- Migration 014 adds `transactions.deferred_reason`, NULL for every row that is not deferred.
+  S12 writes it, in the **same transaction as the exceptions**, for a record that is unmatched,
+  unproposed, carries no exception, and every settlement window it could be missing from is still
+  open.
+- `deferredRecords()` computes that set from the same `ClassificationInput` and the same
+  `settlementDue` the skip uses, so there is one definition of "not yet due" rather than a second
+  one in SQL that could drift.
+- Endpoint 29 counts two further dispositions — `notYetDue` from the column, and
+  `awaitingReclassification` from `matches.status = 'human_rejected'`, which needs no re-run.
+- **C3 becomes an accounting identity with three legitimate ends** — named on the exception list,
+  knowingly not yet due, or awaiting re-classification — and still fails on a record in none of
+  them.
+- api-contract endpoint 11 now states that `exceptionCreated` is always `null`, which it always
+  was.
+
+**The risk this ADR has to answer: is this defining the problem away?** No, and the tests are the
+argument. C3 compares the two sides for **equality**, not coverage, so a deferral cannot absorb
+more than the unresolved population — a run claiming 90 deferred out of 85 unresolved fails.
+A record on no list, not deferred and not awaiting re-classification is exactly as unaccounted-for
+as it was yesterday and still fails. What changed is that the check can now tell a record nobody
+accounted for from one the engine accounted for silently, which is a distinction it could not draw
+before and needed to.
+
+**Why this is not tuning (ADR-027).** No threshold, window, weight or tolerance moves. The dev
+seed before and after: match rate **64.61%**, 198 exceptions, 876 reconcilable — identical. The
+holdout is untouched. This adds a column and a count; it changes no answer.
+
+**The alternative, and why not.** Excluding not-yet-due records from the denominator would also
+balance the books and would raise the match rate. That is the direction ADR-027 exists to be
+suspicious of, and the record genuinely *is* reconcilable — it just is not due. Keeping it in the
+denominator leaves the rate slightly pessimistic, which is the right way for this project to be
+wrong.
+
+**Consequences.**
+- Dev seed balances 5/5, reporting `79 unresolved = 78 on the exception list + 1 not yet due`.
+- `phase4-free` balances 5/5, reporting `88 = 85 + 0 + 3 awaiting re-classification`.
+- **Runs created before migration 014 are not retroactively fixed** — `deferred_reason` is written
+  at classify time, so the nine historical dev-seed runs still show the orphan. That is correct:
+  the column records what S12 decided, and S12 did not run again. Re-run the dataset to get a
+  balanced row.
+- `STALE_RUN_TIMEOUT_MINUTES` remains the last knob in CLAUDE.md §10's list that is parsed and
+  enforced nowhere.
+
+### ADR-164 · The landing screen opened in records and percentages, never in rupees
+
+**Context.** This is the **AI Finance Controller** track and the dashboard's first screen answered
+every question except the one a finance controller asks first: *how much is unaccounted for?* The
+figure existed — `amountAtRiskPaise` / `amountAtRiskDisplay` is on every exception from endpoint 6,
+drives severity (ADR-044) and is the exception list's default secondary sort — but it appeared
+**nowhere on the landing screen**, and a total across the whole population appeared nowhere at all.
+
+Summing it in a component was not an option. Endpoint 6 is paginated at `pageSize` ≤ 200
+(api-contract §0) and a run can carry more exceptions than that — the canonical holdout has 212 —
+so a component adding up the list it was handed would silently total one page and under-report the
+exposure. The arithmetic has to happen where the whole population is in scope: the engine.
+
+**Decision.** `computeRunMetrics` (S14) sums money at risk over **every** classified exception and
+publishes it under `runs.metrics.exceptions.amountAtRisk`, formatted server-side by `formatPaise`
+— the one money formatter in the system (api-contract §0) — so the wire carries both `*Paise` and
+`*Display` and the frontend never does currency arithmetic or formatting.
+
+The block carries:
+- `totalPaise` / `totalDisplay` — summed over exceptions that carry an amount.
+- `withAmount` / `withoutAmount` — a group-level exception with no single figure is counted as an
+  absence, never folded in as a zero.
+- `highSeverityPaise` / `highSeverityDisplay` / `highSeverityCount` — the subtotal a triage starts
+  from.
+- `largestSingle` — the single worst line (`amountPaise`, `amountDisplay`, `category`,
+  `transactionId`), or `null` when no exception carries an amount.
+
+`provenance: engine`. This is the engine's own account of what it could not place, not a
+measurement against the answer key — it never wears the measured accent, and ADR-041's grep in
+`run-metrics.test.ts` confirms no ground-truth-shaped key rode in with it.
+
+The frontend renders one tile in the headline row (`HeadlineRow.tsx`), `provenance="engine"`, with
+the high-severity subtotal and the largest line in its note and basis. A unit test asserts the
+three published totals against the holdout fixture so a wrong sum cannot ship quietly.
+
+**Why this is not tuning (ADR-027).** No threshold, window, weight or tolerance moves. S14 reads
+`ClassifiedException.amountAtRiskPaise` values the classifier already computed and adds them up;
+no answer changes, no record moves between populations, and the match rate, exception count and
+balance proof on the holdout are byte-identical before and after.
+
+**Consequences.**
+- `runs.metrics` schema is unchanged in version — the object gains a key, and a reader that does
+  not know about it is unaffected. schema.md §11.1 documents the new block.
+- Runs scored before this change still return their stored `runs.metrics` without the block; the
+  frontend renders the tile as absent in that case rather than a zero.
+- `STALE_RUN_TIMEOUT_MINUTES` remains the last knob in CLAUDE.md §10's list that is parsed and
+  enforced nowhere.
+
+### ADR-165 · Measured precision/recall beside each exception category
+
+**Context.** The exception list and its category breakdown looked equally confident about every
+category. The scorer already knows they should not be: on the holdout `MISSING_IN_GATEWAY` is
+**P 0.2857** — the engine over-raises it — `MISSING_IN_LEDGER` is P 0.5385, and
+`UNSPLITTABLE_BATCH` is **R 0.5000**. That is the one place the UI currently over-claims, and the
+figure that would fix it — `measured.classification.multiLabel.perCategory` — was already served
+by endpoint 5 and rendered nowhere.
+
+**Decision.** Render per-category precision/recall from `multiLabel.perCategory` next to each
+category name, in two places: the dashboard's `ExceptionBreakdown` rows and the `/exceptions`
+facet rail's Category group. One shared component, `CategoryAccuracy`.
+
+- `provenance="measured"` — the same `--verified` accent `Figure` uses. These come from
+  `score_reports`, scored offline against a key the API never reads (ADR-041).
+- **Two absences, both drawn as absences, never as a zero:**
+  - no score report on the run → *"accuracy not measured"*, muted italic (`--ink-4`).
+  - a report exists but the answer key holds no true events of this category → *"not scored for
+    this category"*.
+  Substituting `0.0000` for either reads as "the engine is wrong about all of them" when the
+  truth is "nobody measured this" — the exact ADR-041 failure the project is built around.
+- Precision below 0.75 is drawn in the high-severity colour rather than left to sit in a row of
+  identical-looking numbers — flagging over-raising is the whole reason the figure is on screen.
+- Severity and status facets carry **no** accuracy line. There is no ground-truth precision for
+  "high"; multi-label P/R is a claim about category assignment only.
+
+**Scope.** Frontend only. No API change — the data was already on the wire. `apps/web` has no
+test runner (testing-strategy.md), so both states were verified against the running instance:
+a scored run shows the measured figures, a fresh unscored run shows "accuracy not measured" with
+zero `data-provenance="measured"` anywhere on the page.
+
+**Consequences.**
+- `/exceptions/page.tsx` now also fetches endpoint 5. One extra read on the primary screen,
+  parallel with the two it already made.
+- `STALE_RUN_TIMEOUT_MINUTES` remains the last knob in CLAUDE.md §10's list that is parsed and
+  enforced nowhere.
+
+### ADR-166 · The dashboard opens on a pinned run, not whatever ran last
+
+**Context.** During a judge review a throwaway probe run at 26.89% silently became the site's
+headline: the landing page follows the newest completed run, and the page handled the crippled
+run with complete honesty — which is to its credit — but on panel day one stray click puts a
+broken run on the front page with nothing to undo it.
+
+**Decision.** `PINNED_RUN_ID` (server-only web env). When set and it names a run that exists and
+has completed, `resolveRun` returns it as the default whenever `?run=` is absent. Everything else
+is unchanged: the run picker, every `?run=` link, and the "is this the default run?" test that
+decides whether a screen threads `?run=` into its links.
+
+- **A broken pin degrades to today's behaviour, not to a blank page.** A pinned id that does not
+  exist, or a run still in flight, logs once on the server and falls back to the newest completed
+  run. Pinning is a panel-day stability measure; it must not be a new way for the site to break.
+- **The eight-screen private-copy hazard, closed on the way past.** `page.tsx`, `exceptions`,
+  `matches`, `audit`, `review`, `analyst` and `set-aside` each recomputed
+  `runs.find(completed) ?? runs[0]` inline to decide link threading — the exact shape of ADR-157's
+  bug, and with a pinned run it would have diverged on all of them at once. The resolved default
+  is now a field on `RunContext` (`defaultRunId`) and the screens read it.
+
+**Scope.** Frontend only. No API change. Unset locally, so local dev is unchanged; set on the
+deployed web (deployment.md §3).
+
+**Consequences.**
+- One id to update when the canonical demo run is re-generated — a Vercel env var, no deploy of
+  code.
+- `resolveDefaultRun` may make one extra `getRun` call when the pinned id has aged off the
+  200-run list page. Once, on a cache-miss, on the server.
+- `STALE_RUN_TIMEOUT_MINUTES` remains the last knob in CLAUDE.md §10's list that is parsed and
+  enforced nowhere.
+
+### ADR-167 · The exception list leads with the money, not the taxonomy
+
+**Context.** `/exceptions` is the primary screen, and it opened straight into structural facts —
+the category facet rail and a severity split — before naming a single rupee. This is the AI
+Finance Controller track; a controller triages by exposure, and "how much is on this list?" was a
+question the page made you work for.
+
+**Decision.** A one-line exposure band at the top of the main column, above the filter chips and
+the table: the run-wide amount at risk (`engine.exceptions.amountAtRisk`, ADR-164,
+`provenance: engine`), the high-severity subtotal, and the three largest single lines as links
+into their own exceptions. The taxonomy is unchanged and still in the facet rail — it is just no
+longer the first thing the page says.
+
+- **Run-wide, not filter-scoped.** The band and its top three describe the whole run regardless of
+  the active category/severity filter or the table's sort, matching the facet counts beside them
+  (also run totals by design). The top three come from one extra `listExceptions(sort: amount,
+  pageSize: 3)` read, parallel with the others.
+- **Absent, not faked.** The band renders only when the run's metrics carry the `amountAtRisk`
+  block; a run scored before ADR-164 shows the table with no band rather than a zero.
+- No new sort. The default is already "severity, then amount at risk" (ADR-044), which is right;
+  this is about what the page states first.
+
+**Scope.** Frontend only. No API change.
+
+**Consequences.**
+- `STALE_RUN_TIMEOUT_MINUTES` remains the last knob in CLAUDE.md §10's list that is parsed and
+  enforced nowhere.
+
+### ADR-168 · The audit hash chain is on the wire, so tamper-evidence is externally checkable
+
+**Context.** `GET /api/runs/:runId/audit` returned every decision field but not `prev_hash` /
+`entry_hash`. "Tamper-evident" (ARCHITECTURE §4.6, ADR-042) therefore rested entirely on the
+server recomputing its own chain via `/audit/verify` — a reviewer had no way to confirm it
+independently. The README already states this limitation honestly (a judge-blocker fix), so this
+is the upgrade that removes it.
+
+**Decision.** `auditEntry` (endpoints 13, 14, 18) now serializes `prevHash`, `entryHash`, and
+`runId`.
+
+- `runId` joins the DTO because it is one of the hashed fields (`null` for the alias-admin
+  chain), and endpoints 13/18 return entries from more than one chain — a client cannot infer it
+  from the URL.
+- No new data is computed and nothing is written: the repository already `SELECT`ed all three
+  columns for `/audit/verify`. This is a serialization change.
+- **schema.md §9.0 gains a "Reproducing the chain from the API" recipe** — the exact field list,
+  the canonical-JSON rules (key sort by code unit, `null` for absent, ISO-8601 UTC, array order
+  preserved, NUL/lone-surrogate sanitization), and the `sha256(canonicalJson || prevHash)`
+  construction — so a client can reproduce every `entryHash` and the head.
+- **The test is the capability.** `routes.test.ts` pages through endpoint 14, recomputes the
+  whole 612-entry chain with an *independent* canonical serializer (no server code imported), and
+  asserts every `entryHash`, every link, and that the computed head equals both `chainHead` and
+  `expectedChainHead` from endpoint 22. Confirmed it fails when `runId` is wrongly excluded from
+  the hashed set — the recipe is load-bearing, not decorative.
+- The `/audit` screen shows each entry's truncated `entryHash`; the title carries both hashes and
+  the formula.
+
+**Scope.** One serializer, one DTO type, one doc section, one UI line, one test. No migration, no
+new endpoint, no write path touched — `audit_log` stays append-only (ADR-015).
+
+**Consequences.**
+- `STALE_RUN_TIMEOUT_MINUTES` remains the last knob in CLAUDE.md §10's list that is parsed and
+  enforced nowhere.
+
+### ADR-169 · TIMING_DRIFT is unreachable in the shipped datasets — state it, do not regenerate
+
+**Context.** The taxonomy has eight categories (schema.md §8.1). Every run on every committed
+seed produces seven. `TIMING_DRIFT` has never been raised once, on any dataset, by any run.
+
+The first suspicion was an engine defect. It is not. The path is complete end to end:
+
+- S8 `resolveIdentity` computes `outcome: 'timing_drift'` and returns `category: 'TIMING_DRIFT'`
+  when identity is established, the amount agrees, and the date sits outside the §5.2 window
+  (`identity-resolution.ts`). `dedupe-identity.test.ts` asserts exactly this for a +9-day
+  settlement, and it passes.
+- S12 `classify` emits it verbatim from the verdict, with `wouldMatchIfWindowWidened` populated.
+- `precedence.ts`, `severity.ts` (capped at `medium`), the wire DTO, `lib/taxonomy.ts` and the
+  scorer's confusion matrix all carry it.
+
+**The gap is in the data generator.** No scenario in `SCENARIO_SPECS` ever plants a settlement
+outside the engine's own window:
+
+- `normalLagDays` draws 0–1 for every method.
+- `edgeLagDays` draws 2–3 for card (window `[-1, 3]`) and 1–2 for UPI (window `[-1, 2]`) — the
+  inside edge, deliberately. `TIMING_LAG_NORMAL`'s own note says so: *"Settlement lands inside the
+  declared window; a match, not a drift exception."*
+
+So the drift rule is a rule with no input. Two further consequences fall out of the same fact:
+
+1. **`TIMING_LAG_NORMAL` could not produce a drift even if its lag were widened**, because it sets
+   `bankAnchorExtractable: false`. S8 requires a strong anchor *structured on both sides*; that
+   pair goes to Tier 2, where a large date delta lowers the score and the record surfaces as a
+   presence exception instead. Widening the lag there would cost recall and still yield no
+   `TIMING_DRIFT`.
+2. **The §5.2 BUILD BLOCKER "TIMING_DRIFT auto-confirmed" cannot fire.** It keys on
+   `ev.expectedCategory === 'TIMING_DRIFT'`, and no event in any answer key has that as its
+   primary. It is a guard nobody has watched fail — CLAUDE.md §9's exact smell — and it is
+   unfireable for the same reason the category is empty.
+
+The six `TIMING_DRIFT` entries that *do* appear in `dev_seed_1337.json` are all
+`expectedSecondaryFlags` on `UNSPLITTABLE_NET_BATCH` events, where the key measures the lag from a
+gateway row to a netting credit that has no per-payment anchor. The engine cannot establish
+identity on that pair and so cannot produce the flag. Inert today — §5.2 scores the primary only —
+but it is an assertion the engine can never satisfy, and it is the reason the scorer's comment
+warns against reading the flags.
+
+**Decision. Do not add a late-settlement scenario before submission. State the absence instead.**
+
+The correct fix is a new scenario with `bankAnchorExtractable: true` and a lag past the window.
+The blast radius, measured:
+
+- `planEvents` Fisher-Yates-shuffles the allocated scenario slots (`events.ts`), and the per-event
+  amount/date/merchant streams are drawn by shuffled index. **Changing any weight changes which
+  scenario lands at every index**, so all three seeds regenerate wholesale — this is not an
+  additive change, it is a different dataset.
+- 9 fixture CSVs and 3 answer keys are committed and hash-pinned by `committed-datasets.test.ts`.
+- **83 references to the headline figures across 26 files** (README, CLAUDE.md, ARCHITECTURE,
+  six docs, nine web components, five API test files) quote `920 / 284 / 212 / 65.22% / 0.6075 /
+  93% ceiling / 612 audit entries`. Every one moves.
+- The Railway instance's persisted run, its audit chain and its score report all become stale;
+  redeploy is manual and there is no CI.
+- S13's 21 signatures change, so the explain cache re-fills against a real model.
+
+Against that: **precision 1.0000 with FP 0 is the project's headline claim, and it is a property
+of this dataset as much as of the engine.** Reshuffling all 300 events one day before submission
+puts it at risk with no time to recover if it moves. Trading a measured, verified 1.0000 for
+completeness of a display taxonomy is a bad trade, and it is precisely the "change the data
+because a number looks wrong" move ADR-027 exists to forbid.
+
+**What ships instead.** `ExceptionBreakdown` names the absent categories under the list — "Zero,
+not missing. The rule is wired and unit-tested; no record in this dataset met its definition."
+Derived from the label table, so any category that empties on a future dataset names itself
+without anyone remembering to come back. A bar that is not drawn and a bar of length zero look the
+same and do not mean the same thing; the screen now distinguishes them.
+
+**Scope.** One component, one CSS block, this ADR, one `what-broke.md` entry. No engine change, no
+data change, no number moves.
+
+**Consequences.**
+- The eighth category remains unexercised by real data, and the submission must not imply
+  otherwise. "Wired and unit-tested, unexercised by the shipped datasets" is the honest claim.
+- The §5.2 `timingDriftAutoConfirmed` blocker stays unfireable. It is not removed — it is correct
+  and costs nothing — but it must not be counted as a guard that has held.
+- A post-submission dataset refresh should add the scenario and re-measure everything in one pass,
+  not piecemeal.
+- `STALE_RUN_TIMEOUT_MINUTES` remains the last knob in CLAUDE.md §10's list that is parsed and
+  enforced nowhere.
+
+---
+
+### ADR-170 · Four deployment blockers, none of them in the build
+
+**Context.** A second external review on 2026-09-04 confirmed the six frontend items and the
+engine, and then found four things that would have shipped straight into the panel. Every one was
+configuration, and three were invisible from the code.
+
+1. **The API was serving `recon_test`** — the database nine integration files open with
+   `TRUNCATE … CASCADE`. `apps/api/.env` pointed at it, so the obvious incantation
+   (`TEST_DATABASE_URL="$(grep DATABASE_URL .env …)"`) aimed the suite at the running
+   application's own data. The reviewer had to create a scratch database to run the tests at all.
+2. **The demo database held 4 runs and 0 aliases**, two of them named `other` and `tools`. The 44
+   runs and both learned aliases were in `recon_v2`. Every run therefore read as cold — 65.22%
+   rather than 65.56% — and **alias learning could not be demonstrated**, which is one of the more
+   distinctive things this project does.
+3. **The footer's `8.24 s` was true only of a warm cache.** Measured cold on 2026-09-04: explain
+   stage **33,948 ms**, wall clock **26 rec/s**. Warm: **117 ms**, **377 rec/s**, 0 API calls, on
+   the identical 920 records. A judge clicking "Run It Again — Free" against a freshly deployed
+   database would have waited half a minute for a button labelled free and instant, under a figure
+   promising eight seconds.
+4. **`score:watch` was a laptop process** and `PINNED_RUN_ID` was documented with a local run id
+   that will not exist on Railway.
+
+**Decision.**
+
+- **`TEST_DB_URL` is resolved in one place** (`tests/integration/test-db.ts`) and **`DATABASE_URL`
+  is no longer a fallback**. A `TEST_DATABASE_URL` naming a database whose name does not end in
+  `_test` **throws** rather than skipping — skipping is how the suite silently ran nothing. All
+  nine files import it; one rule, one place, which is the lesson ADR-151/157/158 paid for three
+  times.
+- The skip message now reads `TEST_DATABASE_URL is not set — integration tests SKIPPED (this is
+  not a pass)`. The old run printed `pass 727, fail 0, skipped 0` while executing **no integration
+  test whatsoever**, which is worse than a red build.
+- `.env` points at `recon_v2` and carries an explicit, separate `TEST_DATABASE_URL`.
+- **The footer states the condition**, and §5.2 gains an explicit cache-warming step with the
+  measurement behind it, because the first run against a fresh deploy is the slow one and is
+  exactly the run that gets clicked.
+- **The scorer becomes a Railway service** (§5.5), not a process on a machine someone might
+  close. It gets the API's URL and no database credentials: `tools/score` reads `data/truth/`, and
+  **ADR-021 forbids anything under `apps/api` from importing that** — the boundary is the reason
+  the accuracy numbers mean anything, so the scorer stays on the far side of one HTTP hop.
+
+**Why this is not tuning (ADR-027).** No threshold, window, weight or tolerance moves; no engine
+code changes. Verified after: 921 API tests, 244 tools tests, warm holdout run at **65.56%**,
+precision **1.0000**, FP **0**, scorer exit **0**.
+
+**Consequences.**
+- The guard was watched refusing a real database before being trusted: pointing
+  `TEST_DATABASE_URL` at `recon_v2` throws with the database named and the reason stated.
+- Restoring `recon_v2` brought back 44 runs and 4 aliases (2 active, 2 superseded — including the
+  `WRONG TARGET` correction that demonstrates supersession). Warm/cold is a real comparison again.
+- **The Analyst's verdict vocabulary was mis-read in the first review**, and the correction belongs
+  on the record: `proposals: 0` counts only `RESOLUTION_PROPOSED`, and agent-design.md §
+  designs three other terminal verdicts — `NEEDS_EXTERNAL_DATA` ("in real finance ops it is the
+  most common honest answer, and an agent that cannot say it will fabricate one of the other
+  three") and `CONFIRMED_UNRESOLVABLE` ("not a failure — the most important verdict in §7") among
+  them. Reporting zero proposals as zero usefulness treated three designed outcomes as failures.
+  The accurate residual claim is narrower and stands: no persisted investigation has reached
+  `RESOLUTION_PROPOSED`, so the one-click accept path through endpoints 16/20/21 is unexercised.
+- `STALE_RUN_TIMEOUT_MINUTES` remains the last knob parsed and enforced nowhere.
+
+---
+
+### ADR-171 · An eleventh tool, because the agent could not describe its own grounding gate
+
+**Context.** Asked *"why did grounding reject 54f3f1d3… analyst run?"*, the Q&A agent replied that
+it *"could not find anything in this run corresponding to a 'grounding rejection'"* and that
+*"there is no concept of a 'grounding reject of an analyst run' anywhere in the retrieved data"*.
+
+Both sentences were true of what it could reach and wrong about the system.
+`agent_investigations.grounding_failure` holds the exact string, and `audit_log` carries an
+`AGENT_GROUNDING_FAILED` entry reading *"verdict rejected by the A3 gate and downgraded:
+constraint: proposed member … already belongs to a match"*.
+
+The data was reachable; the **path** was not. `get_audit_trail` is keyed on the INVESTIGATION id,
+and a human asking about an exception holds the EXCEPTION id, with nothing in the registry mapping
+one to the other. That is ADR-159's shape exactly — every route into the table needed the answer
+before it could ask the question — and it landed on the worst possible subject: **the grounding
+gate is this project's central safety claim, and the agent was structurally unable to discuss it.**
+The single question a sceptic is most likely to ask produced a confident denial that the mechanism
+exists.
+
+**Decision.** `find_agent_investigations({exceptionId?})` — the eleventh tool. Returns each
+investigation's verdict, confidence, `groundingPassed`, `budgetExhausted`, step and tool-call
+counts, and the gate's own `groundingFailure` sentence. Omit the argument for the whole run.
+Read-only like every other tool, and excluded from the corroboration registry for the third
+instance of the #59 reason: investigations are keyed on an exception, a corroboration's subject is
+a match, so it could only ever return an empty list there.
+
+**The first build of it was wrong, and one live question proved it.** `returnedIds` deliberately
+omitted the ids embedded in a `groundingFailure` string, on the theory that an id appearing only
+in prose has not been "retrieved" and admitting it would let the agent cite a record it never
+looked at. The reasoning sounded right and the test refuted it immediately: the agent answered the
+question **correctly and completely**, naming the constraint and the offending member — and A3
+rejected the answer with `citation 73428029-… appears in no tool result from this investigation`.
+The id had come back from a tool result. It was inside the string this tool returned.
+
+A3's rule is that a citation must appear in a tool result the investigation received, and by that
+rule the id qualifies. Withholding it made the gate reject a true answer drawn from real data —
+the same cry-wolf failure ADR-162's C5 hit hours earlier, and the same lesson: *a check that fires
+on correct behaviour teaches a reader to stop believing it.* The ids are now in `returnedIds`.
+What that does not license is unchanged: the id is grounded, its **attributes** are not, because
+A3 checks ids rather than claims, exactly as for every other tool.
+
+**Why this is not tuning (ADR-027).** No threshold, window, weight or tolerance moves; no engine
+code is touched; `AGENT_ENABLED=false` still produces a byte-identical run (ADR-048).
+
+**Consequences.**
+- Verified live on a real rejection. Before: `groundingPassed: false`, citations `[]`, 2 tool
+  calls, $0.0343. After: **`groundingPassed: true`**, citing the investigation id, **1** tool call,
+  **$0.0199** — and every claim in the answer checked against the row: `budget_exhausted: t`,
+  3 steps, 7 tool calls, schema failure on an undefined verdict. All exact.
+- The registry's construction guard did its job on the way past: adding an eleventh tool broke
+  four tests that pin the count and the exact names, and one that requires **every** tool to be
+  executed inside the "changes nothing" proof. An eleventh tool genuinely cannot appear by
+  accident.
+- Two of the eleven tools now exist because a live question found a gap no amount of design review
+  had. That is the argument for asking the running system real questions rather than reading the
+  registry and agreeing with it.
+
+---
+
+### ADR-172 · A low precision beside a category count needs one line of context, or it reads as a defect
+
+**Context.** The exception facets now carry measured precision and recall per category (ADR-165),
+which was right. Three of them read badly out of context:
+
+```
+MISSING_IN_GATEWAY   P 0.2857   R 1.0000
+MISSING_IN_LEDGER    P 0.5385   R 0.9333
+MISSING_IN_BANK      P 0.7000   R 0.9333
+```
+
+`P 0.2857` next to a count of 53 looks like a classifier that is wrong two times in three. It is
+not, and the distinction is exactly the one that matters for an exception list.
+
+- **Recall is 0.93–1.00 on all three.** Nothing is being missed. `MISSING_IN_GATEWAY` catches
+  **every** true one.
+- **Precision below it means over-labelling, not overlooking.** The record is on the list, with
+  its money and its evidence, in front of a human either way. A mislabelled exception costs an
+  analyst a few seconds of reading; a missed one is invisible. That is the same asymmetry the
+  engine's `precision 1.0000` design is built on, one layer down.
+- **These are the multi-label figures**, which count a category raised anywhere on an event.
+  Scored on the primary category alone the identical run reads `P 1.0000` on five of seven —
+  `MISSING_IN_LEDGER` and `MISSING_IN_BANK` among them. The gap is dominated by one pattern:
+  33 exceptions flagged `MISSING_IN_GATEWAY` primary + `MISSING_IN_LEDGER` secondary, a bank
+  credit with no gateway record *and* no ledger entry. Both statements are true of the record;
+  the key credits one.
+
+**Decision.** One line under the category list, on the dashboard and the facet rail, rendered only
+when a score report exists. It states what precision counts here, that the primary-category
+figures are 1.0000 on five of seven, and that recall is the figure carrying "nothing was missed".
+
+**What this deliberately does NOT do: soften the number.** The harsher multi-label figure stays on
+screen, unchanged, next to every category. Publishing it was the right call and remains one — most
+submissions do not measure classification at all. The defect was showing a number that invites a
+wrong conclusion and leaving the reader to reach it.
+
+**The real finding underneath, recorded rather than dressed up.** Six events are genuine
+mislabels, and they are not explained by secondary flags: 3 true `AMOUNT_MISMATCH` and 3 true
+`UNSPLITTABLE_BATCH` were called `MISSING_IN_GATEWAY` as their primary category. That is
+precedence choosing wrong, and it is why `UNSPLITTABLE_BATCH` recall is **0.5000** — half the true
+unsplittable batches are filed as something else. A batch the engine could not decompose is not
+the same finding as a payment with no gateway record, and that is arguable without citing any
+score.
+
+**It is not fixed here, and the reason is the calendar, stated plainly.** Changing precedence a day
+before submission would move every classification figure, the README's 212 breakdown and the docs
+that quote it, for a metric that is not the headline. It is also the kind of change that is hard to
+argue was not made because the number looked bad (ADR-027). Left open, named, and answerable.
+
+**Why this is not tuning.** No threshold, window, weight or tolerance moves. It is one sentence of
+UI copy and this entry.

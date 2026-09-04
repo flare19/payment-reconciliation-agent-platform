@@ -73,8 +73,17 @@ export const CORROBORATION_BUDGET: InvestigationBudget = {
  * pointless call to `get_exception`. Handing the model a second tool with the
  * same guaranteed-empty answer would re-buy that mistake.
  */
+/**
+ * `find_agent_investigations` joins it for the third instance of that same
+ * shape (ADR-171). Investigations are keyed on an EXCEPTION, and a
+ * corroboration's subject is a match — so the tool can only ever return an
+ * empty list here. Three tools have now been removed from this registry for
+ * the identical measured reason: given a match id, they have nothing to say,
+ * and a tool that cannot answer is a tool the model wastes its first call on.
+ */
 export const CORROBORATION_EXCLUDED_TOOLS = [
   'rerun_subset_search', 'get_exception', 'find_exception_for_transaction',
+  'find_agent_investigations',
 ] as const;
 
 export function corroborationRegistry(registry: ToolRegistry): ToolRegistry {

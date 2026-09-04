@@ -1,5 +1,5 @@
 import { Figure } from '@/components/ui/Figure';
-import { count, pct, ratio4 } from '@/lib/format';
+import { count, humanizeCategory, pct, ratio4 } from '@/lib/format';
 import type { EngineMetrics, MeasuredMetrics } from '@/types/api';
 import styles from './HeadlineRow.module.css';
 
@@ -28,6 +28,7 @@ export function HeadlineRow({
   measuredAgainst: string | null;
 }) {
   const { matchRate, coldStart } = engine;
+  const atRisk = engine.exceptions.amountAtRisk;
 
   /**
    * NEVER NAME A CLI COMMAND HERE. This read "run `npm run score` to produce
@@ -216,6 +217,59 @@ export function HeadlineRow({
           provenance="absent"
           absentReason={noScoreReport}
           note="The maximum is computed from the answer key, so it arrives with the measurement."
+        />
+      )}
+
+      {/*
+        THIS IS THE AI FINANCE CONTROLLER TRACK, AND THE FIRST QUESTION IS
+        "HOW MUCH IS UNACCOUNTED FOR?" (ADR-164). The four figures to the left
+        are about the ENGINE — how much it matched, how wrong, how it would do
+        cold, how well it could do. This one is about the MONEY, which is the
+        thing the audience actually manages.
+
+        `provenance="engine"`: it is the engine's own sum of `amountAtRisk` over
+        every exception it raised — added up in S14 over the WHOLE population,
+        because endpoint 6 paginates at 200 and a component adding up its page
+        would under-report the exposure. It is not scored against anything, so
+        it never wears the measured accent.
+
+        Absent, not zero, on a run whose metrics predate the block.
+      */}
+      {atRisk ? (
+        <Figure
+          size="hero"
+          label="Money at Risk"
+          provenance="engine"
+          value={atRisk.totalDisplay}
+          note={
+            <>
+              across {count(engine.exceptions.total)} exceptions ·{' '}
+              {atRisk.highSeverityDisplay} in {count(atRisk.highSeverityCount)} high-severity
+            </>
+          }
+          basis={{
+            summary: 'What “at risk” is the sum of',
+            body:
+              `The money-at-risk figure on every exception, added together over all `
+              + `${count(engine.exceptions.total)} of them — a value discrepancy contributes the `
+              + `discrepancy, a missing or unsplittable record contributes the amount in question. `
+              + `The sum is computed server-side over the whole run, not the paginated list, so it `
+              + `does not change as you page through the exceptions. The single largest line is `
+              + `${atRisk.largestSingle ? `${atRisk.largestSingle.amountDisplay} `
+                + `(${humanizeCategory(atRisk.largestSingle.category)})` : 'not available'}`
+              + `${atRisk.withoutAmount > 0
+                ? `. ${count(atRisk.withoutAmount)} group-level exceptions carry no single figure `
+                  + `and are not counted here.`
+                : '.'}`,
+          }}
+        />
+      ) : (
+        <Figure
+          size="hero"
+          label="Money at Risk"
+          provenance="absent"
+          absentReason="Not totalled for this run — its metrics were written before money at risk was summed."
+          note="It is the engine’s own sum over the exception list, added when the run finalises."
         />
       )}
     </div>

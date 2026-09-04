@@ -188,9 +188,9 @@ Verdicts are persisted to `agent_investigations`. Proposals appear in the UI att
 
 ## 4. The tool registry
 
-Ten tools. **None of them writes.** The registry contains no mutating tool, so the agent is not *trusted* not to write — it is *unable* to.
+Eleven tools. **None of them writes.** The registry contains no mutating tool, so the agent is not *trusted* not to write — it is *unable* to.
 
-> The tenth, `find_exception_for_transaction`, was added on 2026-09-03 (ADR-159) after a live question proved the registry had no route from a record to its exception. It is not a design idea; it is a measured gap. See [analyst-baseline-sonnet5.md](./analyst-baseline-sonnet5.md).
+> The tenth, `find_exception_for_transaction`, was added on 2026-09-03 (ADR-159) after a live question proved the registry had no route from a record to its exception. The eleventh, `find_agent_investigations`, was added on 2026-09-04 (ADR-171) after a live question proved it had no route to the agent's own verdicts — asked why the grounding gate rejected one, it replied that no such concept existed in the data. Neither is a design idea; both are measured gaps. See [analyst-baseline-sonnet5.md](./analyst-baseline-sonnet5.md).
 
 ### Evidence retrieval
 
@@ -203,6 +203,7 @@ Ten tools. **None of them writes.** The registry contains no mutating tool, so t
 | `find_by_anchor({value, exact\|near})` | Cross-source anchor lookup, including edit-distance-1 near matches via the existing prefix block (ADR-031). The single most useful tool for `MISSING_IN_*` cases. |
 | `get_audit_trail({subjectType, subjectId})` | **Why the engine did what it did.** The agent can read the engine's own reasoning before forming its own — which is how it avoids re-deriving a conclusion the engine already recorded. |
 | `find_similar_exceptions({category\|signatureHash, limit})` | Prior exceptions of the same shape, including any human resolutions. Institutional memory. |
+| `find_agent_investigations({exceptionId?})` | **What the Analyst itself concluded, and whether A3 accepted it.** Returns each investigation's verdict, confidence, `groundingPassed` and — when the gate rejected one — its `groundingFailure` sentence. Omit `exceptionId` for the whole run. Ids inside a failure string **are** in `returnedIds`: A3's rule is that a citation must appear in a tool result the investigation received, and they do. The first build withheld them on the theory that prose is not retrieval, and the first live question refuted it — a correct answer naming the offending member was rejected with *"citation 73428029-… appears in no tool result"*. The id is grounded; its attributes are not, exactly as for every other tool. Without this tool the agent could not describe its own rejections, which made the grounding gate — this project's central safety claim — the one subject it was structurally unable to discuss (ADR-171). |
 
 ### Deterministic computation — the agent asks, locked code answers
 
@@ -291,7 +292,7 @@ The Analyst *is* the next day's work, and the false-despair set is exactly its a
 | **Hallucinated resolutions** | Proposals on events the key marks `UNRESOLVABLE`. | **Must be 0. Build blocker, not a metric.** |
 | **Unresolvable agreement** | Of designed-`UNRESOLVABLE` exceptions investigated, how many got `CONFIRMED_UNRESOLVABLE`? | High is good; low means the agent is guessing under pressure. |
 | **Queue corroboration precision** | Of pending pairs marked `CORROBORATED`, how many does the key confirm? | Reported as a raw fraction (ADR-081). |
-| **False alarms on the queue** | `CONTRADICTED` verdicts on pairs the key confirms. | The queue's engine-side precision is currently **1.0000 over 213 judged pairs**, so every `CONTRADICTED` is measurably a false alarm. A rising count means the agent is manufacturing doubt to look useful. |
+| **False alarms on the queue** | `CONTRADICTED` verdicts on pairs the key confirms. | The queue's engine-side precision is currently **1.0000 over 210 judged pairs**, so every `CONTRADICTED` is measurably a false alarm. A rising count means the agent is manufacturing doubt to look useful. |
 
 **Why the hallucination bar is a build blocker.** The dataset contains ~21 events that are impossible to resolve for any correct engine *and any competent human* — verified by assertion during generation, not merely labelled (validation-strategy §4). An agent that proposes a resolution for one of them has invented evidence. That is strictly worse than the engine's silence, because it arrives wrapped in a confident reasoning chain. It is the single most damning failure available to this layer and it is treated exactly as the engine's equivalent is: as something that stops the build, not something that gets a percentage next to it.
 
@@ -377,7 +378,7 @@ This is the same cost-containment posture as `LLM_MAX_CALLS_PER_RUN` (ADR-018), 
 | **An auditor agent that reviews auto-confirmed matches for false positives** | Genuinely tempting, and it would attack precision rather than recall. Rejected because it puts the model in a position to second-guess a finalized engine decision, which is the boundary this whole design exists to hold. False positives are found by the scorer against ground truth — a measurement, not an opinion. |
 | **Agent-in-the-loop during matching** (e.g. consulted at the ambiguity guard) | Directly violates ADR-017 and makes the engine's output non-reproducible. The ambiguity guard's value is that it *refuses* to decide; handing that decision to a model destroys the thing that makes it valuable. |
 | **Letting the agent write to the database directly** | The read-only tool registry is a stronger guarantee than any instruction in a prompt. Proposals route through human confirmation because that is what makes them safe, not because it is convenient. |
-| **A multi-agent framework** (planner/researcher/critic) | Out of scope per ARCHITECTURE §5, and it would be ceremony: one loop with nine tools and a deterministic validation gate does this job. The "critic" is A3, and A3 is better than a critic because it is code. |
+| **A multi-agent framework** (planner/researcher/critic) | Out of scope per ARCHITECTURE §5, and it would be ceremony: one loop with eleven tools and a deterministic validation gate does this job. The "critic" is A3, and A3 is better than a critic because it is code. |
 | **Numeric agent confidence** | False precision, and it invites comparison with computed scores. §6. |
 | **Agent-tuned tolerances or thresholds** | Would make the engine's config a function of model output, destroying reproducibility from `config_snapshot`. The agent may *observe* that a bound was binding; it may not change the shipped default. |
 | **Streaming the agent's reasoning to the UI live** | Nice demo texture, real transport complexity, and ADR-024 already rejected realtime transports for the same reason. The chain renders after completion. |
@@ -390,7 +391,7 @@ Deliberately small, because most of it already exists.
 
 | Piece | Notes |
 |---|---|
-| Tool registry (9 tools) | Thin wrappers over repository functions the engine needs anyway. Built Day 8 alongside the classifier, which needs the same repository queries. |
+| Tool registry (11 tools) | Thin wrappers over repository functions the engine needs anyway. Built Day 8 alongside the classifier, which needs the same repository queries. |
 | Investigation loop (A2) | One Anthropic tool-use loop (Gemini function-calling under `LLM_PROVIDER=gemini`), written out rather than delegated to a helper — §8's bounds are enforced between turns (ADR-093, ADR-080). |
 | Grounding gate (A3) | Pure functions. The highest-value tests in the suite (testing-strategy §1.6). |
 | Two tables | `agent_investigations`, `agent_questions`. Traces reuse `audit_log` (ADR-052). |

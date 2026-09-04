@@ -1,9 +1,10 @@
 import Link from 'next/link';
 import { Disclosure } from '@/components/ui/Disclosure';
+import { ExceptionExposureBand } from '@/components/exceptions/ExceptionExposureBand';
 import { ExceptionTable } from '@/components/exceptions/ExceptionTable';
 import { FacetRail } from '@/components/exceptions/FacetRail';
 import { Paginate } from '@/components/ui/Paginate';
-import { getInvestigationsIfAny, listExceptions } from '@/lib/api-client';
+import { getInvestigationsIfAny, getMetricsIfComplete, listExceptions } from '@/lib/api-client';
 import { count } from '@/lib/format';
 import { hrefWith, one, resolveRun, runParam } from '@/lib/run-context';
 import { CATEGORY_LABEL, STATUS_LABEL, label } from '@/lib/taxonomy';
@@ -47,7 +48,7 @@ export default async function ExceptionsPage(
   }
 
   const { run, runs } = ctx;
-  const isDefaultRun = run.runId === (runs.find((r) => r.status === 'completed') ?? runs[0])?.runId;
+  const isDefaultRun = run.runId === ctx.defaultRunId;
   const runQ = isDefaultRun ? undefined : run.runId;
 
   const active = {
@@ -60,11 +61,22 @@ export default async function ExceptionsPage(
 
   // Which of these has the Analyst already looked at? One extra read, so the
   // agent is visible where the work is rather than only on its own screen.
-  const [data, agent] = await Promise.all([
+  // Metrics comes along too: the facet rail shows measured precision/recall per
+  // category (queue item 2), which lives in `measured.classification` — absent,
+  // never zero, when no score report exists (ADR-041).
+  const [data, agent, metrics, topByExposure] = await Promise.all([
     listExceptions(run.runId, { ...active, sort, page }),
     getInvestigationsIfAny(run.runId),
+    getMetricsIfComplete(run.runId),
+    // Run-wide, unfiltered: the exposure band leads the page with the three
+    // largest single lines regardless of how the table below is filtered or
+    // sorted (queue item 4). One small extra read.
+    listExceptions(run.runId, { sort: 'amount', pageSize: 3 }).catch(() => null),
   ]);
   const { exceptions, facets, pagination } = data;
+  const categoryAccuracy = metrics?.measured?.classification.multiLabel.perCategory ?? null;
+  const hasScoreReport = (metrics?.measured ?? null) !== null;
+  const exposure = metrics?.engine.exceptions.amountAtRisk ?? null;
 
   /**
    * THE RUN'S TOTAL AND WHAT IS STILL OPEN ARE TWO FIGURES (ADR-123, and the
@@ -125,15 +137,34 @@ export default async function ExceptionsPage(
         </form>
       </header>
 
+      {/*
+        Outside `.layout`, so the money leads on every viewport — above both the
+        filter rail and the table, not tucked into the main column after the
+        facets stack on mobile (ADR-167).
+      */}
+      {exposure && (
+        <ExceptionExposureBand
+          totalDisplay={exposure.totalDisplay}
+          totalCount={metrics!.engine.exceptions.total}
+          highSeverityDisplay={exposure.highSeverityDisplay}
+          highSeverityCount={exposure.highSeverityCount}
+          top={topByExposure?.exceptions ?? []}
+          runQ={runQ}
+        />
+      )}
+
       <div className={styles.layout}>
         <FacetRail
           facets={facets}
           active={active}
           runId={run.runId}
           isDefaultRun={isDefaultRun}
+          accuracy={categoryAccuracy}
+          hasScoreReport={hasScoreReport}
         />
 
         <div className={styles.main}>
+
           {activeFilters.length > 0 && (
             <div className={styles.activeFilters}>
               <span className="label">Filtered by</span>

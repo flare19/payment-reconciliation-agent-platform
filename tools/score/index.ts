@@ -67,7 +67,7 @@ import {
   type EngineException,
 } from './scoring.js';
 
-export const SCORER_VERSION = '1.4.0';
+export const SCORER_VERSION = '1.5.0';   // 1.5.0 dropped byDifficulty.precision (it aliased recall)
 
 interface Args {
   runId: string; keyFile: string; api: string; post: boolean; out: string | null;

@@ -17,7 +17,7 @@ import * as excRepo from '../repositories/exceptions.js';
 import * as txnRepo from '../repositories/transactions.js';
 import { peekCachedExplanation } from '../repositories/explanations.js';
 import { appendAuditEntry, readTransactionTrail } from '../repositories/audit.js';
-import { handler, found, requireString, enumParam, pathParam } from './helpers.js';
+import { handler, found, requireString, enumParam, uuidParam } from './helpers.js';
 import { exceptionDetail } from './serialize.js';
 import type { NormalizedTransaction } from '../types/engine.js';
 
@@ -26,7 +26,7 @@ export function exceptionsRouter(): Router {
 
   // 7 · GET /api/exceptions/:exceptionId
   r.get('/:exceptionId', handler(async (req, res) => {
-    const id = pathParam(req, 'exceptionId');
+    const id = uuidParam(req, 'exceptionId');
     const e = found(await excRepo.findException(id),
       'EXCEPTION_NOT_FOUND', `No exception exists with id ${id}`);
 
@@ -60,7 +60,7 @@ export function exceptionsRouter(): Router {
 
   // 20 · POST /api/exceptions/:exceptionId/resolve
   r.post('/:exceptionId/resolve', handler(async (req, res) => {
-    const id = pathParam(req, 'exceptionId');
+    const id = uuidParam(req, 'exceptionId');
     const body = (req.body ?? {}) as Record<string, unknown>;
     const resolvedBy = requireString(body, 'resolvedBy');
     // `exc_resolution_complete` refuses a resolution with no stated reason at

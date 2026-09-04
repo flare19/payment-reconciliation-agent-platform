@@ -42,7 +42,7 @@ export default async function AuditPage(
   }
 
   const { run, runs } = ctx;
-  const isDefaultRun = run.runId === (runs.find((r) => r.status === 'completed') ?? runs[0])?.runId;
+  const isDefaultRun = run.runId === ctx.defaultRunId;
   const runQ = isDefaultRun ? undefined : run.runId;
 
   const actorType = one(params, 'actorType');
@@ -158,6 +158,23 @@ export default async function AuditPage(
                     {e.actorId && (
                       <span className={styles.actorId} translate="no">{e.actorId}</span>
                     )}
+                    {/*
+                      The chain link itself, so tamper-evidence is checkable off
+                      this page and not only via the server's verify endpoint
+                      (ADR-168). Truncated on screen; the title carries both
+                      hashes and the recompute formula.
+                    */}
+                    <span
+                      className={styles.hash}
+                      translate="no"
+                      title={
+                        `entryHash ${e.entryHash}\nprevHash  ${e.prevHash}\n`
+                        + 'entryHash = sha256(canonicalJson(entry without '
+                        + 'sequenceNo/prevHash/entryHash) + prevHash) — schema.md §9.0'
+                      }
+                    >
+                      {e.entryHash.slice(0, 10)}…
+                    </span>
                   </div>
                 </li>
               ))}

@@ -230,14 +230,14 @@ Before merging anything to `main`: `npm run typecheck` and `npm test` in each af
 
 ---
 
-## 10. Current state (2026-09-03)
+## 10. Current state (2026-09-04)
 
 ### The engine — done, measured, stable
 
 ```
-920 transactions · 284 matches · 212 exceptions · match rate 65.22% (ceiling 93%)
-pair-level: precision 1.0000 · FP 0 · recall 0.6075 · unresolvable recall 1.0
-audit chain: 612 entries, verifies and is anchored
+920 transactions · 284 matches · 212 exceptions · match rate 65.56% warm / 65.22% cold (ceiling 93%)
+pair-level: precision 1.0000 · FP 0 · recall 0.6117 · unresolvable recall 1.0
+audit chain: 614 entries, verifies and is anchored
 S0–S14 all wired; run is byte-reproducible from its inputs
 ```
 
@@ -249,13 +249,13 @@ Recall 0.61 is the honest weakness and it lives in the HARD-difficulty band. Pre
 
 ### The Analyst — feature-complete, plumbing-verified, NOT measured
 
-A1 triage → A2 investigate / corroborate → A3 grounding gate → A4 persist. Nine read-only tools, read-only enforced by Postgres. Runs **on demand** when a human opens an exception (endpoint 25, 202-then-poll) — it does not sweep the queue. On Sonnet 5, 7 of 10 investigations ground cleanly; 3 still fail.
+A1 triage → A2 investigate / corroborate → A3 grounding gate → A4 persist. Eleven read-only tools, read-only enforced by Postgres. Runs **on demand** when a human opens an exception (endpoint 25, 202-then-poll) — it does not sweep the queue. On Sonnet 5, 14 of 19 investigations ground cleanly; 5 are downgraded by the gate. One reached RESOLUTION_PROPOSED with a grounded MANUAL_MATCH.
 
 > **The submission must not describe the Analyst as "working".** `tools/score` does not score it, so proposal precision, false-despair recovered, unresolvable agreement and hallucinated-resolutions (must be 0, ADR-053) do not exist as numbers. "Feature-complete and plumbing-verified" is the honest claim; nothing stronger. Scoring it is now affordable — it is offline work against the persisted verdicts, $0 of API — and is the highest-value open task.
 
 ### Frontend — U17 + U18 done
 
-Nine server-rendered routes: dashboard, `/exceptions` (+ detail), `/review`, `/audit`, `/matches`, `/aliases`, `/records/[id]`. Design principle to preserve: **provenance is a token** — every figure declares `engine` / `measured` / `absent`; `Figure`'s `provenance` prop is required so a number cannot render without saying where it came from. The write path (`resolve`) is verified end to end against a real audit entry.
+Ten server-rendered routes: dashboard, `/exceptions` (+ detail), `/review`, `/audit`, `/matches`, `/aliases`, `/records/[id]`, `/analyst`, `/set-aside`. Design principle to preserve: **provenance is a token** — every figure declares `engine` / `measured` / `absent`; `Figure`'s `provenance` prop is required so a number cannot render without saying where it came from. The write path (`resolve`) is verified end to end against a real audit entry.
 
 ### Deploy
 
@@ -273,11 +273,13 @@ reproduces the local numbers exactly over real HTTPS. Redeploys are **manual, on
 |---|---|
 | Analyst scoring in `tools/score` (validation-strategy §7) | not done — now affordable (offline, $0) |
 | `reapStaleRuns` (ADR-046/097) | **not implemented.** `STALE_RUN_TIMEOUT_MINUTES` is parsed and documented but enforced nowhere — a crashed run polls forever. ~30 min fix, protects the demo. |
-| Web deploy to Vercel (U19) | not done |
+| Web deploy to Vercel (U19) | not done — `PINNED_RUN_ID` must be set on Vercel when it is (ADR-166) |
 | U16 scale benchmark | not done |
-| U15 Q&A loop (`/api/runs/:runId/ask`) | **cut** (the pre-agreed degradation order). `qa-loop.ts` is a stub. |
+| U15 Q&A loop (`/api/runs/:runId/ask`) | **shipped.** Cut under the pre-agreed degradation order, then built when the time was there; 11 questions answered, 9 grounded. |
 | AUDIT-4 (final pre-submission audit) + U20 (accuracy report, README, pitch video, build-challenges write-up) | remaining |
 
 ### A recurring defect shape to watch for
 
-Several config fields in this repo have been **parsed, documented, published, and enforced nowhere**: `AGENT_MAX_COST_USD_PER_RUN` (fixed), `STALE_RUN_TIMEOUT_MINUTES` (open), `datasetSeed` on `POST /api/runs` (fixed on the day17 branch). The missing test is always the same one — *assert the field changes something*. When you add a knob, add that test.
+Several config fields in this repo have been **parsed, documented, published, and enforced nowhere**: `AGENT_MAX_COST_USD_PER_RUN` (fixed), `STALE_RUN_TIMEOUT_MINUTES` (**open**), `datasetSeed` on `POST /api/runs` (fixed on the day17 branch), `aliasLearningEnabled` (fixed on day18 — it was the fourth instance, and the worst, because api-contract §2 names it as *the* way to measure the cold-start rate, so the documented route to the number the project is proudest of silently returned the warm one). The missing test is always the same one — *assert the field changes something*. When you add a knob, add that test, and **watch it fail against the unfixed code** before you trust it.
+
+`STALE_RUN_TIMEOUT_MINUTES` is the one still open. It is the same shape and it will read the same way to a reviewer who tries it.

@@ -22,7 +22,7 @@ import * as invRepo from '../../src/repositories/investigations.js';
  * be re-derived by a frontend or substituted when absent.
  */
 
-const DB_URL = process.env['TEST_DATABASE_URL'] ?? process.env['DATABASE_URL'] ?? null;
+import { TEST_DB_URL as DB_URL, SKIP_REASON } from './test-db.js';
 const FIX = new URL('../../../../data/fixtures/holdout/', import.meta.url).pathname;
 const seed = (): RunSources => ({
   gateway: readFileSync(FIX + 'gateway_export.csv', 'utf8'),
@@ -44,7 +44,7 @@ const env = {
   rateLimitEnabled: false, trustProxyHops: 1,
 } as unknown as Env;
 
-describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL' : false }, () => {
+describe('routes (integration)', { skip: SKIP_REASON }, () => {
   let server: Server;
   let base: string;
   let runId: string;
@@ -290,6 +290,68 @@ describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL
     assert.equal(r.json['anchored'], true);
     assert.equal(r.json['entriesChecked'], 612);
     assert.equal(r.json['firstDivergenceSequenceNo'], null);
+  });
+
+  test('14 + 22 · the chain recomputes from the endpoint\'s OWN output (ADR-168)', async () => {
+    // The whole point of putting prevHash/entryHash on the wire: a reviewer can
+    // confirm tamper-evidence WITHOUT trusting /audit/verify. This test is that
+    // reviewer — an independent reimplementation of schema.md §9.0's recipe, no
+    // server code imported.
+    const { createHash } = await import('node:crypto');
+    const GENESIS = '0'.repeat(64);
+    const DROP = new Set(['sequenceNo', 'prevHash', 'entryHash']);
+
+    // Canonical JSON, from the §9.0 spec alone: keys sorted by code unit at every
+    // level, null for absent, arrays in order, finite numbers, -0 as 0. The
+    // holdout's audit strings are clean, so JSON.stringify's escaping matches the
+    // server's sanitize-then-stringify without reimplementing the sanitizer.
+    const canon = (v: unknown): string => {
+      if (v === null || v === undefined) return 'null';
+      if (Array.isArray(v)) return `[${v.map(canon).join(',')}]`;
+      if (typeof v === 'object') {
+        const o = v as Record<string, unknown>;
+        const keys = Object.keys(o).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+        return `{${keys.map((k) => `${JSON.stringify(k)}:${canon(o[k])}`).join(',')}}`;
+      }
+      if (typeof v === 'number') {
+        assert.ok(Number.isFinite(v), 'a non-finite number cannot be canonicalized');
+        return JSON.stringify(v === 0 ? 0 : v);
+      }
+      if (typeof v === 'string') return JSON.stringify(v);
+      if (typeof v === 'boolean') return v ? 'true' : 'false';
+      throw new Error(`unhandled ${typeof v}`);
+    };
+
+    // Page through endpoint 14 in sequenceNo order.
+    const entries: Record<string, unknown>[] = [];
+    for (let page = 1; ; page += 1) {
+      const r = await req('GET', `/api/runs/${runId}/audit?page=${page}&pageSize=200`);
+      assert.equal(r.status, 200);
+      const batch = r.json['entries'] as Record<string, unknown>[];
+      entries.push(...batch);
+      const pag = r.json['pagination'] as Record<string, number>;
+      if (page >= (pag['totalPages'] ?? 1)) break;
+    }
+    assert.equal(entries.length, 612);
+
+    let prev = GENESIS;
+    for (const e of entries) {
+      assert.equal(e['prevHash'], prev, `prevHash breaks at sequenceNo ${String(e['sequenceNo'])}`);
+      const hashable: Record<string, unknown> = {};
+      for (const [k, val] of Object.entries(e)) if (!DROP.has(k)) hashable[k] = val;
+      const recomputed = createHash('sha256').update(canon(hashable) + prev, 'utf8').digest('hex');
+      assert.equal(recomputed, e['entryHash'],
+        `recomputed entryHash disagrees at sequenceNo ${String(e['sequenceNo'])}`);
+      prev = e['entryHash'] as string;
+    }
+
+    // The independently computed head must match BOTH figures endpoint 22
+    // reports — `chainHead` (the entries served are consistent) and
+    // `expectedChainHead` (the anchor agrees none were dropped from the end).
+    const v = await req('GET', `/api/runs/${runId}/audit/verify`);
+    assert.equal(prev, v.json['chainHead']);
+    assert.equal(prev, v.json['expectedChainHead']);
+    assert.equal(entries.length, v.json['expectedEntryCount']);
   });
 
   test('24 · population lists every row outside the denominator, with its reason', async () => {

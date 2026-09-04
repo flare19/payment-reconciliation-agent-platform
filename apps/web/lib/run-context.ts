@@ -26,7 +26,33 @@ export interface RunContext {
    * read "All 25 runs" with 31 in the database).
    */
   runsTotal: number;
+  /**
+   * The run a screen shows when nothing is explicitly asked for — the pinned
+   * demo run if `PINNED_RUN_ID` names one that exists and completed, otherwise
+   * the newest completed run (ADR-166).
+   *
+   * Resolved ONCE, here, and carried on the context. Eight screens used to
+   * recompute `runs.find(completed) ?? runs[0]` inline to decide whether to
+   * thread `?run=` into their links; that is the same private-copy shape as
+   * ADR-157's bug, and with a pinned run it would have gone wrong on all eight
+   * at once. `run.runId === defaultRunId` is the one check they all share now.
+   */
+  defaultRunId: string;
 }
+
+/**
+ * The run the dashboard opens on when nothing is requested (ADR-166).
+ *
+ * A throwaway probe run at 26.89% silently became the site's headline during a
+ * judge review because the landing page follows the newest completed run. On
+ * panel day one stray click should not put a crippled run on the front page, so
+ * a canonical run is pinned by id and everything else — the run picker, every
+ * `?run=` link — keeps working exactly as before.
+ *
+ * Server-only (no `NEXT_PUBLIC_`): it is read here, in a server module, and has
+ * no business in the client bundle. Unset in local dev, set on the deployed web.
+ */
+const PINNED_RUN_ID = process.env['PINNED_RUN_ID']?.trim() || undefined;
 
 /**
  * WAS SILENTLY WRONG THE MOMENT A 26TH RUN EXISTED (found live, 2026-09-03).
@@ -63,21 +89,52 @@ export interface RunContext {
  */
 const RUN_LIST_FETCH_SIZE = 200;
 
+/**
+ * The default (nothing-requested) run: the pinned one if it exists and
+ * completed, otherwise newest completed, otherwise the newest run at all.
+ *
+ * A pinned id that names nothing, or a run that has not finished, is NOT an
+ * error a visitor should see — it falls back to the newest completed run and
+ * logs once on the server. The point of pinning is stability on panel day; a
+ * broken pin should degrade to today's behaviour, not to a blank page.
+ */
+async function resolveDefaultRun(runs: RunSummary[]): Promise<RunSummary> {
+  const newestCompleted = runs.find((r) => r.status === 'completed') ?? runs[0]!;
+
+  if (!PINNED_RUN_ID) return newestCompleted;
+
+  const onPage = runs.find((r) => r.runId === PINNED_RUN_ID);
+  const pinned = onPage ?? await getRun(PINNED_RUN_ID).catch((err) => {
+    if (err instanceof ApiClientError) return null;
+    throw err;
+  });
+
+  if (pinned && pinned.status === 'completed') return pinned;
+
+  console.warn(
+    `[run-context] PINNED_RUN_ID=${PINNED_RUN_ID} ${pinned ? `is ${pinned.status}, not completed` : 'does not exist'}; `
+    + 'falling back to the newest completed run.');
+  return newestCompleted;
+}
+
 export async function resolveRun(requested: string | undefined): Promise<RunContext | null> {
   const { runs, pagination } = await listRuns(RUN_LIST_FETCH_SIZE);
   if (runs.length === 0) return null;
   const runsTotal = pagination.total;
 
+  const defaultRun = await resolveDefaultRun(runs);
+  const defaultRunId = defaultRun.runId;
+
   if (requested) {
     const asked = runs.find((r) => r.runId === requested);
-    if (asked) return { run: asked, runs, runsTotal };
+    if (asked) return { run: asked, runs, runsTotal, defaultRunId };
 
     // Not on the fetched page. Ask for it directly rather than concluding
     // it does not exist — `runs` is a recency-ordered sample, not the truth
     // about which ids are valid.
     try {
       const run = await getRun(requested);
-      return { run, runs, runsTotal };
+      return { run, runs, runsTotal, defaultRunId };
     } catch (err) {
       // A GENUINE 404 (or the API being unreachable for this one call)
       // falls through to the same default this function has always used.
@@ -87,8 +144,7 @@ export async function resolveRun(requested: string | undefined): Promise<RunCont
     }
   }
 
-  const run = runs.find((r) => r.status === 'completed') ?? runs[0];
-  return run ? { run, runs, runsTotal } : null;
+  return { run: defaultRun, runs, runsTotal, defaultRunId };
 }
 
 /** Reads `?run=` out of Next's resolved search params. */

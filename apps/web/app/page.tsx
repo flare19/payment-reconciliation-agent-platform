@@ -3,6 +3,7 @@ import { AnalystBlock } from '@/components/dashboard/AnalystBlock';
 import { EnginePerformance } from '@/components/dashboard/EnginePerformance';
 import { EnginePipeline } from '@/components/dashboard/EnginePipeline';
 import { ExceptionBreakdown } from '@/components/dashboard/ExceptionBreakdown';
+import { BalanceProof } from '@/components/dashboard/BalanceProof';
 import { HeadlineRow } from '@/components/dashboard/HeadlineRow';
 import { RunLauncher } from '@/components/dashboard/RunLauncher';
 import { ScoreReportPoller } from '@/components/dashboard/ScoreReportPoller';
@@ -11,6 +12,7 @@ import { TierAttribution } from '@/components/dashboard/TierAttribution';
 import { Section } from '@/components/ui/Section';
 import {
   countPendingReview, getHealth, getInvestigationsIfAny, getMetricsIfComplete,
+  getReconciliationIfComplete,
 } from '@/lib/api-client';
 import { at, count, day, plural } from '@/lib/format';
 import { hrefWith, resolveRun, runParam } from '@/lib/run-context';
@@ -81,7 +83,7 @@ export default async function DashboardPage(
   const livePendingReview = run === undefined || run === null
     ? null
     : await countPendingReview(run.runId).catch(() => null);
-  const defaultRunId = (runs.find((r) => r.status === 'completed') ?? runs[0])?.runId;
+  const defaultRunId = ctx?.defaultRunId;
   const runQ = run && run.runId !== defaultRunId ? run.runId : undefined;
 
   if (!run) {
@@ -101,9 +103,10 @@ export default async function DashboardPage(
     );
   }
 
-  const [metrics, investigations] = await Promise.all([
+  const [metrics, investigations, recon] = await Promise.all([
     getMetricsIfComplete(run.runId),
     getInvestigationsIfAny(run.runId),
+    getReconciliationIfComplete(run.runId),
   ]);
 
   return (
@@ -211,6 +214,48 @@ export default async function DashboardPage(
           </section>
 
           {/*
+            DIRECTLY UNDER THE TILES, BECAUSE IT IS THE REASON TO BELIEVE THEM
+            (ADR-162). The tiles above claim a match rate over a denominator;
+            this recomputes that denominator from the rows and shows every
+            record's disposition. It also answers the arithmetic the page
+            otherwise invites a reader to get wrong — 573 + 216 + 212 = 1001
+            against a population of 874 — which currently reads as
+            double-counting rather than as the legitimate overlap it is.
+            Rendered only when the recompute succeeded; a run still in flight
+            has no books to balance, and an absent proof is shown as absent
+            rather than assumed to hold.
+          */}
+          {recon && (
+            <Section
+              id="balance"
+              title="The Books Balance"
+              standfirst="Every source row accounted for, recomputed from the records."
+              basis={{
+                summary: 'Why this is recomputed rather than reported',
+                body:
+                  'Every figure in this section is counted from the transactions, matches and '
+                  + 'exceptions themselves on each request — never read from the run’s stored '
+                  + 'summary. Checking a summary against itself would restate the number you are '
+                  + 'being asked to trust. The last identity compares the two, so the headline '
+                  + 'above is proven to be what these rows produce. Each identity shows both of '
+                  + 'its sides and is able to disagree; a check that can only report success is '
+                  + 'not a check.',
+              }}
+              aside={
+                <>
+                  <span className="num">
+                    {count(recon.checks.filter((c) => c.holds).length)}
+                  </span>
+                  {' of '}
+                  <span className="num">{count(recon.checks.length)}</span> identities hold
+                </>
+              }
+            >
+              <BalanceProof recon={recon} />
+            </Section>
+          )}
+
+          {/*
             F18 (backlog item 13): the bar names throughput, measured accuracy
             and the exception list. Accuracy is the headline row above; this
             reorder puts Exceptions and Cost of Running It (throughput) directly
@@ -240,7 +285,12 @@ export default async function DashboardPage(
               </>
             }
           >
-            <ExceptionBreakdown engine={metrics.engine} runQ={runQ} />
+            <ExceptionBreakdown
+              engine={metrics.engine}
+              runQ={runQ}
+              accuracy={metrics.measured?.classification.multiLabel.perCategory ?? null}
+              hasScoreReport={metrics.measured !== null}
+            />
           </Section>
 
           <Section
@@ -262,13 +312,15 @@ export default async function DashboardPage(
           <Section
             id="tiers"
             title="How the Number Was Earned"
-            standfirst="Which rule confirmed each pair the engine matched."
+            standfirst="Which rule assembled each pair the engine grouped."
             basis={{
               summary: 'What a bad version of this bar would look like',
               body:
-                'Every confirmed pair is attributed to the rule that produced it. A bar dominated '
-                + 'by fuzzy matching would be a bad sign — the engine would be reaching a number by '
-                + 'resemblance rather than by proof — so the split is shown rather than summarised.',
+                'Every pair assembled into a group is attributed to the rule that produced it — '
+                + 'the bar counts groups the engine formed, including any still awaiting review, '
+                + 'not only the confirmed ones in the match rate. A bar dominated by fuzzy matching '
+                + 'would be a bad sign — the engine would be reaching a number by resemblance rather '
+                + 'than by proof — so the split is shown rather than summarised.',
             }}
           >
             <TierAttribution engine={metrics.engine} />

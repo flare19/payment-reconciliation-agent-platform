@@ -1,9 +1,11 @@
-/* Four equal columns. `1fr` each, never `auto`: the moment one tile is allowed
+/* Five equal columns. `1fr` each, never `auto`: the moment one tile is allowed
    to size to its content, the match rate gets more room than the false-positive
-   count and the layout starts making an argument the data does not support. */
+   count and the layout starts making an argument the data does not support.
+   The fifth tile — money at risk (ADR-164) — is the same width as the other
+   four for the same reason. */
 .row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 1px;
   background: var(--rule);
   border: 1px solid var(--rule);
@@ -11,10 +13,15 @@
   overflow: hidden;
 }
 
-/* Nothing may overflow horizontally at 1024px (ui-spec §9). Two-up is the last
-   layout that keeps the match rate and its false-positive count side by side,
-   which is the pairing that must survive every breakpoint. */
-@media (max-width: 68rem) {
+/* Nothing may overflow horizontally at 1024px (ui-spec §9). Below that the row
+   wraps to two columns — and the ORDER is what keeps this honest: match rate is
+   tile 1 and its false-positive count is tile 2, so they always share the first
+   wrapped row and a sceptic can never see one without the other. */
+@media (max-width: 80rem) {
+  .row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 52rem) {
   .row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 

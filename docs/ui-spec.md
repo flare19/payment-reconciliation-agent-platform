@@ -41,13 +41,12 @@ Seven screens. Each maps to endpoints already in the contract; none needs an end
 
 Vertical order, top to bottom. This ordering is the argument the project is making, rendered.
 
-**Block 1 — the honest headline.** One row, four figures, equal visual weight:
+**Block 1 — the honest headline.** One row, five figures, equal visual weight:
 
 ```
-  MATCH RATE          FALSE POSITIVES     COLD START          CEILING
-  82.4%               5                   74.1%               93.0%
-  670 / 813 records   measured vs key     no learned aliases  21 events unresolvable
-                                                              by design
+  MATCH RATE        FALSE POSITIVES   COLD START         CEILING              MONEY AT RISK
+  82.4%             5                 74.1%              93.0%                ₹33,07,074.91
+  670 / 813 records measured vs key   no learned aliases 21 events unresolv.  across 212 exceptions
 ```
 
 Notes that are not optional:
@@ -56,10 +55,13 @@ Notes that are not optional:
 - **The ceiling is displayed as a peer of the match rate**, not a footnote. It reframes 82.4 % from "not great" to "82.4 against a known maximum of 93" — which is the honest reading and the stronger one.
 - **Match rate's denominator is on hover** (`engine.matchRate.denominatorNote`). A percentage whose denominator is not inspectable is not a measurement.
 - **If `measured` is `null`** (uploaded files, or the scorer hasn't run), the false-positive tile reads *"not measured against ground truth"* in muted text. It never falls back to an engine figure. A fabricated accuracy number is worse than an absent one.
+- **Money at risk (ADR-164)** is the fifth tile: `engine.exceptions.amountAtRisk.totalDisplay`, summed server-side over every exception, `provenance: engine`. This is the AI Finance Controller track and "how much is unaccounted for?" is the first question a controller asks; the four figures to its left are about the engine, this one is about the money. It is the engine's own sum, never scored against a key, and reads as absent (not zero) on a run whose metrics predate the block. The high-severity subtotal and the single largest line sit in its note and basis.
 
 **Block 2 — tier attribution.** A single horizontal stacked bar: exact / alias / identity / fuzzy / near-anchor / batch / manual / unmatched. This is the "how did it earn the number" answer in one glance, and it is where a sceptical panelist looks second. A bar dominated by fuzzy would be a bad sign, and the chart is honest enough to show it.
 
 **Block 3 — exceptions by category**, sorted by count, each a link into a pre-filtered exception list. Severity shown as colour within each bar.
+
+Each category row also carries its **measured precision and recall** (`measured.classification.multiLabel.perCategory`, `provenance: measured`) — the list otherwise looks equally confident about every category, and the scorer knows it is not (on the holdout `MISSING_IN_GATEWAY` is P 0.29, `UNSPLITTABLE_BATCH` is R 0.50). When the run has no score report the line reads *"accuracy not measured"* in muted text; a category the answer key has no true events for reads *"not scored for this category"*. Neither is ever shown as `0.0000` — substituting a zero for an unmeasured category is the ADR-041 failure this project exists to prevent (ADR-165).
 
 **Block 4 — throughput and LLM cost.** Engine and wall-clock rates side by side, the per-stage breakdown behind a disclosure, and the scale-benchmark curve as a small sparkline with a link. LLM cost as `3 API calls · 53 cache hits · 22 distinct shapes` — a line that tells an engineer more about the design than a paragraph would.
 
@@ -75,7 +77,9 @@ Below it, the **Q&A box** with four pre-seeded example questions. A blank text b
 
 This screen *is* the product. Build it first, and give it the most attention.
 
-**Layout:** left rail of facet filters (category, severity, status, resolvability, source), main table, no infinite scroll — paginated at 50 with the total always visible. A judge needs to see "65 exceptions" as a bounded, countable set.
+**Layout:** left rail of facet filters (category, severity, status, resolvability, source), main table, no infinite scroll — paginated at 50 with the total always visible. A judge needs to see "65 exceptions" as a bounded, countable set. Each **category** facet carries its measured precision/recall beneath the label, same figure and same absent-not-zero rule as block 3 on the dashboard (ADR-165); severity and status do not — there is no ground-truth precision for "high".
+
+**The main column leads with money, not the taxonomy (ADR-167).** Above the filter chips and the table sits a one-line exposure band: the run-wide amount at risk (`engine.exceptions.amountAtRisk`, `provenance: engine`, summed server-side over the whole run per ADR-164), the high-severity subtotal, and the three largest single lines — each a link into its own exception. Run-wide, not scoped to the active filter, matching the facet counts. It renders only when the run's metrics carry the block; a run scored before ADR-164 shows the table without it.
 
 **Default sort: severity DESC, then `amountAtRiskPaise` DESC.** A finance controller triages by money at risk, which is why severity is computed from amount (ADR-044) rather than fixed per category. A default sort that buries a ₹5,00,000 mismatch under nine ₹5 ones would waste the whole feature.
 

@@ -13,7 +13,7 @@ Per ARCHITECTURE §7, this is a lightweight table — **not** an OpenAPI/Swagger
 | Concern | Decision |
 |---|---|
 | Base path | `/api` — all routes below are relative to it. |
-| Format | JSON in, JSON out. The single exception is `POST /api/runs` with file upload, which is `multipart/form-data`. |
+| Format | JSON in, JSON out, with no exceptions — the `multipart/form-data` upload variant of `POST /api/runs` is NOT BUILT (ADR-161). |
 | Casing | **`camelCase` on the wire.** Postgres is `snake_case`; the mapping happens once in the repository layer, never in the frontend. |
 | Money | Wire format is **`amountPaise: number` (integer)** plus a pre-formatted **`amountDisplay: string`** (`"₹1,234.50"`). The frontend never does currency arithmetic or formatting — one formatter, server-side, so the dashboard and the API can never disagree about a number. |
 | Dates | ISO-8601. Business dates as `"2026-08-14"`, instants as `"2026-08-14T08:15:02.000Z"` (UTC). The frontend renders in IST. |
@@ -72,7 +72,7 @@ against a 240/minute allowance, and a run completes in ~3 s (≈4 polls).
 | # | Route | Method | Request | Response | Purpose |
 |---|---|---|---|---|---|
 | 1 | `/api/health` | GET | — | `{ status, dbConnected, llmConfigured, version }` | Deploy smoke check. |
-| 2 | `/api/runs` | POST | `multipart` (3 files) **or** `{ useSeedDataset, datasetSeed?, label?, configOverrides? }` | `202` `{ runId, status, label, startedAt }` | Upload sources / trigger a run. |
+| 2 | `/api/runs` | POST | `{ useSeedDataset, datasetSeed?, label?, configOverrides? }` — JSON only; multipart upload is NOT BUILT (ADR-161) | `202` `{ runId, status, label, startedAt }` | Trigger a run over a registered seed dataset. |
 | 3 | `/api/runs` | GET | `?page&pageSize` | `{ runs: RunSummary[], pagination }` | Run history for the dashboard's run picker. |
 | 4 | `/api/runs/:runId` | GET | — | `RunDetail` (status, progress, counts, metrics when done) | Poll target while a run is in flight. |
 | 5 | `/api/runs/:runId/metrics` | GET | — | `Metrics` | The headline numbers panel. `409` if run not complete. |
@@ -81,7 +81,7 @@ against a 240/minute allowance, and a run completes in ~3 s (≈4 polls).
 | 8 | `/api/runs/:runId/matches` | GET | `?tier&status&page&pageSize` | `{ matches: MatchSummary[], pagination }` | Browse what *did* match, per tier. |
 | 9 | `/api/runs/:runId/review-queue` | GET | `?page&pageSize` | `{ items: ReviewItem[], pagination }` | Fuzzy matches awaiting human approval. |
 | 10 | `/api/matches/:matchId/approve` | POST | `{ reviewedBy, note?, aliasProposals?[] }` | `{ match, aliasesCreated[], auditEntryIds[] }` | Approve a flagged match, optionally teaching an alias. |
-| 11 | `/api/matches/:matchId/reject` | POST | `{ reviewedBy, reason }` | `{ match, exceptionCreated, auditEntryIds[] }` | Reject; members return to the exception pool. |
+| 11 | `/api/matches/:matchId/reject` | POST | `{ reviewedBy, reason }` | `{ match, exceptionCreated, auditEntryIds[] }` — `exceptionCreated` is **always `null`** (ADR-163) | Reject; members return to the pool and are reported as *awaiting re-classification* until the next run's S12. |
 | 12 | `/api/transactions/:transactionId` | GET | — | `TransactionDetail` (normalized + `rawPayload`) | Record inspector. |
 | 13 | `/api/transactions/:transactionId/audit` | GET | `?page&pageSize` | `{ entries: AuditEntry[], pagination }` | **Audit trail per transaction.** |
 | 14 | `/api/runs/:runId/audit` | GET | `?eventType&actorType&page&pageSize` | `{ entries: AuditEntry[], pagination }` | Whole-run trail. |
@@ -98,9 +98,10 @@ against a 240/minute allowance, and a run completes in ~3 s (≈4 polls).
 | 25 | `/api/runs/:runId/investigations` | POST | `{ maxInvestigations?, categories?[] }` | `202` `{ phaseId, status }` | Start Phase A on a completed run. (ADR-048) |
 | 26 | `/api/runs/:runId/investigations` | GET | `?verdict&category&page&pageSize` | `{ investigations: InvestigationSummary[], agentMetrics, pagination }` | Analyst results for a run. |
 | 27 | `/api/investigations/:investigationId` | GET | — | `InvestigationDetail` (reasoning chain, tool trace, citations, proposal) | Drill-down into one investigation. |
-| 28 | `/api/runs/:runId/ask` | POST | `{ question }` | `{ answer, citations[], toolCalls[], steps, costUsd }` | Q&A agent over finalized run results. (ADR-056) |
+| 28 | `/api/runs/:runId/ask` | POST | `{ question }` | `{ questionId, answer, citations[], steps, toolCalls, tokensIn, tokensOut, costUsd, groundingPassed, askedAt }` — `toolCalls` is a COUNT (ADR-161) | Q&A agent over finalized run results. (ADR-056) |
+| 29 | `/api/runs/:runId/reconciliation` | GET | — | `{ balanced, checks[], population, disposition, exceptionBreakdown, exceptionRows }` | **The books, recomputed from base rows.** Five identities, each able to fail. `409` if run not complete. (ADR-162) |
 
-28 endpoints, all `GET` except nine `POST`s and one `PATCH`. Nothing here needs a `DELETE` — nothing in this system is ever deleted.
+29 endpoints, all `GET` except nine `POST`s and one `PATCH`. Nothing here needs a `DELETE` — nothing in this system is ever deleted.
 
 **Phase A adds no write endpoints.** Accepting an Analyst proposal routes through endpoints that already exist — 21 (manual match), 16 (create alias), 20 (resolve exception) — with `sourceInvestigationId` in the body so the acceptance is attributed (ADR-051). The Analyst proposes into an inbox that already has a confirmation flow, an audit trail and a UI, which is most of why the layer is buildable in the time available.
 
@@ -116,17 +117,24 @@ against a 240/minute allowance, and a run completes in ~3 s (≈4 polls).
 
 ### 2 · `POST /api/runs`
 
-**Variant A — upload (multipart/form-data)**
+**Variant A — upload (multipart/form-data) — NOT BUILT (ADR-161)**
 
-| Part | Required | Notes |
-|---|---|---|
-| `gatewayFile` | yes | CSV, ≤10 MB |
-| `bankFile` | yes | CSV, ≤10 MB |
-| `ledgerFile` | yes | CSV, ≤10 MB |
-| `label` | no | Defaults to `upload-<ISO timestamp>` |
-| `configOverrides` | no | JSON string, same shape as variant B |
+Cut under the degradation order and **not implemented on any build**. A `multipart/form-data`
+request returns:
 
-**Variant B — seeded dataset (application/json)**
+```json
+{ "error": { "code": "MISSING_REQUIRED_FILE",
+             "message": "file upload is not enabled on this build; pass { useSeedDataset: true }" } }
+```
+
+with `400`. Runs are started from the registered seed datasets only (`GET /api/health` lists
+them). The design, kept for whenever it is built: parts `gatewayFile` / `bankFile` / `ledgerFile`
+(CSV, ≤10 MB each), optional `label` defaulting to `upload-<ISO timestamp>`, optional
+`configOverrides` as a JSON string. Ingestion is format-declared rather than format-guessed
+(schema.md §2), so building this means column mapping and format inference — see ADR-161 for why
+that is not a pre-submission change.
+
+**Variant B — seeded dataset (application/json) — the only supported variant**
 
 ```json
 {
@@ -536,7 +544,7 @@ Every `RecordPreview` carries **`sourceRowNumber`** alongside `transactionId` (A
 
 ```json
 {
-  "sequenceNo": 4412, "occurredAt": "2026-08-24T09:00:03.118Z",
+  "sequenceNo": 4412, "runId": "8f3e…", "occurredAt": "2026-08-24T09:00:03.118Z",
   "eventType": "MATCH_CONFIRMED_ALIAS",
   "subjectType": "match", "subjectId": "…", "transactionId": "…",
   "actorType": "engine", "actorId": "matching-engine@1.0.0",
@@ -545,11 +553,14 @@ Every `RecordPreview` carries **`sourceRowNumber`** alongside `transactionId` (A
   "reason": "Counterparty 'AMZN' resolved to 'AMAZON RETAIL' via alias approved by tejas on 2026-08-22; exact predicate then satisfied.",
   "beforeState": null,
   "afterState": { "matchId": "…", "tier": "alias" },
-  "details": { "aliasId": "…" }
+  "details": { "aliasId": "…" },
+  "prevHash": "0000…", "entryHash": "9f2c…"
 }
 ```
 
 Sorted by `sequenceNo` ascending — chronological, and deterministic even for entries written in the same millisecond.
+
+`prevHash` and `entryHash` are the hash chain (ADR-042, ADR-168). They are on every entry so a reviewer can **recompute the chain independently** rather than trust the server's own `/audit/verify` (endpoint 22): for each entry in `sequenceNo` order, `entryHash == sha256_hex( canonicalJson(entry without sequenceNo/prevHash/entryHash) + prevHash )`, and each `prevHash` equals the previous entry's `entryHash` — the first in a chain chains from 64 zeros. `runId` is included because it is one of the hashed fields (`null` for the alias-admin chain) and endpoints 13/18 can return entries from more than one chain. The exact `canonicalJson` rules — key sort, `null` for absent, ISO-8601 UTC timestamps, array order preserved, NUL/lone-surrogate sanitization — are in **schema.md §9.0**.
 
 ### `Alias` (endpoints 15–18)
 

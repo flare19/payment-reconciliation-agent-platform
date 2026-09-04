@@ -60,3 +60,21 @@
 
 .facetName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .facetCount { flex: none; font-size: var(--t-micro); opacity: 0.75; }
+
+/* The measured P/R line sits under its category facet, indented to the facet's
+   own text and quieter than the label it annotates. */
+.facetAccuracy {
+  display: block;
+  padding: 0 var(--s2) var(--s2);
+  margin-top: 1px;
+}
+
+/* The one-line reading guide under the Category facets (ADR-172). Sized to sit
+   below the list without competing with it — it explains a number, it is not one. */
+.groupNote {
+  margin-top: var(--s3);
+  font-size: var(--t-micro);
+  line-height: 1.55;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}

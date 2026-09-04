@@ -668,7 +668,7 @@ export function scoreResolvability(key: AnswerKey, engine: EngineSnapshot): Reso
  */
 export function scoreByDifficulty(
   key: AnswerKey, engine: EngineSnapshot,
-): Record<string, { precision: number; recall: number; pairs: number }> {
+): Record<string, { recall: number; pairs: number }> {
   const byTransactionId = new Map(engine.records.map((r) => [r.transactionId, r]));
   const confirmed = pairsFromMatches(
     engine.matches.filter((m) => m.status === 'auto_confirmed' || m.status === 'human_confirmed'),
@@ -692,13 +692,29 @@ export function scoreByDifficulty(
     else buckets[d]!.fn += 1;
   }
 
-  const out: Record<string, { precision: number; recall: number; pairs: number }> = {};
+  const out: Record<string, { recall: number; pairs: number }> = {};
   for (const [d, b] of Object.entries(buckets)) {
-    // Precision is not sliceable by difficulty — a FALSE pair belongs to no
-    // event, so it has no difficulty label. Reported as the recall slice it
-    // actually is, rather than inventing a per-difficulty precision by
-    // arbitrarily attributing false positives.
-    out[d] = { precision: round4(b.pairs === 0 ? 0 : b.tp / b.pairs), recall: round4(b.pairs === 0 ? 0 : b.tp / b.pairs), pairs: b.pairs };
+    /**
+     * RECALL ONLY, AND NO `precision` KEY AT ALL.
+     *
+     * Precision is not sliceable by difficulty: a false positive is a pair the
+     * key does not contain, so it belongs to no event and carries no difficulty
+     * label. There is nothing to divide by.
+     *
+     * This block used to emit `precision` alongside `recall` holding the
+     * identical expression, with a comment explaining that it was really the
+     * recall slice. That comment was right and the field name was still a lie —
+     * and a lie the payload told louder than the comment corrected, because a
+     * consumer reads the key. It also produced an arithmetically impossible
+     * claim: engine precision is 1.0000 with 0 false positives, so a
+     * per-difficulty precision of 0.1504 cannot exist. In a project whose whole
+     * case rests on the `measured` block meaning exactly what it says, a
+     * mislabelled field there is the most expensive kind of wrong.
+     *
+     * Dropping the key is the honest fix. A number that cannot be computed
+     * should be absent, not aliased onto its neighbour (§5.1.1, ADR-041).
+     */
+    out[d] = { recall: round4(b.pairs === 0 ? 0 : b.tp / b.pairs), pairs: b.pairs };
   }
   return out;
 }

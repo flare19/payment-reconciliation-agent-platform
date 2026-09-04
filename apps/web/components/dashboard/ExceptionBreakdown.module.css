@@ -88,7 +88,19 @@
   background: var(--tier-3);
 }
 
+/* Gloss and measured accuracy share a line: prose left, the P/R figure trailing.
+   `space-between` keeps the figure at the row's right edge where the eye scans a
+   column of them. Wraps to two lines below the narrow breakpoint. */
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 0.75rem;
+}
+
 .gloss {
+  flex: 1 1 12rem;
   font-size: var(--t-micro);
   line-height: 1.5;
   color: var(--ink-3);
@@ -158,5 +170,29 @@
 .empty {
   font-size: var(--t-body);
   color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+/* A category at zero, stated rather than dropped (ADR-169). Sits below the list
+   and reads as a footnote to it, not as a ninth row — it is not a link, because
+   filtering the exception list to a category with no members is a dead end. */
+.absent {
+  margin-top: var(--s4);
+  font-size: var(--t-micro);
+  line-height: 1.55;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+.absentHead { color: var(--ink-2); }
+
+/* Reading guide under the category bars (ADR-172). Same register as .absent
+   below it: an explanation of a number, deliberately quieter than the number. */
+.accuracyNote {
+  margin-top: var(--s4);
+  font-size: var(--t-micro);
+  line-height: 1.6;
+  color: var(--ink-3);
+  max-width: 68ch;
   text-wrap: pretty;
 }

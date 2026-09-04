@@ -13,14 +13,14 @@
 import { Router } from 'express';
 import { readRunTrail } from '../repositories/audit.js';
 import * as runsRepo from '../repositories/runs.js';
-import { handler, found, pageParams, stringParam, enumParam, pathParam } from './helpers.js';
+import { handler, found, pageParams, stringParam, enumParam, uuidParam } from './helpers.js';
 import { auditEntry, paginate } from './serialize.js';
 
 export function auditRouter(): Router {
   const r = Router();
 
   r.get('/:runId/audit', handler(async (req, res) => {
-    const runId = pathParam(req, 'runId');
+    const runId = uuidParam(req, 'runId');
     found(await runsRepo.findRun(runId), 'RUN_NOT_FOUND', `No run exists with id ${runId}`);
     const { page, pageSize, offset } = pageParams(req);
 

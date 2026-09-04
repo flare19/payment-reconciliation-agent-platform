@@ -76,7 +76,13 @@
 
 .dateCell { color: var(--ink-2); white-space: nowrap; }
 
-.numCol { text-align: right; white-space: nowrap; }
+/* Same geometry as the tier-attribution legend directly above (SegmentBar):
+   a fixed 6.5rem, right-aligned, flush to the cell edge — so a column of
+   numbers lines up whichever dashboard table it sits in. */
+.numCol { width: 6.5rem; text-align: right; white-space: nowrap; }
+
+.table thead th.numCol,
+.table tbody td.numCol { padding-left: 0; padding-right: 0; }
 
 .muted { color: var(--ink-3); }
 

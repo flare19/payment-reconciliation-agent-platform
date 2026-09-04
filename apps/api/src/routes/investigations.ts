@@ -25,7 +25,7 @@ import { llmConfigured, type Env } from '../config/env.js';
 import * as invRepo from '../repositories/investigations.js';
 import * as excRepo from '../repositories/exceptions.js';
 import * as runsRepo from '../repositories/runs.js';
-import { handler, found, pageParams, pathParam, requireString } from './helpers.js';
+import { handler, found, pageParams, uuidParam, requireString } from './helpers.js';
 import { investigationDto, questionDto, paginate } from './serialize.js';
 import { createAgentClient, costModelFor } from '../services/llm-provider.js';
 import { buildGateContext } from '../services/agent/phase-a.js';
@@ -52,7 +52,7 @@ export function investigationsRouter(env: Env): Router {
 
   // 25 · POST /api/exceptions/:exceptionId/investigate
   r.post('/exceptions/:exceptionId/investigate', handler(async (req, res) => {
-    const id = pathParam(req, 'exceptionId');
+    const id = uuidParam(req, 'exceptionId');
     found(await excRepo.findException(id),
       'EXCEPTION_NOT_FOUND', `No exception exists with id ${id}`);
     // THREE STATES, NOT TWO (ADR-109). `ux_inv_exc_active` already guarantees at
@@ -177,7 +177,7 @@ export function investigationsRouter(env: Env): Router {
 
   // 26 · GET /api/runs/:runId/investigations
   r.get('/runs/:runId/investigations', handler(async (req, res) => {
-    const runId = pathParam(req, 'runId');
+    const runId = uuidParam(req, 'runId');
     const run = found(await runsRepo.findRun(runId),
       'RUN_NOT_FOUND', `No run exists with id ${runId}`);
     if (run.status !== 'completed') {
@@ -199,7 +199,7 @@ export function investigationsRouter(env: Env): Router {
 
   // 27 · GET /api/investigations/:investigationId
   r.get('/investigations/:investigationId', handler(async (req, res) => {
-    const id = pathParam(req, 'investigationId');
+    const id = uuidParam(req, 'investigationId');
     const inv = found(await invRepo.findInvestigation(id),
       'INVESTIGATION_NOT_FOUND', `No investigation exists with id ${id}`);
     res.json(investigationDto(inv));
@@ -214,7 +214,7 @@ export function investigationsRouter(env: Env): Router {
   // see `qa-quota.ts`. Synchronous, because the contract's response body IS the
   // answer (§28) and `agent_questions` has no status column to poll.
   r.post('/runs/:runId/ask', handler(async (req, res) => {
-    const runId = pathParam(req, 'runId');
+    const runId = uuidParam(req, 'runId');
     const run = found(await runsRepo.findRun(runId),
       'RUN_NOT_FOUND', `No run exists with id ${runId}`);
     const question = requireString(req.body ?? {}, 'question');
@@ -299,7 +299,7 @@ export function investigationsRouter(env: Env): Router {
 
   // Read-only history, useful before the loop lands.
   r.get('/runs/:runId/questions', handler(async (req, res) => {
-    const runId = pathParam(req, 'runId');
+    const runId = uuidParam(req, 'runId');
     found(await runsRepo.findRun(runId), 'RUN_NOT_FOUND', `No run exists with id ${runId}`);
     const questions = await invRepo.listQuestions(runId, 50);
     res.json({ questions: questions.map(questionDto) });

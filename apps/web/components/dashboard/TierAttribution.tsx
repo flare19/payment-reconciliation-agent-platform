@@ -4,7 +4,14 @@ import type { EngineMetrics } from '@/types/api';
 import styles from './TierAttribution.module.css';
 
 /**
- * ui-spec §2 block 2 — how the match rate was earned, in one glance.
+ * ui-spec §2 block 2 — which rule assembled each pair, in one glance.
+ *
+ * THE BAR COUNTS PAIRS ASSEMBLED, NOT CONFIRMED. `tierPairCounts` iterates
+ * every group the engine formed, `pending_review` included; `matchedRecordIds`
+ * (the match rate's numerator) does not. So this total legitimately exceeds the
+ * confirmed match count, and a `fuzzyAutoConfirmThreshold: 0.99` probe that
+ * collapsed matches to 235 left this bar at 747. The chrome says "assembled"
+ * throughout so the heading and the footnote agree (queue item 6).
  *
  * TWO CORRECTIONS TO THE SPEC'S SEGMENT LIST, both forced by what the data
  * actually is:
@@ -57,7 +64,7 @@ export function TierAttribution({ engine }: { engine: EngineMetrics }) {
     {
       key: 'unattributed', label: 'Unattributed', value: get('unattributed'),
       color: 'var(--tier-void)', isVoid: true,
-      gloss: 'A pair inside a confirmed group that no tier and no rule accounts for. Must be zero.',
+      gloss: 'A pair inside an assembled group that no tier and no rule accounts for. Must be zero.',
     },
   ];
 
@@ -73,15 +80,16 @@ export function TierAttribution({ engine }: { engine: EngineMetrics }) {
         segments={segments}
         total={total}
         unit="Pairs"
-        caption="Confirmed pairs by the tier that produced them"
+        caption="Assembled pairs by the tier that produced them"
       />
 
       <aside className={styles.sidebar}>
         <div className={styles.stat}>
-          <span className="label">Pairs Matched</span>
+          <span className="label">Pairs Assembled</span>
           <span className={`${styles.statValue} num`}>{count(total)}</span>
           <p className={styles.statNote}>
-            Every internal pair of every group the engine assembled.
+            Every internal pair of every group the engine assembled — including groups still
+            awaiting review, which is why this can exceed the confirmed match count.
           </p>
         </div>
 

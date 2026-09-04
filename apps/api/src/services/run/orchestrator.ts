@@ -61,7 +61,8 @@ import {
   assembleGroups, fromTier1, fromTier2, type GroupPair, type RefusedPair,
 } from '../matching/group-assembly.js';
 import { runBatchStage } from '../matching/batch-stage.js';
-import { runClassification } from '../classification/collect.js';
+import { buildClassificationInput } from '../classification/collect.js';
+import { classify, deferredRecords } from '../classification/classify.js';
 import { computeRunMetrics, type StageTimings } from '../metrics/run-metrics.js';
 import {
   auditEventFor, planSignatures, resolveExplanations,
@@ -314,7 +315,29 @@ async function runPhases(
   // A run's output must be a pure function of (files, config, active aliases);
   // re-reading mid-run would let a concurrent alias write change the answer
   // halfway through and make the run unreproducible.
-  const aliases = await aliasRepo.listActiveAliases();
+  //
+  // ── `aliasLearningEnabled: false` MEANS THE RUN SEES NO ALIASES ────────────
+  // api-contract §2 names this field as *the* way to measure the cold-start
+  // rate, and until now it was parsed, persisted into `config_snapshot` and
+  // enforced NOWHERE: the override was accepted and the run came back warm.
+  // That is the defect shape CLAUDE.md §10 names — a knob that is documented
+  // and inert — and this is its third instance.
+  //
+  // Loading `[]` is the whole fix, because every downstream consumer already
+  // derives coldness from the alias set rather than from the flag:
+  // `aliasCountAtStart` becomes 0, `run-metrics` therefore reports
+  // `isCold: true` (ADR-020), and the cold counterfactual below correctly
+  // skips its second pipeline pass because the warm run IS the cold run.
+  // Nothing reads the flag downstream, so nothing else needs to change.
+  //
+  // Scope: this governs whether a RUN APPLIES aliases, not whether a human may
+  // teach one. Approving a match with `aliasProposals` (endpoint 10) still
+  // creates the alias — that is a human decision outside the run's lifecycle,
+  // and ADR-020 defines cold start as the rate "with aliases disabled", not as
+  // a mode in which corrections cannot be recorded.
+  const aliases = baseConfig.aliasLearningEnabled
+    ? await aliasRepo.listActiveAliases()
+    : [];
 
   // ADR-039: the reference date is dataset-derived and is only knowable after
   // parsing, so the resolved config — the thing `config_snapshot` must record —
@@ -520,7 +543,7 @@ async function runPhases(
   // ── S12 CLASSIFY ───────────────────────────────────────────────────────────
   await runsRepo.setRunStatus(runId, 'classifying');
 
-  const exceptions = stage.time('classify', () => runClassification({
+  const classificationInput = buildClassificationInput({
     pool: t15.pool, duplicates: deduped.findings, identity, tier2,
     // Every credit S10 examined, verdict included (§11 entry 3). `decomposed`
     // outcomes are skipped by the classifier — they became groups above; the
@@ -528,11 +551,27 @@ async function runPhases(
     // AMBIGUOUS_MATCH, carrying the bound that stopped the search (ADR-038).
     batches: batch.batches,
     groups: assembled.matches, refused: assembled.refused, config,
-  }));
+  });
+  const exceptions = stage.time('classify', () => classify(classificationInput));
+
+  /**
+   * WHAT S12 DECLINED TO CALL MISSING, AND WHY (ADR-163).
+   *
+   * Derived from the same input and the same `settlementDue` the presence rule
+   * uses, so there is one definition of "not yet due" rather than a second one
+   * that could drift. Raises no exception and moves no number — it names a state
+   * a record was already in, so the run can account for every record instead of
+   * losing one between "not matched" and "not a problem yet".
+   */
+  const deferrals = deferredRecords(classificationInput, exceptions);
 
   await withTransaction(async (c) => {
     const audit = new PhaseAudit(c, runId);
     await excRepo.insertExceptions(runId, exceptions, c);
+    // Persisted in the SAME transaction as the exceptions: they are two halves
+    // of one statement about what happened to every record, and a crash between
+    // them would leave books that do not balance (ADR-162's C3).
+    await txnRepo.markDeferred(deferrals, c);
     for (const e of exceptions) {
       await audit.write({
         ...blank, transactionId: e.transactionId,

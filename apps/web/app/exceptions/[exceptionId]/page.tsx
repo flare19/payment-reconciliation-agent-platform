@@ -138,6 +138,12 @@ export default async function ExceptionDetailPage(
           </div>
 
           <h1 className={styles.title}>{label(CATEGORY_LABEL, exception.category)}</h1>
+          {/* The id, selectable in one gesture — it is how you name THIS
+              exception to the Analyst's free-text box or in a review note. */}
+          <p className={styles.idLine}>
+            <span className="label">Exception ID</span>
+            <code translate="no">{exception.exceptionId}</code>
+          </p>
           <p className={styles.gloss}>{CATEGORY_GLOSS[exception.category] ?? ''}</p>
 
           <p className={styles.severityBasis}>

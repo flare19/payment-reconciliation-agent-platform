@@ -15,7 +15,7 @@ import * as txnRepo from '../repositories/transactions.js';
 import * as matchRepo from '../repositories/matches.js';
 import * as excRepo from '../repositories/exceptions.js';
 import { readTransactionTrail } from '../repositories/audit.js';
-import { handler, found, pageParams, pathParam } from './helpers.js';
+import { handler, found, pageParams, uuidParam } from './helpers.js';
 import { transactionDetail, auditEntry, paginate } from './serialize.js';
 
 export function transactionsRouter(): Router {
@@ -23,7 +23,7 @@ export function transactionsRouter(): Router {
 
   // 12 · GET /api/transactions/:transactionId
   r.get('/:transactionId', handler(async (req, res) => {
-    const id = pathParam(req, 'transactionId');
+    const id = uuidParam(req, 'transactionId');
     const t = found(await txnRepo.findTransaction(id),
       'TRANSACTION_NOT_FOUND', `No transaction exists with id ${id}`);
 
@@ -48,7 +48,7 @@ export function transactionsRouter(): Router {
 
   // 13 · GET /api/transactions/:transactionId/audit
   r.get('/:transactionId/audit', handler(async (req, res) => {
-    const id = pathParam(req, 'transactionId');
+    const id = uuidParam(req, 'transactionId');
     found(await txnRepo.findTransaction(id),
       'TRANSACTION_NOT_FOUND', `No transaction exists with id ${id}`);
     const { page, pageSize, offset } = pageParams(req);

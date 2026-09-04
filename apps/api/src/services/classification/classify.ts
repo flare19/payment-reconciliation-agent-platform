@@ -105,6 +105,86 @@ interface Signal {
   bestCandidateScore?: number | null;
 }
 
+/**
+ * Records S12 DELIBERATELY declined to call missing, and why.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * THE DECISION WAS RIGHT. LEAVING NO TRACE OF IT WAS THE DEFECT (ADR-163).
+ *
+ * The presence rule below skips a target whose settlement window is still open
+ * at the reference date — `if (!due.overdue) continue`. That is correct: a bank
+ * credit that landed today has not had time to reach the ledger, and raising
+ * MISSING_IN_LEDGER for it would be a false exception, which is the one thing
+ * this engine exists not to produce.
+ *
+ * But a record where EVERY target is still in flight acquires no signal at all.
+ * It stays in the match-rate denominator, dragging the rate down, and appears on
+ * no screen a human reads. On the dev dataset that has been one bank credit of
+ * ₹4,75,201.95 in every run — invisible to the scorer, the ceiling and the
+ * false-despair rate alike, because all three read the engine's OUTPUT rather
+ * than asking whether the output covers its input. The balance proof (ADR-162)
+ * asked, and this is the answer it demanded.
+ *
+ * Computed HERE, from the same `settlementDue` the skip uses, so there is one
+ * definition of "not yet due" rather than a second one in SQL that could drift.
+ * ══════════════════════════════════════════════════════════════════════════════
+ */
+export interface DeferredRecord {
+  transactionId: string;
+  /** Written to `transactions.deferred_reason`; read by endpoint 29 and the record inspector. */
+  reason: string;
+}
+
+/**
+ * The deferral set for a run.
+ *
+ * Deliberately a SECOND pass over the same input rather than an extra return
+ * value from `classify`: it must be derivable from exactly what the classifier
+ * saw, and a caller that forgets to persist it still gets identical exceptions.
+ */
+export function deferredRecords(
+  input: ClassificationInput, raised: readonly ClassifiedException[],
+): DeferredRecord[] {
+  const { pool, config } = input;
+  const hasException = new Set(raised.map((e) => e.transactionId));
+  const matchedWith = new Map<string, Set<SourceSystem>>();
+  for (const { aId, bId } of input.matchedPairs) {
+    const a = pool.find((t) => t.id === aId), b = pool.find((t) => t.id === bId);
+    if (a === undefined || b === undefined) continue;
+    addSource(matchedWith, aId, b.sourceSystem);
+    addSource(matchedWith, bId, a.sourceSystem);
+  }
+
+  const out: DeferredRecord[] = [];
+  for (const record of pool) {
+    if (record.statusNorm !== 'reconcilable') continue;
+    if (hasException.has(record.id)) continue;
+
+    // Only targets it is not already matched with can be "missing" at all.
+    const open = missingTargetsFor(record)
+      .filter((target) => matchedWith.get(record.id)?.has(target) !== true);
+    if (open.length === 0) continue;
+
+    // EVERY open target must still be in flight. One overdue target means the
+    // presence rule fired and this record is on the list already.
+    const windows = open.map((target) => ({ target, due: settlementDue(record, target, config) }));
+    if (windows.some((w) => w.due.overdue)) continue;
+
+    const detail = windows
+      .map((w) => `${w.target} (${w.due.windowLabel}, ${-w.due.daysOverdue} day(s) left)`)
+      .join(', ');
+    out.push({
+      transactionId: record.id,
+      reason:
+        `not yet due: this ${record.sourceSystem} record is dated ${record.txnDate} and every `
+        + `settlement window it could be missing from is still open at the run's reference date `
+        + `${config.referenceDate} — ${detail}. It is counted in the denominator and is NOT an `
+        + `exception, because calling it missing before it is due would be a false finding.`,
+    });
+  }
+  return out;
+}
+
 export function classify(input: ClassificationInput): ClassifiedException[] {
   const { pool, config } = input;
   const byId = new Map(pool.map((t) => [t.id, t]));

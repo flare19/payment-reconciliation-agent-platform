@@ -90,3 +90,30 @@
   background: var(--surface-sunk);
 }
 .navLinkActive:hover { background: var(--surface-sunk); }
+
+/* Below ~700px the wordmark plus seven links no longer fit on one row, and the
+   overflow was simply clipped — Matches, Aliases and Audit became unreachable
+   (queue item 6). The nav drops to its own full-width row under the wordmark
+   and wraps there, so every link stays on screen and reachable without a
+   horizontal scroll. */
+@media (max-width: 44rem) {
+  .inner {
+    flex-wrap: wrap;
+    row-gap: var(--s2);
+    column-gap: var(--s3);
+    padding: var(--s3) var(--s4);
+  }
+
+  .inner > nav {
+    flex-basis: 100%;
+  }
+
+  .nav {
+    flex-wrap: wrap;
+    gap: var(--s1) var(--s2);
+  }
+
+  .navLink {
+    padding: var(--s1) var(--s2);
+  }
+}

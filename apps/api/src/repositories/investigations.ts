@@ -189,15 +189,33 @@ export async function concludeInvestigation(
   return rows.length === 0 ? null : toInvestigation(rows[0]!);
 }
 
-/** The loop threw. Failure is a state, not an absence. */
+/**
+ * The loop threw. Failure is a state, not an absence.
+ *
+ * `usage` is OPTIONAL but is not decoration: a run that died on a provider
+ * transport failure at step 4 still paid for steps 1–3, and `agentSpendUsdSince`
+ * sums `cost_usd` off these rows to seed the public endpoint's ceiling
+ * (ADR-095). A failed row that leaves `cost_usd` NULL therefore spends real
+ * money the guard cannot see — the same "counter that resets" hole this file
+ * already warns about for `agent_questions`, arriving through the failure path
+ * instead of a missing table. Callers that know what the attempt cost pass it;
+ * `COALESCE` keeps a caller that genuinely has no usage from zeroing a value
+ * some other path already wrote.
+ */
 export async function failInvestigation(
-  investigationId: string, reason: string, client?: TxClient,
+  investigationId: string, reason: string,
+  usage?: { tokensIn: number; tokensOut: number; costUsd: number | null },
+  client?: TxClient,
 ): Promise<void> {
   await (client ?? getPool()).query(
     `UPDATE agent_investigations
-        SET status = 'failed', finished_at = now(), grounding_failure = $2
+        SET status = 'failed', finished_at = now(), grounding_failure = $2,
+            tokens_in = COALESCE($3, tokens_in),
+            tokens_out = COALESCE($4, tokens_out),
+            cost_usd  = COALESCE($5, cost_usd)
       WHERE id = $1 AND status = 'running'`,
-    [investigationId, reason],
+    [investigationId, reason,
+     usage?.tokensIn ?? null, usage?.tokensOut ?? null, usage?.costUsd ?? null],
   );
 }
 
@@ -255,6 +273,30 @@ export async function findInvestigationForException(
     [exceptionId],
   );
   return rows.length === 0 ? null : toInvestigation(rows[0]!);
+}
+
+/**
+ * What the Analyst decided, for the AGENT to read (ADR-171).
+ *
+ * Takes a `TxClient` because the tool registry runs every read inside
+ * `withReadOnlyTransaction` — read-only is enforced by Postgres, not by the
+ * function's name (ADR-051), and a repository call that quietly grabs its own
+ * pooled connection would step outside that guarantee.
+ *
+ * Scoped to `runId` even when `exceptionId` is given: an exception belongs to
+ * exactly one run, and passing both means a wrong-run id returns nothing rather
+ * than another run's verdict.
+ */
+export async function findInvestigationsForAgent(
+  runId: string, exceptionId: string | null, limit: number, client?: TxClient,
+): Promise<Investigation[]> {
+  const { rows } = await (client ?? getPool()).query<InvRow>(
+    `SELECT ${COLUMNS} FROM agent_investigations
+      WHERE run_id = $1 AND ($2::uuid IS NULL OR exception_id = $2::uuid)
+      ORDER BY started_at DESC, id DESC LIMIT $3`,
+    [runId, exceptionId, limit],
+  );
+  return rows.map(toInvestigation);
 }
 
 /**

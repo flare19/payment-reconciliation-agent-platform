@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { CategoryAccuracy } from '@/components/exceptions/CategoryAccuracy';
 import { count } from '@/lib/format';
 import { hrefWith } from '@/lib/run-context';
 import { CATEGORY_LABEL, STATUS_LABEL, label } from '@/lib/taxonomy';
@@ -31,12 +32,19 @@ const GROUPS: Group[] = [
 ];
 
 export function FacetRail(
-  { facets, active, runId, isDefaultRun }:
+  { facets, active, runId, isDefaultRun, accuracy, hasScoreReport }:
   {
     facets: ExceptionFacets;
     active: { category?: string; severity?: string; status?: string };
     runId: string;
     isDefaultRun: boolean;
+    /**
+     * Measured precision/recall per category (`multiLabel.perCategory`), scored
+     * offline (ADR-041). `null` when the run has no score report — the accuracy
+     * line then renders as absent beside each category, never as a zero.
+     */
+    accuracy: Record<string, { precision: number; recall: number }> | null;
+    hasScoreReport: boolean;
   },
 ) {
   const runQ = isDefaultRun ? undefined : runId;
@@ -80,10 +88,46 @@ export function FacetRail(
                       </span>
                       <span className={`${styles.facetCount} num`}>{count(n)}</span>
                     </Link>
+                    {/*
+                      Only the Category group carries a measured accuracy line
+                      (queue item 2). Severity and status are the engine's own
+                      labels — there is no ground-truth precision for "high".
+                    */}
+                    {group.key === 'category' && (
+                      <span className={styles.facetAccuracy}>
+                        <CategoryAccuracy pr={accuracy?.[value]} hasReport={hasScoreReport} />
+                      </span>
+                    )}
                   </li>
                 );
               })}
             </ul>
+            {/*
+              WHAT A LOW PRECISION HERE MEANS, SAID PLAINLY (ADR-172).
+
+              Three of these read badly out of context — MISSING_IN_GATEWAY at
+              0.2857 looks like the classifier is wrong two times in three. It
+              is not, and the distinction is the one that matters for an
+              exception list: recall is 0.93–1.00, so nothing is being MISSED.
+              Precision below it means the engine attached a category to events
+              the key does not credit it for — it over-labels rather than
+              overlooks, and every record is still on the list with its money
+              and its evidence in front of a human.
+
+              These are the multi-label figures, which count a category raised
+              anywhere on an event. Scored on the PRIMARY category alone the
+              same run reads P 1.0000 on five of the seven. Publishing the
+              harsher number is deliberate; leaving it unexplained beside a
+              count is what would be misleading.
+            */}
+            {group.key === 'category' && hasScoreReport && (
+              <p className={styles.groupNote}>
+                Precision counts every category raised anywhere on an event, so it falls when
+                the engine adds a second true-but-uncredited label. Scored on the primary
+                category alone, five of these seven read <span className="num">1.0000</span>.
+                Recall is the figure that says nothing was missed.
+              </p>
+            )}
           </section>
         );
       })}

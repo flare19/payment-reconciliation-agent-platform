@@ -1,0 +1,121 @@
+/* The money-first lead-in for the exception list (queue item 4).
+
+   It sits at the top of the main column, above the filter chips and the table.
+   Quiet chrome — a hairline card, not a coloured callout: the figures carry the
+   emphasis, and `provenance: engine` means ink, unmarked (the --verified accent
+   is reserved for measured figures). */
+
+.band {
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: var(--s4);
+  margin-bottom: var(--s4);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s3) var(--s6);
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.headline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+
+.total {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s2);
+  margin: 0;
+}
+
+.totalValue {
+  font-size: var(--t-figure);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.totalLabel {
+  font-size: var(--t-meta);
+  color: var(--ink-3);
+}
+
+.sub {
+  margin: 0;
+  font-size: var(--t-meta);
+  color: var(--ink-3);
+}
+
+/* Top three by exposure. A compact ordered list, each row a link into the
+   exception it names. */
+.top {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: min(100%, 22rem);
+  flex: 1 1 22rem;
+}
+
+.topRow {
+  border-top: 1px solid var(--rule);
+}
+
+.topRow:first-child {
+  border-top: none;
+}
+
+.topLink {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
+  column-gap: var(--s3);
+  row-gap: 2px;
+  padding: var(--s2) var(--s1);
+  text-decoration: none;
+  color: var(--ink-2);
+  font-size: var(--t-meta);
+}
+
+.topLink:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+.rank {
+  grid-row: span 2;
+  font-size: var(--t-micro);
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
+}
+
+.amount {
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.cat {
+  color: var(--ink-2);
+}
+
+.rec {
+  grid-column: 2 / -1;
+  font-size: var(--t-micro);
+  color: var(--ink-4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 40rem) {
+  .band {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

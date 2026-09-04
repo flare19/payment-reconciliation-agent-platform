@@ -790,6 +790,23 @@ Three fields are excluded from the hash, not two (see #25 — this line, migrati
 
 `canonical_json` sorts object keys and serializes timestamps as ISO-8601 UTC, so the hash is stable across drivers and platforms. Entries are chained **per run**, in `sequence_no` order; the first entry of a run chains from 64 zeros. Alias-admin entries with `run_id IS NULL` form their own chain.
 
+#### Reproducing the chain from the API (ADR-168)
+
+`GET /api/runs/:runId/audit` (endpoint 14) returns `prevHash` and `entryHash` on every entry, so a reviewer can recompute the chain without trusting `/audit/verify`. The recipe:
+
+1. Fetch every page of endpoint 14 and concatenate the `entries` in `sequenceNo` order (it already sorts that way; just append page after page).
+2. Set `prev = "0" * 64`.
+3. For each entry:
+   - assert `entry.prevHash === prev`;
+   - take the entry object, **drop `sequenceNo`, `prevHash`, `entryHash`**, keep the other 17 fields (`runId`, `occurredAt`, `eventType`, `subjectType`, `subjectId`, `transactionId`, `actorType`, `actorId`, `tier`, `ruleId`, `ruleVersion`, `decision`, `confidence`, `reason`, `beforeState`, `afterState`, `details`);
+   - serialize it with **canonical JSON**: object keys sorted ascending by UTF-16 code unit, at every level; `null` for any absent field; arrays kept in order (candidate lists and precedence-ordered flag arrays are meaningful); numbers finite, `-0` written as `0`; strings JSON-escaped after stripping any NUL and replacing any unpaired surrogate with U+FFFD; `occurredAt` is already an ISO-8601 UTC string on the wire;
+   - compute `entryHash' = sha256_hex( canonicalJson || prev )` — the sha256 is over the UTF-8 bytes of the canonical JSON string immediately followed by the 64-hex-char `prev` string;
+   - assert `entryHash' === entry.entryHash`;
+   - set `prev = entry.entryHash`.
+4. After the last entry, `prev` is the chain head. It must equal `chainHead` **and** `expectedChainHead` from `GET /api/runs/:runId/audit/verify` (endpoint 22), and the entry count must equal `expectedEntryCount`. Matching `chainHead` alone proves the entries you were served are internally consistent; matching `expectedChainHead`/`expectedEntryCount` — which come from the independent `audit_chain_heads` anchor — additionally proves none were dropped from the end.
+
+`beforeState`, `afterState` and `details` arrive already in stored form (`details` is `{}` when unset, the other two `null`), so no `?? {}` / `?? null` coercion is needed on the client — that normalization happened before the entry was hashed at write time. `runId` is `null` for the alias-admin chain.
+
 **Why, given the trigger already exists.** The `BEFORE UPDATE OR DELETE` trigger stops tampering *through the application*. Anyone who can drop the trigger can rewrite history, and nothing in the table would show it. A chain converts that from undetectable to detectable: altering one entry invalidates every subsequent `entry_hash`, and `GET /api/runs/:runId/audit/verify` recomputes the chain and reports the first divergence. That is the difference between "we don't update this table" and "logged immutably", which is what ARCHITECTURE §4.6 actually claims — and in a finance context it is the claim a panelist will probe. It costs roughly fifteen lines, and verifying the chain live during the pitch is a much stronger demonstration than describing a trigger.
 
 Writing is serialized within a chain by a **transaction-scoped Postgres advisory lock** (`ADVISORY_LOCK.auditChain`, keyed per chain — see #27), not by an application-level single-writer assumption: `appendAuditEntry` takes the lock before reading the current head, in the same transaction that reads it and inserts the new entry, so two concurrent appends to the same chain cannot both read the same `prev_hash` and produce two entries claiming the same predecessor — which would make an untampered chain verify as broken, the worst possible false positive for this mechanism. The lock is taken on a `TxClient` specifically (`db/pool.ts`'s ADVISORY LOCKS note) — a `pg_advisory_xact_lock` taken on a client outside an explicit transaction is released by the statement that took it and protects nothing, silently, which this repo has shipped twice; `appendAuditEntry` verifies the lock is still held when it reads the head and throws rather than proceed unprotected if it is not.
@@ -971,7 +988,15 @@ Metrics are therefore two separate things in two separate tables, and the separa
     "by_category": { "AMOUNT_MISMATCH": 18, "MISSING_IN_BANK": 21, "…": 0 },
     "by_severity": { "high": 45, "medium": 15, "low": 5 },
     "candidate_cap_hits": 3,
-    "batch_search_exhausted": 5, "batch_search_bound_exceeded": 2
+    "batch_search_exhausted": 5, "batch_search_bound_exceeded": 2,
+    "amount_at_risk": {
+      "total_paise": 33070749100, "total_display": "₹3,30,70,749.10",
+      "with_amount": 203, "without_amount": 9,
+      "high_severity_paise": 29481470100, "high_severity_display": "₹2,94,81,470.10",
+      "high_severity_count": 101,
+      "largest_single": { "amount_paise": 40644150, "amount_display": "₹4,06,441.50",
+                          "category": "MISSING_IN_GATEWAY", "transaction_id": "63cb087b-…" }
+    }
   },
   "population": { "ingested": 850, "excluded": 27, "rejected_rows": 1, "non_primary_duplicates": 9, "reconcilable": 813 },
   "throughput": {
@@ -985,6 +1010,8 @@ Metrics are therefore two separate things in two separate tables, and the separa
 ```
 
 `stage_ms` is new and earns its place: throughput is a judged axis, and a per-stage breakdown turns "412 rec/s" into a claim about *where the time goes* — which is also how the scale benchmark (ADR-045) shows that the blocking strategy works.
+
+`exceptions.amount_at_risk` (ADR-164) is summed by S14 over **every** classified exception, not the paginated list endpoint 6 returns, and formatted server-side by `formatPaise` so the wire carries both `*_paise` and `*_display`. It is the engine's own account of what it could not place — `provenance: engine`, never measured. `without_amount` counts group-level exceptions with no single figure as an absence; they are not folded in as a zero. `largest_single` is `null` only when no exception on the run carries an amount. On the wire the keys are camelCase (`amountAtRisk`, `totalPaise`, …); `runs.metrics` is returned verbatim by endpoint 5 with no repository casing boundary (§11.1 wire-shape note above).
 
 ### 11.2 `score_reports` — measured against ground truth
 

@@ -17,7 +17,7 @@ import * as aliasRepo from '../repositories/aliases.js';
 import { appendAuditEntry, readChain } from '../repositories/audit.js';
 import { normalizeCounterparty } from '../services/ingestion/normalize.js';
 import {
-  handler, found, pageParams, stringParam, enumParam, requireString, pathParam,
+  handler, found, pageParams, stringParam, enumParam, requireString, uuidParam,
 } from './helpers.js';
 import { aliasDto, auditEntry, paginate } from './serialize.js';
 import { aliasProposals } from './matches.js';
@@ -97,7 +97,7 @@ export function aliasesRouter(): Router {
 
   // 17 · PATCH /api/aliases/:aliasId — revoke only.
   r.patch('/:aliasId', handler(async (req, res) => {
-    const aliasId = pathParam(req, 'aliasId');
+    const aliasId = uuidParam(req, 'aliasId');
     const body = (req.body ?? {}) as Record<string, unknown>;
     if (body['status'] !== 'revoked') {
       throw new ApiError(400, 'INVALID_REQUEST',
@@ -131,7 +131,7 @@ export function aliasesRouter(): Router {
 
   // 18 · GET /api/aliases/:aliasId/history
   r.get('/:aliasId/history', handler(async (req, res) => {
-    const aliasId = pathParam(req, 'aliasId');
+    const aliasId = uuidParam(req, 'aliasId');
     const alias = found(await aliasRepo.findAlias(aliasId),
       'ALIAS_NOT_FOUND', `No alias exists with id ${aliasId}`);
     const lineage = await aliasRepo.aliasLineage(aliasId);

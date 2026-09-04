@@ -16,7 +16,7 @@ import type {
   ExceptionListResponse, Health, InvestigationDetail, MatchListResponse, MatchSummary,
   PopulationResponse, ReviewQueueResponse, TransactionDetail,
   InvestigationListResponse, MetricsResponse, RunListResponse, RunSummary,
-  RunQuestion, QuestionListResponse,
+  RunQuestion, QuestionListResponse, ReconciliationResponse,
 } from '@/types/api';
 
 const BASE_URL = process.env['NEXT_PUBLIC_API_BASE_URL'] ?? 'http://localhost:8080/api';
@@ -98,6 +98,15 @@ export const getRun = (runId: string) =>
 export const getMetrics = (runId: string) =>
   apiFetch<MetricsResponse>(`/runs/${runId}/metrics`);
 
+// ── endpoint 29 ──────────────────────────────────────────────────────────────
+/**
+ * The books, RECOMPUTED from base rows rather than read off `runs.metrics`.
+ * Fetched per render for the same reason `/audit/verify` is a live call: a
+ * cached balance proof proves the cache balanced.
+ */
+export const getReconciliation = (runId: string) =>
+  apiFetch<ReconciliationResponse>(`/runs/${runId}/reconciliation`);
+
 /**
  * The dashboard computes the verdict distribution from the returned list, so it
  * asks for the contract's maximum page size — a distribution over page one of
@@ -113,6 +122,10 @@ export const getInvestigations = (runId: string, pageSize = 200) =>
 /** `409 RUN_NOT_COMPLETE` on a run still in flight is an absence, not a failure. */
 export const getMetricsIfComplete = (runId: string) =>
   optional(getMetrics(runId), ['RUN_NOT_COMPLETE']);
+
+/** The balance proof, absent while a run is still in flight. */
+export const getReconciliationIfComplete = (runId: string) =>
+  optional(getReconciliation(runId), ['RUN_NOT_COMPLETE']);
 
 /** A run Phase A never ran on, or an API with the agent disabled. */
 export const getInvestigationsIfAny = (runId: string) =>
