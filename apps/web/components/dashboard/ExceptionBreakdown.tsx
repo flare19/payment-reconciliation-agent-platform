@@ -144,6 +144,23 @@ export function ExceptionBreakdown(
           ))}
         </ol>
 
+        {/*
+          The same reading guide the facet rail carries (ADR-172). Three of
+          these precisions read badly out of context; recall is 0.93–1.00, so
+          the engine is over-labelling rather than overlooking, and the record
+          is on the list either way. Rendered only when there is a score report
+          — with no measured figures beside the categories there is nothing to
+          explain, and an explanation of absent numbers reads as an excuse.
+        */}
+        {accuracy && (
+          <p className={styles.accuracyNote}>
+            Precision counts every category raised anywhere on an event, so it falls when the
+            engine adds a second true-but-uncredited label. Scored on the primary category
+            alone, five of the seven read <span className="num">1.0000</span>. Recall is the
+            figure that says nothing was missed.
+          </p>
+        )}
+
         {absent.length > 0 && (
           <p className={styles.absent}>
             <span className={styles.absentHead}>

@@ -68,3 +68,13 @@
   padding: 0 var(--s2) var(--s2);
   margin-top: 1px;
 }
+
+/* The one-line reading guide under the Category facets (ADR-172). Sized to sit
+   below the list without competing with it — it explains a number, it is not one. */
+.groupNote {
+  margin-top: var(--s3);
+  font-size: var(--t-micro);
+  line-height: 1.55;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}

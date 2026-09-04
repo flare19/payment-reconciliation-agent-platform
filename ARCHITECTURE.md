@@ -63,7 +63,7 @@ Three consequences that govern this entire repo:
          ▼
   ┌─────────────┐        ┌──────────────────┐        ┌──────────────┐
   │ AUDIT LOG   │───────►│ API (Express)    │───────►│ Dashboard    │
-  │ hash-chained│        │ 28 endpoints     │        │ Next.js      │
+  │ hash-chained│        │ 29 endpoints     │        │ Next.js      │
   └─────────────┘        └──────────────────┘        └──────────────┘
                                   ▲
                                   │ score report (POST, offline scorer)
@@ -149,7 +149,7 @@ Locked. Not "not yet" — **not in this build**, with the reason recorded so it 
 | **Kubernetes, container orchestration, service mesh, Helm, Dockerfiles we author** | Worth learning, worth zero rubric points here. Deliberately parked as a separate standalone learning project so the interest has a home that isn't this repo. (ADR-005) |
 | Fraud / risk scoring | A different product. Reconciliation is about agreement between records, not about the intent behind them. |
 | Cash-flow forecasting | Prediction, not reconciliation. |
-| Multi-agent frameworks (planner / researcher / critic) | The Analyst is one bounded loop with nine tools and a deterministic validation gate (§4.10). The "critic" role is A3, and A3 is better than a critic because it is code rather than a second non-deterministic component checking the first. |
+| Multi-agent frameworks (planner / researcher / critic) | The Analyst is one bounded loop with eleven tools and a deterministic validation gate (§4.10). The "critic" role is A3, and A3 is better than a critic because it is code rather than a second non-deterministic component checking the first. |
 | An auditor agent reviewing auto-confirmed matches | Genuinely tempting — it would attack precision rather than recall. Rejected because it puts a model in a position to second-guess a finalized engine decision, which is the boundary the whole Analyst design exists to hold. False positives are found by the scorer against ground truth: a measurement, not an opinion. (agent-design §10) |
 | Agent-in-the-loop during matching | Violates ADR-017 and makes engine output non-reproducible. The ambiguity guard's value is that it *refuses* to decide; handing that decision to a model destroys exactly what makes it valuable. |
 | Agent-tuned tolerances or thresholds | Would make `config_snapshot` a function of model output, destroying reproducibility. The agent may observe that a bound was binding; it may not change a shipped default. |
@@ -176,7 +176,7 @@ Architecture that doesn't commit to numbers isn't architecture. Full reasoning f
 
 | Parameter | Value | Source |
 |---|---|---|
-| Dataset size (demo) | ~300 economic events → ~820 source records | validation-strategy §3 |
+| Dataset size (demo) | ~300 economic events → ~920 source records | validation-strategy §3 |
 | Dataset size (scale benchmark) | 1k / 10k / 100k records | ADR-045 |
 | Amount tolerance | `clamp(0.5% × amount, ₹1.00, ₹100.00)` | ADR-008 |
 | Gateway fee band (inference) | 2.36 %–2.95 % of gross (2.0–2.5 % fee + 18 % GST) | schema §5.3 |
@@ -188,7 +188,7 @@ Architecture that doesn't commit to numbers isn't architecture. Full reasoning f
 | Fuzzy review band | `0.65 – 0.849` | ADR-010 |
 | Ambiguity guard | top two candidates both `≥ 0.65` and within `0.05` | ADR-010 |
 | Near-anchor tolerance | Damerau-Levenshtein `≤ 1` on anchors of length `≥ 12`, corroboration required | ADR-031 |
-| Subset-sum bounds (net batch) | pool `≤ 24`, subset size `≤ 8`, 1,000,000-node budget (deterministic); 2 s wall safety valve | ADR-038, ADR-060 |
+| Subset-sum bounds (net batch) | pool `≤ 24`, subset size `≤ 8`, 1,300,000-node budget (deterministic); 2 s wall safety valve | ADR-038, ADR-060, amended by ADR-063 |
 | Designed-unresolvable share | 7 % of events (~21) → published ceiling ≈ 93 % | validation-strategy §4 |
 | LLM model | `claude-sonnet-5` (explain and Analyst), via `LLM_PROVIDER` (default `anthropic`; `gemini` restores `gemini-3.5-flash` / `gemini-3.7-flash`) | ADR-093, superseding ADR-019/ADR-080 |
 | LLM batching | ≤ 10 signatures per request, hard cap 8 calls per run | ADR-018 |

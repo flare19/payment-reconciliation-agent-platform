@@ -2667,3 +2667,57 @@ code is touched; `AGENT_ENABLED=false` still produces a byte-identical run (ADR-
 - Two of the eleven tools now exist because a live question found a gap no amount of design review
   had. That is the argument for asking the running system real questions rather than reading the
   registry and agreeing with it.
+
+---
+
+### ADR-172 · A low precision beside a category count needs one line of context, or it reads as a defect
+
+**Context.** The exception facets now carry measured precision and recall per category (ADR-165),
+which was right. Three of them read badly out of context:
+
+```
+MISSING_IN_GATEWAY   P 0.2857   R 1.0000
+MISSING_IN_LEDGER    P 0.5385   R 0.9333
+MISSING_IN_BANK      P 0.7000   R 0.9333
+```
+
+`P 0.2857` next to a count of 53 looks like a classifier that is wrong two times in three. It is
+not, and the distinction is exactly the one that matters for an exception list.
+
+- **Recall is 0.93–1.00 on all three.** Nothing is being missed. `MISSING_IN_GATEWAY` catches
+  **every** true one.
+- **Precision below it means over-labelling, not overlooking.** The record is on the list, with
+  its money and its evidence, in front of a human either way. A mislabelled exception costs an
+  analyst a few seconds of reading; a missed one is invisible. That is the same asymmetry the
+  engine's `precision 1.0000` design is built on, one layer down.
+- **These are the multi-label figures**, which count a category raised anywhere on an event.
+  Scored on the primary category alone the identical run reads `P 1.0000` on five of seven —
+  `MISSING_IN_LEDGER` and `MISSING_IN_BANK` among them. The gap is dominated by one pattern:
+  33 exceptions flagged `MISSING_IN_GATEWAY` primary + `MISSING_IN_LEDGER` secondary, a bank
+  credit with no gateway record *and* no ledger entry. Both statements are true of the record;
+  the key credits one.
+
+**Decision.** One line under the category list, on the dashboard and the facet rail, rendered only
+when a score report exists. It states what precision counts here, that the primary-category
+figures are 1.0000 on five of seven, and that recall is the figure carrying "nothing was missed".
+
+**What this deliberately does NOT do: soften the number.** The harsher multi-label figure stays on
+screen, unchanged, next to every category. Publishing it was the right call and remains one — most
+submissions do not measure classification at all. The defect was showing a number that invites a
+wrong conclusion and leaving the reader to reach it.
+
+**The real finding underneath, recorded rather than dressed up.** Six events are genuine
+mislabels, and they are not explained by secondary flags: 3 true `AMOUNT_MISMATCH` and 3 true
+`UNSPLITTABLE_BATCH` were called `MISSING_IN_GATEWAY` as their primary category. That is
+precedence choosing wrong, and it is why `UNSPLITTABLE_BATCH` recall is **0.5000** — half the true
+unsplittable batches are filed as something else. A batch the engine could not decompose is not
+the same finding as a payment with no gateway record, and that is arguable without citing any
+score.
+
+**It is not fixed here, and the reason is the calendar, stated plainly.** Changing precedence a day
+before submission would move every classification figure, the README's 212 breakdown and the docs
+that quote it, for a metric that is not the headline. It is also the kind of change that is hard to
+argue was not made because the number looked bad (ADR-027). Left open, named, and answerable.
+
+**Why this is not tuning.** No threshold, window, weight or tolerance moves. It is one sentence of
+UI copy and this entry.

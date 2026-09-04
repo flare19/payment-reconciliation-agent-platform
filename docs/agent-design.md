@@ -292,7 +292,7 @@ The Analyst *is* the next day's work, and the false-despair set is exactly its a
 | **Hallucinated resolutions** | Proposals on events the key marks `UNRESOLVABLE`. | **Must be 0. Build blocker, not a metric.** |
 | **Unresolvable agreement** | Of designed-`UNRESOLVABLE` exceptions investigated, how many got `CONFIRMED_UNRESOLVABLE`? | High is good; low means the agent is guessing under pressure. |
 | **Queue corroboration precision** | Of pending pairs marked `CORROBORATED`, how many does the key confirm? | Reported as a raw fraction (ADR-081). |
-| **False alarms on the queue** | `CONTRADICTED` verdicts on pairs the key confirms. | The queue's engine-side precision is currently **1.0000 over 213 judged pairs**, so every `CONTRADICTED` is measurably a false alarm. A rising count means the agent is manufacturing doubt to look useful. |
+| **False alarms on the queue** | `CONTRADICTED` verdicts on pairs the key confirms. | The queue's engine-side precision is currently **1.0000 over 210 judged pairs**, so every `CONTRADICTED` is measurably a false alarm. A rising count means the agent is manufacturing doubt to look useful. |
 
 **Why the hallucination bar is a build blocker.** The dataset contains ~21 events that are impossible to resolve for any correct engine *and any competent human* — verified by assertion during generation, not merely labelled (validation-strategy §4). An agent that proposes a resolution for one of them has invented evidence. That is strictly worse than the engine's silence, because it arrives wrapped in a confident reasoning chain. It is the single most damning failure available to this layer and it is treated exactly as the engine's equivalent is: as something that stops the build, not something that gets a percentage next to it.
 
@@ -391,7 +391,7 @@ Deliberately small, because most of it already exists.
 
 | Piece | Notes |
 |---|---|
-| Tool registry (9 tools) | Thin wrappers over repository functions the engine needs anyway. Built Day 8 alongside the classifier, which needs the same repository queries. |
+| Tool registry (11 tools) | Thin wrappers over repository functions the engine needs anyway. Built Day 8 alongside the classifier, which needs the same repository queries. |
 | Investigation loop (A2) | One Anthropic tool-use loop (Gemini function-calling under `LLM_PROVIDER=gemini`), written out rather than delegated to a helper — §8's bounds are enforced between turns (ADR-093, ADR-080). |
 | Grounding gate (A3) | Pure functions. The highest-value tests in the suite (testing-strategy §1.6). |
 | Two tables | `agent_investigations`, `agent_questions`. Traces reuse `audit_log` (ADR-052). |

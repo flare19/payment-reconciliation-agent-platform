@@ -102,6 +102,32 @@ export function FacetRail(
                 );
               })}
             </ul>
+            {/*
+              WHAT A LOW PRECISION HERE MEANS, SAID PLAINLY (ADR-172).
+
+              Three of these read badly out of context — MISSING_IN_GATEWAY at
+              0.2857 looks like the classifier is wrong two times in three. It
+              is not, and the distinction is the one that matters for an
+              exception list: recall is 0.93–1.00, so nothing is being MISSED.
+              Precision below it means the engine attached a category to events
+              the key does not credit it for — it over-labels rather than
+              overlooks, and every record is still on the list with its money
+              and its evidence in front of a human.
+
+              These are the multi-label figures, which count a category raised
+              anywhere on an event. Scored on the PRIMARY category alone the
+              same run reads P 1.0000 on five of the seven. Publishing the
+              harsher number is deliberate; leaving it unexplained beside a
+              count is what would be misleading.
+            */}
+            {group.key === 'category' && hasScoreReport && (
+              <p className={styles.groupNote}>
+                Precision counts every category raised anywhere on an event, so it falls when
+                the engine adds a second true-but-uncredited label. Scored on the primary
+                category alone, five of these seven read <span className="num">1.0000</span>.
+                Recall is the figure that says nothing was missed.
+              </p>
+            )}
           </section>
         );
       })}

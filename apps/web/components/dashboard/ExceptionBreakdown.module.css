@@ -185,3 +185,14 @@
 }
 
 .absentHead { color: var(--ink-2); }
+
+/* Reading guide under the category bars (ADR-172). Same register as .absent
+   below it: an explanation of a number, deliberately quieter than the number. */
+.accuracyNote {
+  margin-top: var(--s4);
+  font-size: var(--t-micro);
+  line-height: 1.6;
+  color: var(--ink-3);
+  max-width: 68ch;
+  text-wrap: pretty;
+}
