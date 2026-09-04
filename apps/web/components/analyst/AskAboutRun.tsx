@@ -156,8 +156,10 @@ export function AskAboutRun(
     <section className={styles.wrap} aria-labelledby="ask-title">
       <h2 id="ask-title" className="label">Ask About This Run</h2>
       <p className={styles.note}>
-        The same nine read-only tools, pointed at a question instead of an exception. It answers
-        from this run&rsquo;s real records — or says the data does not show it.
+        Ten of the Analyst&rsquo;s eleven read-only tools, pointed at a question instead of an
+        exception — the batch subset search is left out, because a question should not spend a
+        two-second compute budget. It answers from this run&rsquo;s real records — or says the data
+        does not show it.
       </p>
 
       <ul className={styles.examples}>

@@ -34,10 +34,12 @@ reproduced across two browser tabs.
 The pinned dashboard and the in-page *"Run It Again"* flow both work, because both reach the run by
 client-side navigation. What breaks is a refresh, a bookmark, or a shared link.
 
-> **Not fixed before submission, and that is a judgement call rather than an oversight.** The fix is a
-> frontend change and a redeploy against a Vercel build that is currently serving a correct dashboard.
-> Shipping an untested build in the last hours to fix a path the demo does not use is the larger risk.
-> It is listed in the README's *What is not done* instead.
+> **Not fixed, because the root cause is not yet known.** My first hypothesis — that runs existing at
+> build time are prerendered and newer ones are not — is wrong: `next build` reports every route as
+> `ƒ (Dynamic) server-rendered on demand`, so there is no static/ISR boundary to fall off. The server
+> render is demonstrably fine; something in the client never resolves the streamed payload, and no
+> console error is raised. Guessing at a fix for a path the demo does not use, hours before
+> submission, is worse than naming it. It is in the README's *What is not done*.
 
 ### 2 · An investigation burned $0.10 and returned nothing, at a token ceiling
 
@@ -75,17 +77,35 @@ English. The health endpoint was the only thing lying.
 
 ### 5 · Three pieces of copy had drifted behind the code
 
-- The Analyst page says *"the same nine read-only tools."* There are **eleven** — ADR-159 added the
-  tenth and ADR-171 the eleventh, both within the last two days. The reviewer proved the eleventh is
-  live by asking a question only `find_agent_investigations` could answer.
+- The Analyst page says *"the same nine read-only tools."* Wrong, and the correction is not the
+  obvious one. The registry holds **eleven**; the Ask surface is handed **ten** of them, because
+  `qaRegistry()` removes `rerun_subset_search` — *"a question should not spend a 2-second compute
+  budget"* — by deleting it from the registry rather than discouraging it in the prompt. Nine is the
+  **corroboration** loop's count, which drops `get_exception` as well. So the copy was describing a
+  third surface's tool count on the second surface's panel.
 - The run modal says *"costs nothing… explanations are deterministic templates."* True when the
   deployed key was a placeholder. A cold-cache run now spends real tokens against a real model.
 - The README's headline block quoted a **warm** local run (`65.56%`, `TP 438`, recall `0.6117`) while
   the deployment has no aliases taught and can only ever produce the cold one.
 
-**Only the third was fixable at freeze**, and it is fixed: the README is now re-based entirely on the
-live holdout run (ADR-173), so every number in it resolves to a URL a judge can open. The first two are
-web copy and would need the same redeploy as defect 1.
+**The first and third are fixed.** The README is re-based entirely on the live holdout run (ADR-173),
+so every number in it resolves to a URL a judge can open. And the tool-count copy is corrected — it now
+reads *"ten of the Analyst's eleven read-only tools… the batch subset search is left out, because a
+question should not spend a two-second compute budget."* Understating the toolset was the worst kind of
+error this project can make: it is the one direction the whole build leans away from.
+
+The run modal's cost line is fixed in the same pass — it claimed the run *"costs nothing"* and that
+*"explanations are deterministic templates"*, both true when the deployed key was a placeholder and
+neither true now. It reads accurately instead: no model in matching, classifying or auditing; zero
+model calls on a repeat run because the explain cache is keyed by discrepancy shape; a few cents for a
+shape it has not seen before.
+
+**How this was found is the part worth keeping.** Asked directly what tools it had, the Analyst listed
+nine — and the grounding gate **refused the answer**, because it had answered from its own sense of
+itself without calling a tool. The list it produced omitted `score_pair`, which it does have. So the
+model was wrong about its own capabilities, the gate caught it for exactly the right reason, and the
+refusal is what exposed a piece of stale UI copy nobody had re-read in two days. A3 earned its keep on
+a question it was never designed for.
 
 ### What this actually cost, and the rule out of it
 

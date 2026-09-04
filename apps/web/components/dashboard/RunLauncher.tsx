@@ -168,9 +168,10 @@ export function RunLauncher(
 
       <p className={styles.body}>
         Reads the three committed source files and runs every stage from ingestion to the audit
-        chain. Takes about two seconds and <strong>costs nothing</strong> — no model is involved in
-        matching, classifying, or auditing anything, and explanations are deterministic templates.
-        Plain English from a model is available per exception, on request, from the Analyst.
+        chain — about two seconds of engine time. <strong>No model is involved in matching,
+        classifying, or auditing anything</strong>, so running it again reproduces the same figures
+        exactly. Explanations are cached by discrepancy shape: a repeat run makes zero model calls,
+        and a shape it has not seen before costs a few cents to write once.
       </p>
 
       {/*
