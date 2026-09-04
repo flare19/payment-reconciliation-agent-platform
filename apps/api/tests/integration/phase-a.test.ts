@@ -31,7 +31,7 @@ import type { RunConfig } from '../../src/types/engine.js';
  * Phase A reads the engine's output and changes none of it.
  */
 
-const DB_URL = process.env['TEST_DATABASE_URL'] ?? process.env['DATABASE_URL'] ?? null;
+import { TEST_DB_URL as DB_URL, SKIP_REASON } from './test-db.js';
 const FIX = new URL('../../../../data/fixtures/holdout/', import.meta.url).pathname;
 const sources = {
   gateway: readFileSync(FIX + 'gateway_export.csv', 'utf8'),
@@ -91,7 +91,7 @@ function scriptedClient(): AgentLlmClient {
 }
 
 describe('Phase A (integration)',
-  { skip: DB_URL === null ? 'no TEST_DATABASE_URL' : false }, () => {
+  { skip: SKIP_REASON }, () => {
     let runId: string;
     let config: RunConfig;
     let deps: PhaseADeps;

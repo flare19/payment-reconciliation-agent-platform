@@ -172,3 +172,16 @@
   color: var(--ink-3);
   text-wrap: pretty;
 }
+
+/* A category at zero, stated rather than dropped (ADR-169). Sits below the list
+   and reads as a footnote to it, not as a ninth row — it is not a link, because
+   filtering the exception list to a category with no members is a dead end. */
+.absent {
+  margin-top: var(--s4);
+  font-size: var(--t-micro);
+  line-height: 1.55;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+.absentHead { color: var(--ink-2); }

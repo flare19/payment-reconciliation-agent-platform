@@ -71,6 +71,23 @@ export function ExceptionBreakdown(
 
   const largest = rows[0]?.[1] ?? 0;
 
+  /**
+   * THE TAXONOMY HAS EIGHT CATEGORIES AND THIS RUN SHOWS SEVEN, AND THAT IS
+   * WORTH SAYING OUT LOUD (ADR-169).
+   *
+   * `byCategory` only carries keys that actually occurred, so a category no
+   * record met simply vanishes from the list. Someone who read the taxonomy and
+   * then counted bars was left to guess whether the eighth is broken, unwired,
+   * or genuinely empty — and on this dataset the answer is "genuinely empty",
+   * which is the least alarming of the three and the only one the screen was
+   * not saying.
+   *
+   * Derived from `LABEL` rather than hard-coded to TIMING_DRIFT: a category that
+   * empties out on some future dataset should name itself here without anyone
+   * remembering to come back.
+   */
+  const absent = Object.keys(LABEL).filter((c) => (exceptions.byCategory[c] ?? 0) === 0);
+
   const severitySegments: Segment[] = SEVERITY_ORDER.map((sev) => ({
     key: sev,
     label: sev.charAt(0).toUpperCase() + sev.slice(1),
@@ -126,6 +143,25 @@ export function ExceptionBreakdown(
             </li>
           ))}
         </ol>
+
+        {absent.length > 0 && (
+          <p className={styles.absent}>
+            <span className={styles.absentHead}>
+              {absent.length === 1 ? 'One category of the eight is' : `${absent.length} categories of the eight are`}
+              {' '}absent from this run:{' '}
+              {absent.map((c, i) => (
+                <span key={c}>
+                  {i > 0 && ', '}
+                  <span translate="no">{LABEL[c] ?? c}</span>
+                </span>
+              ))}.
+            </span>{' '}
+            Zero, not missing. The rule is wired and unit-tested; no record in this dataset met its
+            definition, so the engine had nothing to raise. A category reads <em>0</em> here rather
+            than disappearing, because a bar that is not drawn and a bar of length zero look the
+            same and do not mean the same thing.
+          </p>
+        )}
       </div>
 
       <div className={styles.side}>

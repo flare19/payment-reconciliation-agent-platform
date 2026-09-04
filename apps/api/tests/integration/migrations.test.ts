@@ -12,11 +12,12 @@ import { SOURCE_ORDER, type SourceSystem } from '../../src/types/domain.js';
  * make a specific wrong state unreachable — and a constraint nobody has seen fire
  * is decoration, so each test asserts the failure, not just the happy path.
  *
- * Requires TEST_DATABASE_URL (or DATABASE_URL). Skips cleanly when absent so the
+ * Requires TEST_DATABASE_URL naming a database whose name ends in "_test"
+ * (see test-db.ts — this suite truncates it). Skips cleanly when absent so the
  * unit suite still runs on a machine with no database.
  */
 
-const DB_URL = process.env['TEST_DATABASE_URL'] ?? process.env['DATABASE_URL'] ?? null;
+import { TEST_DB_URL as DB_URL, SKIP_REASON } from './test-db.js';
 
 const RUN = '11111111-1111-1111-1111-111111111111';
 const GATEWAY_TXN = '22222222-2222-2222-2222-222222222222';
@@ -38,7 +39,7 @@ async function rejects(sql: string, expected: RegExp, params: unknown[] = []): P
   }
 }
 
-describe('schema invariants', { skip: DB_URL === null ? 'no TEST_DATABASE_URL' : false }, () => {
+describe('schema invariants', { skip: SKIP_REASON }, () => {
   before(async () => {
     pool = new pg.Pool({ connectionString: DB_URL!, max: 4 });
     await runMigrations(pool);

@@ -2462,3 +2462,149 @@ new endpoint, no write path touched — `audit_log` stays append-only (ADR-015).
 **Consequences.**
 - `STALE_RUN_TIMEOUT_MINUTES` remains the last knob in CLAUDE.md §10's list that is parsed and
   enforced nowhere.
+
+### ADR-169 · TIMING_DRIFT is unreachable in the shipped datasets — state it, do not regenerate
+
+**Context.** The taxonomy has eight categories (schema.md §8.1). Every run on every committed
+seed produces seven. `TIMING_DRIFT` has never been raised once, on any dataset, by any run.
+
+The first suspicion was an engine defect. It is not. The path is complete end to end:
+
+- S8 `resolveIdentity` computes `outcome: 'timing_drift'` and returns `category: 'TIMING_DRIFT'`
+  when identity is established, the amount agrees, and the date sits outside the §5.2 window
+  (`identity-resolution.ts`). `dedupe-identity.test.ts` asserts exactly this for a +9-day
+  settlement, and it passes.
+- S12 `classify` emits it verbatim from the verdict, with `wouldMatchIfWindowWidened` populated.
+- `precedence.ts`, `severity.ts` (capped at `medium`), the wire DTO, `lib/taxonomy.ts` and the
+  scorer's confusion matrix all carry it.
+
+**The gap is in the data generator.** No scenario in `SCENARIO_SPECS` ever plants a settlement
+outside the engine's own window:
+
+- `normalLagDays` draws 0–1 for every method.
+- `edgeLagDays` draws 2–3 for card (window `[-1, 3]`) and 1–2 for UPI (window `[-1, 2]`) — the
+  inside edge, deliberately. `TIMING_LAG_NORMAL`'s own note says so: *"Settlement lands inside the
+  declared window; a match, not a drift exception."*
+
+So the drift rule is a rule with no input. Two further consequences fall out of the same fact:
+
+1. **`TIMING_LAG_NORMAL` could not produce a drift even if its lag were widened**, because it sets
+   `bankAnchorExtractable: false`. S8 requires a strong anchor *structured on both sides*; that
+   pair goes to Tier 2, where a large date delta lowers the score and the record surfaces as a
+   presence exception instead. Widening the lag there would cost recall and still yield no
+   `TIMING_DRIFT`.
+2. **The §5.2 BUILD BLOCKER "TIMING_DRIFT auto-confirmed" cannot fire.** It keys on
+   `ev.expectedCategory === 'TIMING_DRIFT'`, and no event in any answer key has that as its
+   primary. It is a guard nobody has watched fail — CLAUDE.md §9's exact smell — and it is
+   unfireable for the same reason the category is empty.
+
+The six `TIMING_DRIFT` entries that *do* appear in `dev_seed_1337.json` are all
+`expectedSecondaryFlags` on `UNSPLITTABLE_NET_BATCH` events, where the key measures the lag from a
+gateway row to a netting credit that has no per-payment anchor. The engine cannot establish
+identity on that pair and so cannot produce the flag. Inert today — §5.2 scores the primary only —
+but it is an assertion the engine can never satisfy, and it is the reason the scorer's comment
+warns against reading the flags.
+
+**Decision. Do not add a late-settlement scenario before submission. State the absence instead.**
+
+The correct fix is a new scenario with `bankAnchorExtractable: true` and a lag past the window.
+The blast radius, measured:
+
+- `planEvents` Fisher-Yates-shuffles the allocated scenario slots (`events.ts`), and the per-event
+  amount/date/merchant streams are drawn by shuffled index. **Changing any weight changes which
+  scenario lands at every index**, so all three seeds regenerate wholesale — this is not an
+  additive change, it is a different dataset.
+- 9 fixture CSVs and 3 answer keys are committed and hash-pinned by `committed-datasets.test.ts`.
+- **83 references to the headline figures across 26 files** (README, CLAUDE.md, ARCHITECTURE,
+  six docs, nine web components, five API test files) quote `920 / 284 / 212 / 65.22% / 0.6075 /
+  93% ceiling / 612 audit entries`. Every one moves.
+- The Railway instance's persisted run, its audit chain and its score report all become stale;
+  redeploy is manual and there is no CI.
+- S13's 21 signatures change, so the explain cache re-fills against a real model.
+
+Against that: **precision 1.0000 with FP 0 is the project's headline claim, and it is a property
+of this dataset as much as of the engine.** Reshuffling all 300 events one day before submission
+puts it at risk with no time to recover if it moves. Trading a measured, verified 1.0000 for
+completeness of a display taxonomy is a bad trade, and it is precisely the "change the data
+because a number looks wrong" move ADR-027 exists to forbid.
+
+**What ships instead.** `ExceptionBreakdown` names the absent categories under the list — "Zero,
+not missing. The rule is wired and unit-tested; no record in this dataset met its definition."
+Derived from the label table, so any category that empties on a future dataset names itself
+without anyone remembering to come back. A bar that is not drawn and a bar of length zero look the
+same and do not mean the same thing; the screen now distinguishes them.
+
+**Scope.** One component, one CSS block, this ADR, one `what-broke.md` entry. No engine change, no
+data change, no number moves.
+
+**Consequences.**
+- The eighth category remains unexercised by real data, and the submission must not imply
+  otherwise. "Wired and unit-tested, unexercised by the shipped datasets" is the honest claim.
+- The §5.2 `timingDriftAutoConfirmed` blocker stays unfireable. It is not removed — it is correct
+  and costs nothing — but it must not be counted as a guard that has held.
+- A post-submission dataset refresh should add the scenario and re-measure everything in one pass,
+  not piecemeal.
+- `STALE_RUN_TIMEOUT_MINUTES` remains the last knob in CLAUDE.md §10's list that is parsed and
+  enforced nowhere.
+
+---
+
+### ADR-170 · Four deployment blockers, none of them in the build
+
+**Context.** A second external review on 2026-09-04 confirmed the six frontend items and the
+engine, and then found four things that would have shipped straight into the panel. Every one was
+configuration, and three were invisible from the code.
+
+1. **The API was serving `recon_test`** — the database nine integration files open with
+   `TRUNCATE … CASCADE`. `apps/api/.env` pointed at it, so the obvious incantation
+   (`TEST_DATABASE_URL="$(grep DATABASE_URL .env …)"`) aimed the suite at the running
+   application's own data. The reviewer had to create a scratch database to run the tests at all.
+2. **The demo database held 4 runs and 0 aliases**, two of them named `other` and `tools`. The 44
+   runs and both learned aliases were in `recon_v2`. Every run therefore read as cold — 65.22%
+   rather than 65.56% — and **alias learning could not be demonstrated**, which is one of the more
+   distinctive things this project does.
+3. **The footer's `8.24 s` was true only of a warm cache.** Measured cold on 2026-09-04: explain
+   stage **33,948 ms**, wall clock **26 rec/s**. Warm: **117 ms**, **377 rec/s**, 0 API calls, on
+   the identical 920 records. A judge clicking "Run It Again — Free" against a freshly deployed
+   database would have waited half a minute for a button labelled free and instant, under a figure
+   promising eight seconds.
+4. **`score:watch` was a laptop process** and `PINNED_RUN_ID` was documented with a local run id
+   that will not exist on Railway.
+
+**Decision.**
+
+- **`TEST_DB_URL` is resolved in one place** (`tests/integration/test-db.ts`) and **`DATABASE_URL`
+  is no longer a fallback**. A `TEST_DATABASE_URL` naming a database whose name does not end in
+  `_test` **throws** rather than skipping — skipping is how the suite silently ran nothing. All
+  nine files import it; one rule, one place, which is the lesson ADR-151/157/158 paid for three
+  times.
+- The skip message now reads `TEST_DATABASE_URL is not set — integration tests SKIPPED (this is
+  not a pass)`. The old run printed `pass 727, fail 0, skipped 0` while executing **no integration
+  test whatsoever**, which is worse than a red build.
+- `.env` points at `recon_v2` and carries an explicit, separate `TEST_DATABASE_URL`.
+- **The footer states the condition**, and §5.2 gains an explicit cache-warming step with the
+  measurement behind it, because the first run against a fresh deploy is the slow one and is
+  exactly the run that gets clicked.
+- **The scorer becomes a Railway service** (§5.5), not a process on a machine someone might
+  close. It gets the API's URL and no database credentials: `tools/score` reads `data/truth/`, and
+  **ADR-021 forbids anything under `apps/api` from importing that** — the boundary is the reason
+  the accuracy numbers mean anything, so the scorer stays on the far side of one HTTP hop.
+
+**Why this is not tuning (ADR-027).** No threshold, window, weight or tolerance moves; no engine
+code changes. Verified after: 921 API tests, 244 tools tests, warm holdout run at **65.56%**,
+precision **1.0000**, FP **0**, scorer exit **0**.
+
+**Consequences.**
+- The guard was watched refusing a real database before being trusted: pointing
+  `TEST_DATABASE_URL` at `recon_v2` throws with the database named and the reason stated.
+- Restoring `recon_v2` brought back 44 runs and 4 aliases (2 active, 2 superseded — including the
+  `WRONG TARGET` correction that demonstrates supersession). Warm/cold is a real comparison again.
+- **The Analyst's verdict vocabulary was mis-read in the first review**, and the correction belongs
+  on the record: `proposals: 0` counts only `RESOLUTION_PROPOSED`, and agent-design.md §
+  designs three other terminal verdicts — `NEEDS_EXTERNAL_DATA` ("in real finance ops it is the
+  most common honest answer, and an agent that cannot say it will fabricate one of the other
+  three") and `CONFIRMED_UNRESOLVABLE` ("not a failure — the most important verdict in §7") among
+  them. Reporting zero proposals as zero usefulness treated three designed outcomes as failures.
+  The accurate residual claim is narrower and stands: no persisted investigation has reached
+  `RESOLUTION_PROPOSED`, so the one-click accept path through endpoints 16/20/21 is unexercised.
+- `STALE_RUN_TIMEOUT_MINUTES` remains the last knob parsed and enforced nowhere.

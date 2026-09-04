@@ -30,7 +30,7 @@ import * as investigations from '../../src/repositories/investigations.js';
  * the alias supersede-with-penalty policy.
  */
 
-const DB_URL = process.env['TEST_DATABASE_URL'] ?? process.env['DATABASE_URL'] ?? null;
+import { TEST_DB_URL as DB_URL, SKIP_REASON } from './test-db.js';
 const config: RunConfig = { ...ENGINE_DEFAULTS, referenceDate: '2026-08-21', aliasCountAtStart: 0 };
 
 function txn(over: Partial<NormalizedTransaction> & Pick<NormalizedTransaction, 'id' | 'runId' | 'sourceSystem' | 'sourceRowNumber'>): NormalizedTransaction {
@@ -47,7 +47,7 @@ function txn(over: Partial<NormalizedTransaction> & Pick<NormalizedTransaction, 
 
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
-describe('repositories (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL' : false }, () => {
+describe('repositories (integration)', { skip: SKIP_REASON }, () => {
   let runId: string;
   const gwId = uuid(1);
   const bkId = uuid(2);

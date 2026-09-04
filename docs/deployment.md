@@ -18,8 +18,11 @@ Companion docs: [adr-log.md](./adr-log.md) (ADR-005, ADR-026, ADR-046) · [api-c
 │  Next.js (static +      │ ──────►│  │ apps/api       │  │ PostgreSQL │  │
 │  client-side fetch)     │  CORS  │  │ Node 22/Express│─►│ 16 managed │  │
 │                         │        │  └───────┬────────┘  └────────────┘  │
-│  recon-demo.vercel.app  │        │          │  private network, no      │
-└─────────────────────────┘        │          │  public DB port           │
+│  recon-demo.vercel.app  │        │  ┌────────────────┐      │  no public   │
+└─────────────────────────┘        │  │ scorer worker  │──────┘  DB port     │
+                                   │  │ npm run        │  measures each new   │
+                                   │  │ score:watch    │  run, posts endpoint │
+                                   │  └────────────────┘  23 (§5.5)           │
                                    └──────────┼───────────────────────────┘
                                               │ HTTPS, server-side only
                                               ▼
@@ -125,7 +128,7 @@ compatibility.
 | Variable | Example | Required | Notes |
 |---|---|---|---|
 | `NEXT_PUBLIC_API_BASE_URL` | `https://recon-api.up.railway.app/api` | yes | Public by definition — it's a URL the browser calls. |
-| `PINNED_RUN_ID` | `f8ec36d7-a653-4071-a578-fe2fbecc7c24` | no | **The run the dashboard opens on when `?run=` is absent** (ADR-166). Set it on the deployed web so a stray probe run cannot become the headline on panel day. Server-only — read in `lib/run-context.ts`, never `NEXT_PUBLIC_`. Unset → newest completed run, as before. A pinned id that does not exist or has not completed logs once and falls back to that same default. The run picker and every `?run=` link are unaffected. |
+| `PINNED_RUN_ID` | the run id seeded in §5.2 step 3 | no | **The run the dashboard opens on when `?run=` is absent** (ADR-166). Set it on the deployed web so a stray probe run cannot become the headline on panel day. Server-only — read in `lib/run-context.ts`, never `NEXT_PUBLIC_`. Unset → newest completed run, as before. A pinned id that does not exist or has not completed logs once and falls back to that same default. The run picker and every `?run=` link are unaffected. |
 
 **`NEXT_PUBLIC_API_BASE_URL` is the only variable compiled into the bundle, and deliberately so.** Anything prefixed `NEXT_PUBLIC_` is readable by anyone who opens devtools. `PINNED_RUN_ID` has no prefix because it is read on the server only; if a secret ever needs to reach the frontend, the design is wrong.
 
@@ -195,7 +198,25 @@ The public demo must show a completed run the instant a panelist opens it — ne
    ```bash
    curl -X POST https://recon-api.up.railway.app/api/runs -H 'Content-Type: application/json' -d '{"useSeedDataset":true,"datasetSeed":90210,"label":"demo-holdout"}'
    ```
-4. Confirm the dashboard loads it as the default run.
+4. **Score that run and post the report**, or the two measured tiles read "not measured"
+   (ADR-041) — the dashboard will not substitute engine figures into a measured slot:
+   ```bash
+   npm run score -- --run <runId> --api https://recon-api.up.railway.app --post
+   ```
+   Exit code **0** means every honesty gate passed. Anything else, stop and read it.
+5. **Warm the explanation cache, and understand why this step exists.** The first run against
+   an empty `explanation_cache` pays for all 21 signatures at once. Measured locally on
+   2026-09-04: explain stage **33,948 ms** cold versus **117 ms** warm, wall-clock throughput
+   **26 rec/s** versus **377 rec/s**, on the identical 920 records — the matching engine is
+   untouched either way (Tier 2 was 211 ms both times). Step 3 above *is* the warming run, so
+   it will be the slow one; every run after it reads the cache for **$0** and finishes in under
+   two seconds. Do this before recording the video and before handing anyone the URL, because
+   a judge clicking "Run It Again — Free" on a cold cache waits half a minute for a button
+   labelled free and instant.
+6. **Set `PINNED_RUN_ID` on Vercel to the run id from step 3** and redeploy the web. Until it
+   is set, the dashboard opens on whatever ran most recently — which on panel day is whatever
+   a judge last clicked (ADR-166).
+7. Confirm the dashboard loads the pinned run as the default, with no interaction.
 
 ### 5.3 Ongoing deploys
 
@@ -216,6 +237,53 @@ for a static frontend, which has no in-flight work to lose.
 
 **Migrations** run on API boot when `RUN_MIGRATIONS_ON_BOOT=true`. Acceptable here because there is exactly one API instance and no rolling deploy — with multiple replicas this races and would need a separate release step. **Noted so a future session doesn't copy this pattern into somewhere it's wrong.** Migrations are forward-only numbered files; a bad migration is fixed by a new migration, never by editing a shipped one.
 
+### 5.5 The scorer worker — a third Railway service (ADR-170)
+
+`score:watch` polls for newly-completed runs, scores each against the answer key, and posts the
+report to endpoint 23. Until now it ran on a laptop, and §5.4's checklist says why that is not
+good enough: **F19 put a free "Run It Again" button in the hero, so a judge starts real runs
+this project has never seen.** A run nobody scores shows "not measured" on the two tiles that
+carry the accuracy claim — on the run the judge just started, which is the one they are looking
+at. On 2026-09-03 two runs sat unmeasured because the laptop watcher had stopped, and one of
+them was on screen.
+
+A laptop that must stay open for the whole judging window is not a deployment. This makes it one.
+
+**Service definition** — a second service in the same Railway project, from the same repo:
+
+| Setting | Value |
+|---|---|
+| Root Directory | repo root (**not** `apps/api` — the scorer lives in `tools/`) |
+| Build | `npm ci` |
+| Start | `npm run score:watch -- --api $SCORE_API_URL --interval 15` |
+| `SCORE_API_URL` | the API service's URL |
+| Health check | none — it is a worker, it binds no port |
+
+**Why it is a separate service and not a thread inside the API.** `tools/score` reads
+`data/truth/`, and **ADR-021 forbids anything under `apps/api` from importing it** — that
+architectural boundary is the reason every accuracy number in this project means anything. A
+scorer running inside the API process would put the answer key one `import` away from the
+engine, and no amount of care afterwards would restore the claim. Separate process, separate
+service, one HTTP boundary between them.
+
+**What it needs, and what it must never have.** It needs the API's URL and the committed answer
+keys (`data/truth/holdout_seed_90210.json`, `data/truth/demo_seed_20260905.json` — both tracked,
+verified 2026-09-04). It needs **no database credentials**: it reads runs and posts reports over
+HTTP like any other client. Do not give it `DATABASE_URL`. It has no dependencies of its own —
+the root `package.json` ships zero runtime deps.
+
+**Rate limits.** Polling every 15 s is 4 requests/minute against the `read` tier's 240/minute
+(ADR-096), and each scored run costs one `write` against 60/hour. Well inside both. If the
+worker and a judge share an egress IP the budgets are shared — `TRUST_PROXY_HOPS` is what keeps
+per-IP accounting honest, and it is already load-bearing on Railway.
+
+**Verifying it works, rather than assuming.** Start a run against the deployed API and watch the
+dashboard's two measured tiles fill in without a reload — `ScoreReportPoller` (ADR-116) is
+already mounted for exactly this and gives up after 120 s with a manual link. If the tiles stay
+absent, the worker is down; absent is the honest render and is not a substitute for measured.
+
+**It costs $0 of model spend.** The scorer calls no LLM. It is arithmetic against a key.
+
 ### 5.4 Pre-submission checklist (Day 13)
 
 - [ ] `/api/health` returns `dbConnected: true` and `llmConfigured: true` (provider-aware since Day 15 — it reads the key belonging to `LLM_PROVIDER`, `ANTHROPIC_API_KEY` by default, not always Gemini)
@@ -227,16 +295,16 @@ for a static frontend, which has no in-flight work to lose.
 - [ ] Audit drill-down works for at least one alias-tier match
 - [ ] `GET /api/runs/:runId/audit/verify` returns `valid: true` on the demo run (ADR-042)
 - [ ] A score report exists for the demo run, so the dashboard shows **measured** accuracy rather than "not measured" (ADR-041)
-- [ ] **`npm run score:watch --api <railway-url>` is RUNNING, not just run once, for the entire judging window.**
+- [ ] **The scorer worker service is UP for the entire judging window (§5.5).** Not a laptop.
       F19 put a free, spendable-nothing "Run It Again" button in the hero, and a judge clicking
       it starts a REAL run against the live API — one `score:watch` has never seen before. A
       one-time pass before recording the pitch video only measures the run that already existed
       at that moment; it does nothing for the next one a judge starts themselves. Found on
       2026-09-03: two local runs sat unmeasured because the watcher had stopped and nobody
-      restarted it — one of them was the run on screen. `--once` is for the video-recording pass;
-      the live judging window needs the loop, kept alive on a laptop that stays open (or a small
-      persistent Railway worker, if that gets built before Day 5). Verify it is still running
-      immediately before handing the URL to a judge, not the night before.
+      restarted it — one of them was the run on screen. That is why §5.5 makes it a Railway
+      service rather than a process on a machine someone might close. Verify it by starting a
+      run and watching the measured tiles fill in, immediately before handing the URL to a
+      judge — not the night before.
 - [ ] The scale-benchmark table is committed and linked from the README (ADR-045)
 - [ ] Phase A has run on the demo run: investigations visible, at least one `RESOLUTION_PROPOSED` and one `CONFIRMED_UNRESOLVABLE` on screen
 - [ ] **Hallucinated resolutions is 0** on the holdout run (ADR-053 — build blocker, verify before recording the video)

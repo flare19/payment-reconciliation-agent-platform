@@ -22,7 +22,7 @@ import * as invRepo from '../../src/repositories/investigations.js';
  * be re-derived by a frontend or substituted when absent.
  */
 
-const DB_URL = process.env['TEST_DATABASE_URL'] ?? process.env['DATABASE_URL'] ?? null;
+import { TEST_DB_URL as DB_URL, SKIP_REASON } from './test-db.js';
 const FIX = new URL('../../../../data/fixtures/holdout/', import.meta.url).pathname;
 const seed = (): RunSources => ({
   gateway: readFileSync(FIX + 'gateway_export.csv', 'utf8'),
@@ -44,7 +44,7 @@ const env = {
   rateLimitEnabled: false, trustProxyHops: 1,
 } as unknown as Env;
 
-describe('routes (integration)', { skip: DB_URL === null ? 'no TEST_DATABASE_URL' : false }, () => {
+describe('routes (integration)', { skip: SKIP_REASON }, () => {
   let server: Server;
   let base: string;
   let runId: string;
