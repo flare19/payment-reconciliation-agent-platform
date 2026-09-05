@@ -88,8 +88,8 @@ VERIFIABLE ─ reproduced from outside this repo ──────────�
 
 Two more limits, stated in the same breath as the numbers: **7 of the 8 exception categories fire** on these datasets (`TIMING_DRIFT` has zero instances on either seed, and renders as a zero rather than vanishing), and **the Analyst is not scored** — see [The Analyst](#the-analyst).
 
-> **[SCREENSHOT — the exception list, which is the actual product]**
-> Open <https://payment-reconciliation-agent-platfo.vercel.app/exceptions> and capture the category filter rail (left) beside the first four or five exception rows, so the per-category `measured` P/R values and the plain-English explanations are both readable in one frame. If it will not fit, prefer the frame that keeps the P/R numbers — a list that publishes its own classifier precision is the unusual part.
+<img width="1470" height="780" alt="Screenshot 2026-09-05 at 12 45 34 PM" src="https://github.com/user-attachments/assets/e03bb96e-f181-419a-985d-c57336ae863d" />
+<img width="1469" height="780" alt="Screenshot 2026-09-05 at 1 00 40 PM" src="https://github.com/user-attachments/assets/41126e9d-7d0a-4ea1-98e8-096a3d469b97" />
 
 ### Re-derive the measured block yourself
 
@@ -104,10 +104,7 @@ npm run score -- --run 43ca8a11-25ab-418c-a689-282e0e5e66e6 \
 
 Exit **0** = every honesty gate passed · **1** = transport or hash failure · **2** = a build blocker fired. **The exit code is the claim.** The printout is just the explanation.
 
-> **[SCREENSHOT — the scorer disagreeing with nobody]**
-> Run the two commands directly above in a terminal, then screenshot from the `══ MATCHING (pairs) ══` header down to `══ every honesty gate passed ══`. Include the shell prompt line so the command is visible. This is the single most persuasive frame in the project: an independent process, reading a key the API cannot touch, arriving at the same numbers as the dashboard.
->
-> To capture the exit code too, run `npm run score -- --run 43ca8a11-25ab-418c-a689-282e0e5e66e6 --api https://payment-reconciliation-agent-platform-production.up.railway.app; echo "exit=$?"` and include the final `exit=0` line in the frame.
+<img width="1138" height="787" alt="Screenshot 2026-09-05 at 12 48 45 PM" src="https://github.com/user-attachments/assets/b4bd1303-e282-4109-a5d8-b2cf79bef09c" />
 
 ---
 
@@ -232,8 +229,7 @@ THE ANALYST — agentic · bounded · read-only
                           human confirms or rejects
 ```
 
-> **[SCREENSHOT — the dashboard headline]**
-> Open <https://payment-reconciliation-agent-platfo.vercel.app/> and capture from the page title down through the four headline tiles, so the `MEASURED` badge on False Positives and the 93% ceiling are both visible. That one frame carries the whole argument.
+<img width="1464" height="775" alt="Screenshot 2026-09-05 at 12 49 48 PM" src="https://github.com/user-attachments/assets/f87c14c2-4e81-4330-a8e4-e19246db6894" />
 
 ---
 
@@ -257,8 +253,7 @@ A resolution proposed for a designed-unresolvable exception is a **build blocker
 
 **And here is one it got wrong.** A harder `AMBIGUOUS_MATCH` investigation hit the 2,048-token output ceiling — thinking tokens count against it — and returned no verdict at all, after spending $0.10. It failed loudly: status `failed`, verdict `null`, and an error naming the actual cause. It did not fabricate. But it failed, and 1 of the 3 live investigations on the demo run is a failure. That is in [what-broke.md](docs/what-broke.md) too.
 
-> **[SCREENSHOT — an Analyst investigation]**
-> Open <https://payment-reconciliation-agent-platfo.vercel.app/analyst> and capture the "Every Investigation" table plus the "What Is Not Known" block directly beneath it — the two together show a working agent and an honest account of what has not been measured about it.
+<img width="1470" height="770" alt="Screenshot 2026-09-05 at 12 55 54 PM" src="https://github.com/user-attachments/assets/2d2e21ee-2f21-4a1c-84a5-3d74b336abd8" />
 
 ---
 
