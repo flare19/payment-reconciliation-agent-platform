@@ -7,10 +7,8 @@ This engine reconciles 920 payment records across three deliberately inconsisten
 That is the number I am most confident about, and it is deliberately not higher.
 
 > ### ▶ [**Live dashboard**](https://payment-reconciliation-agent-platfo.vercel.app/) · [**Live API**](https://payment-reconciliation-agent-platform-production.up.railway.app/api/health)
-> **Pitch video (5 min)** · `<VIDEO_URL>` — _recording after this doc freeze_
+> **[Pitch video (5 min)](https://www.youtube.com/watch?v=ZzGYaEj3Bug)**
 > Both are up right now. No signup, no setup, nothing to install.
-
-<!-- BEFORE SUBMISSION: replace <VIDEO_URL> above. Everything else on this page is live. -->
 
 ---
 
